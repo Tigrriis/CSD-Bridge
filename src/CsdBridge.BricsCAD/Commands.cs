@@ -64,7 +64,7 @@ namespace CsdBridge.BricsCAD
         [CommandMethod(Group, "AIRIBBON", CommandFlags.Modal)]
         public void AiRibbon()
         {
-            string result = RibbonSetup.AddTab();
+            string result = RibbonSetup.AddTab(activate: true);
             CadApp.DocumentManager.MdiActiveDocument.Editor.WriteMessage("\nCSD-Bridge: " + result + "\n");
         }
 
