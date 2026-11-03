@@ -1,0 +1,11 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+*.nupkg
+TestResults/
+# Local preview output from the CLI harness
+*.dxf
+!samples/**/*.dxf

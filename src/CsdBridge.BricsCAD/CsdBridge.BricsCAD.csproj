@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The BricsCAD add-in. Build for one BricsCAD version at a time:
+
+      dotnet build -c Release -p:BricsCADVersion=25    (V24/V25: .NET Framework 4.8)
+      dotnet build -c Release -p:BricsCADVersion=26    (V26:     .NET 8, x64)
+
+    BrxMgd.dll / TD_Mgd.dll come from the BricsCAD install folder and are not
+    copied to the output. Override the folder with -p:BricsCADDir="...".
+  -->
+  <PropertyGroup>
+    <BricsCADVersion Condition="'$(BricsCADVersion)' == ''">25</BricsCADVersion>
+    <BricsCADDir Condition="'$(BricsCADDir)' == ''">C:\Program Files\Bricsys\BricsCAD V$(BricsCADVersion) en_US</BricsCADDir>
+
+    <TargetFramework Condition="$(BricsCADVersion) &gt;= 26">net8.0-windows</TargetFramework>
+    <TargetFramework Condition="$(BricsCADVersion) &lt; 26">net48</TargetFramework>
+
+    <RootNamespace>CsdBridge.BricsCAD</RootNamespace>
+    <AssemblyName>CsdBridge.BricsCAD</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+    <OutputPath>bin\$(Configuration)\V$(BricsCADVersion)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- Copy NuGet dependencies (Anthropic SDK etc.) next to the add-in DLL. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Plugin-style output: a .deps.json next to the DLL so dependencies resolve. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="BrxMgd">
+      <HintPath>$(BricsCADDir)\BrxMgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="TD_Mgd">
+      <HintPath>$(BricsCADDir)\TD_Mgd.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Security" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CsdBridge.Core\CsdBridge.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="office-standards.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

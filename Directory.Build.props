@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Company>Arete Engineering</Company>
+    <Product>CSD-Bridge</Product>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+</Project>
