@@ -53,11 +53,14 @@ docs/architecture.md       Design notes, threading, caching, risks, roadmap
 
 ### 1. Try it without BricsCAD (any OS)
 
-Needs the .NET 8 SDK and an Anthropic API key.
+Needs the .NET 8 SDK and an Anthropic API key from https://console.anthropic.com. Run these
+from the repo folder (`cd CSD-Bridge` after cloning). In Windows PowerShell:
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+```powershell
+$env:ANTHROPIC_API_KEY = "sk-ant-api03-..."
 ```
+
+(On macOS/Linux: `export ANTHROPIC_API_KEY=sk-ant-api03-...`.)
 
 ```bash
 dotnet run --project tools/CsdBridge.Cli -- --standards src/CsdBridge.BricsCAD/office-standards.md "Draw a 6000 x 4000 slab outline with grid lines at 2400 centres both ways, labelled, and dimension the overall size"
@@ -127,3 +130,11 @@ and tool definitions are prompt-cached, so repeat calls mostly pay the cheap cac
 The command line and panel show token usage after every request. A full log of prompts, tool
 calls, results and usage is written to `%LOCALAPPDATA%\CsdBridge\logs\`. Use those numbers
 rather than estimates when deciding on effort level or model.
+
+## Troubleshooting
+
+| Error | Fix |
+|---|---|
+| `MSB1009: Project file does not exist` | Run the command from the repo folder (`cd CSD-Bridge`). |
+| `NU1100: Unable to resolve 'Anthropic'` | NuGet can't reach nuget.org. The repo's `nuget.config` adds it as a source. If the error persists, run `dotnet nuget enable source nuget.org`. If it still fails, your network is probably blocking `api.nuget.org`: ask IT to allow it, or for the office package feed or proxy address. |
+| `The Anthropic API key was rejected` | Create a key at https://console.anthropic.com (API Keys). Keys start with `sk-ant-api03-`. |
