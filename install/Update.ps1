@@ -43,6 +43,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# A fresh .NET SDK prints a one-time welcome banner; keep it out of the output we parse.
+$env:DOTNET_NOLOGO = "1"
+$env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1"
+
 $repo = Split-Path -Parent $PSScriptRoot
 $project = [IO.Path]::Combine($repo, "src", "CsdBridge.BricsCAD", "CsdBridge.BricsCAD.csproj")
 
@@ -89,7 +93,11 @@ if (-not $SkipPull) {
 Write-Step "Finding BricsCAD"
 $evaluation = (& dotnet msbuild $project -nologo "-getProperty:BricsCADVersion" "-getProperty:BricsCADDir" @buildProps) | Out-String
 if ($LASTEXITCODE -ne 0) { Stop-Update "Could not read the project settings:`n$evaluation" }
-$found = ($evaluation | ConvertFrom-Json).Properties
+# Parse only the JSON part, in case anything else was printed before or after it.
+$jsonStart = $evaluation.IndexOf("{")
+$jsonEnd = $evaluation.LastIndexOf("}")
+if ($jsonStart -lt 0 -or $jsonEnd -lt $jsonStart) { Stop-Update "Could not read the project settings:`n$evaluation" }
+$found = ($evaluation.Substring($jsonStart, $jsonEnd - $jsonStart + 1) | ConvertFrom-Json).Properties
 $version = $found.BricsCADVersion
 if ($found.BricsCADDir) { Write-Host "BricsCAD V$version at $($found.BricsCADDir)" }
 
