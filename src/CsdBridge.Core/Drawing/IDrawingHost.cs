@@ -22,6 +22,18 @@ namespace CsdBridge.Core.Drawing
 
         IReadOnlyList<ItemResult> ModifyEntities(IReadOnlyList<ModifyOperation> operations);
 
+        // ---- exact geometry, computed by the CAD engine (never by the model) ----
+
+        /// <summary>Offset curves; each result lists the new handles.</summary>
+        IReadOnlyList<ItemResult> OffsetEntities(IReadOnlyList<OffsetOperation> operations);
+
+        IntersectionResult Intersect(IntersectQuery query);
+
+        /// <summary>Lengths, areas, end/mid points and closest points of entities.</summary>
+        MeasureResult Measure(MeasureQuery query);
+
+        IReadOnlyList<CurvePoints> PointsOnCurves(IReadOnlyList<PointsRequest> requests);
+
         /// <summary>Ask the user to click a point. Returns world coordinates.</summary>
         PickPointResult PickPoint(string prompt);
 

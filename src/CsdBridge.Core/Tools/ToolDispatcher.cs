@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CsdBridge.Core.Drawing;
+using CsdBridge.Core.Geometry;
 
 namespace CsdBridge.Core.Tools
 {
@@ -81,6 +82,48 @@ namespace CsdBridge.Core.Tools
                         List<ModifyOperation> ops = ParseOperations(input);
                         var results = _host.ModifyEntities(ops);
                         return Items(results, "modified: " + string.Join(", ", ops.Select(o => $"{Snake(o.Action)} x{o.Handles.Count}")));
+                    }
+
+                    case ToolCatalog.Calculate:
+                        return Calculate(input);
+
+                    case ToolCatalog.OffsetEntities:
+                    {
+                        List<OffsetOperation> ops = ParseOffsets(input);
+                        var results = _host.OffsetEntities(ops);
+                        int made = results.Sum(r => r.NewHandles?.Count ?? 0);
+                        return Items(results, $"offset {ops.Sum(o => o.Handles.Count)} curve(s), {made} new");
+                    }
+
+                    case ToolCatalog.Intersect:
+                    {
+                        IntersectQuery query = ParseIntersect(input);
+                        IntersectionResult r = _host.Intersect(query);
+                        return Ok(r, $"{r.Intersections.Sum(i => i.Points.Count)} intersection point(s) in {r.PairsChecked} pair(s)");
+                    }
+
+                    case ToolCatalog.Measure:
+                    {
+                        (MeasureQuery query, Point2? from, Point2? to) = ParseMeasure(input);
+                        MeasureResult r = query.Handles.Count > 0 ? _host.Measure(query) : new MeasureResult();
+                        if (from is Point2 a && to is Point2 b)
+                        {
+                            r.Between = Between(a, b);
+                        }
+
+                        return Ok(r, $"measured {r.Entities.Count} entit{(r.Entities.Count == 1 ? "y" : "ies")}{(r.Between != null ? " and a distance" : "")}");
+                    }
+
+                    case ToolCatalog.PointsOnCurve:
+                    {
+                        List<PointsRequest> requests = ParsePointsRequests(input);
+                        var results = _host.PointsOnCurves(requests);
+                        int failed = results.Count(r => !r.Ok);
+                        string json = JsonSerializer.Serialize(new { results }, JsonOptions);
+                        return new ToolOutcome(json, failed == results.Count)
+                        {
+                            Summary = $"{results.Sum(r => r.Points?.Count ?? 0)} set-out point(s){(failed > 0 ? $" ({failed} failed)" : "")}",
+                        };
                     }
 
                     case ToolCatalog.PickPoint:
@@ -478,6 +521,204 @@ namespace CsdBridge.Core.Tools
             }
 
             return result.Count == 0 ? null : result;
+        }
+
+        // ---------------------------------------------------------------- geometry tools
+
+        private static ToolOutcome Calculate(JsonElement input)
+        {
+            JsonArgs.RequireObject(input, "");
+            var items = JsonArgs.RequireArray(input, "expressions", "", 1, 200);
+            var calc = new Calculator();
+            var results = new List<object>();
+            int failed = 0;
+            for (int i = 0; i < items.Count; i++)
+            {
+                string path = JsonArgs.Index("expressions", i);
+                string? name = null;
+                string expr = "";
+                try
+                {
+                    JsonArgs.RequireObject(items[i], path);
+                    name = JsonArgs.OptionalString(items[i], "name", path)?.Trim();
+                    expr = JsonArgs.RequireString(items[i], "expr", path);
+                    double value = calc.Evaluate(expr);
+                    if (name != null)
+                    {
+                        calc.Set(name, value);
+                    }
+
+                    results.Add(new { name, expr, value = Math.Round(value, 10) });
+                }
+                catch (Exception ex) when (ex is FormatException || ex is ToolInputException)
+                {
+                    failed++;
+                    results.Add(new { name, expr, error = ex.Message });
+                }
+            }
+
+            string json = JsonSerializer.Serialize(new { results }, JsonOptions);
+            return new ToolOutcome(json, failed == items.Count)
+            {
+                Summary = failed == 0 ? $"calculated {items.Count} value(s)" : $"calculated {items.Count - failed} value(s), {failed} failed",
+            };
+        }
+
+        internal static List<OffsetOperation> ParseOffsets(JsonElement input)
+        {
+            JsonArgs.RequireObject(input, "");
+            var items = JsonArgs.RequireArray(input, "offsets", "", 1, 100);
+            var errors = new List<string>();
+            var result = new List<OffsetOperation>();
+            for (int i = 0; i < items.Count; i++)
+            {
+                string path = JsonArgs.Index("offsets", i);
+                try
+                {
+                    JsonElement e = items[i];
+                    JsonArgs.RequireObject(e, path);
+                    var op = new OffsetOperation
+                    {
+                        Handles = JsonArgs.ReadStringList(JsonArgs.RequireArray(e, "handles", path, 1, 1000), path + ".handles"),
+                        Distance = JsonArgs.RequirePositive(e, "distance", path),
+                        Count = JsonArgs.OptionalInt(e, "count", path, 1, 100) ?? 1,
+                        Layer = ValidateLayerName(JsonArgs.OptionalString(e, "layer", path), path + ".layer"),
+                    };
+
+                    Point2? sidePoint = JsonArgs.OptionalPoint(e, "side_point", path);
+                    string? side = JsonArgs.OptionalString(e, "side", path)?.Trim().ToLowerInvariant();
+                    if ((sidePoint == null) == (side == null))
+                    {
+                        throw new ToolInputException($"{path}: give either side_point or side ('inside' / 'outside'), not both");
+                    }
+
+                    if (sidePoint is Point2 sp)
+                    {
+                        op.Side = OffsetSide.TowardsPoint;
+                        op.SidePoint = sp;
+                    }
+                    else if (side == "inside" || side == "outside")
+                    {
+                        op.Side = side == "inside" ? OffsetSide.Inside : OffsetSide.Outside;
+                    }
+                    else
+                    {
+                        throw new ToolInputException($"{path}.side must be 'inside' or 'outside'");
+                    }
+
+                    result.Add(op);
+                }
+                catch (ToolInputException ex)
+                {
+                    errors.Add(ex.Message);
+                }
+            }
+
+            ThrowIfErrors(errors);
+            return result;
+        }
+
+        internal static IntersectQuery ParseIntersect(JsonElement input)
+        {
+            JsonArgs.RequireObject(input, "");
+            var query = new IntersectQuery
+            {
+                Handles = JsonArgs.ReadStringList(JsonArgs.RequireArray(input, "handles", "", 1, 200), "handles"),
+                Extend = JsonArgs.OptionalBool(input, "extend", "", false),
+            };
+            var with = JsonArgs.OptionalArray(input, "with", "", 0, 200);
+            if (with != null && with.Count > 0)
+            {
+                query.With = JsonArgs.ReadStringList(with, "with");
+            }
+            else if (query.Handles.Count < 2)
+            {
+                throw new ToolInputException("give at least two handles, or handles plus with");
+            }
+
+            return query;
+        }
+
+        internal static (MeasureQuery Query, Point2? From, Point2? To) ParseMeasure(JsonElement input)
+        {
+            JsonArgs.RequireObject(input, "");
+            var handles = JsonArgs.OptionalArray(input, "handles", "", 0, 500);
+            var query = new MeasureQuery
+            {
+                Handles = handles == null ? new List<string>() : JsonArgs.ReadStringList(handles, "handles"),
+                Point = JsonArgs.OptionalPoint(input, "point", ""),
+            };
+            Point2? from = JsonArgs.OptionalPoint(input, "from", "");
+            Point2? to = JsonArgs.OptionalPoint(input, "to", "");
+            if ((from == null) != (to == null))
+            {
+                throw new ToolInputException("from and to must be given together");
+            }
+
+            if (query.Handles.Count == 0 && from == null)
+            {
+                throw new ToolInputException("give handles to measure, or from and to");
+            }
+
+            return (query, from, to);
+        }
+
+        internal static List<PointsRequest> ParsePointsRequests(JsonElement input)
+        {
+            JsonArgs.RequireObject(input, "");
+            var items = JsonArgs.RequireArray(input, "requests", "", 1, 100);
+            var errors = new List<string>();
+            var result = new List<PointsRequest>();
+            for (int i = 0; i < items.Count; i++)
+            {
+                string path = JsonArgs.Index("requests", i);
+                try
+                {
+                    JsonElement e = items[i];
+                    JsonArgs.RequireObject(e, path);
+                    var r = new PointsRequest
+                    {
+                        Handle = JsonArgs.RequireString(e, "handle", path).Trim(),
+                        Divide = JsonArgs.OptionalInt(e, "divide", path, 1, SetOut.MaxPoints),
+                        Spacing = JsonArgs.OptionalPositive(e, "spacing", path),
+                        StartOffset = JsonArgs.OptionalNumber(e, "start_offset", path) ?? 0,
+                        FromEnd = JsonArgs.OptionalBool(e, "from_end", path, false),
+                    };
+                    var distances = JsonArgs.OptionalArray(e, "distances", path, 1, SetOut.MaxPoints);
+                    if (distances != null)
+                    {
+                        r.Distances = distances.Select((d, k) => JsonArgs.ReadNumber(d, JsonArgs.Index(path + ".distances", k))).ToList();
+                    }
+
+                    int modes = (r.Divide != null ? 1 : 0) + (r.Spacing != null ? 1 : 0) + (r.Distances != null ? 1 : 0);
+                    if (modes != 1)
+                    {
+                        throw new ToolInputException($"{path}: give exactly one of divide, spacing or distances");
+                    }
+
+                    result.Add(r);
+                }
+                catch (ToolInputException ex)
+                {
+                    errors.Add(ex.Message);
+                }
+            }
+
+            ThrowIfErrors(errors);
+            return result;
+        }
+
+        internal static PointToPoint Between(Point2 a, Point2 b)
+        {
+            double dx = b.X - a.X, dy = b.Y - a.Y;
+            double angle = Math.Atan2(dy, dx) * 180 / Math.PI;
+            return new PointToPoint
+            {
+                Distance = Math.Round(Math.Sqrt(dx * dx + dy * dy), 6),
+                Dx = Math.Round(dx, 6),
+                Dy = Math.Round(dy, 6),
+                Angle = Math.Round(angle < 0 ? angle + 360 : angle, 6),
+            };
         }
 
         private static TextAlign ParseAlign(string? align, string path)

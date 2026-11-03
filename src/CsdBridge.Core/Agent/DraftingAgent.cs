@@ -405,6 +405,11 @@ namespace CsdBridge.Core.Agent
                 case ToolCatalog.GetDrawingInfo: return "reading drawing setup";
                 case ToolCatalog.PickPoint: return "waiting for you to pick a point";
                 case ToolCatalog.SelectEntities: return "waiting for you to select objects";
+                case ToolCatalog.Calculate: return $"calculating {Count(input, "expressions")} value(s)";
+                case ToolCatalog.OffsetEntities: return $"offsetting ({Count(input, "offsets")} operation(s))";
+                case ToolCatalog.Intersect: return "finding intersections";
+                case ToolCatalog.Measure: return "measuring";
+                case ToolCatalog.PointsOnCurve: return "working out set-out points";
                 default: return name;
             }
         }

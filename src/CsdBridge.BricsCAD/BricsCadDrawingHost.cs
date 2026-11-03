@@ -5,6 +5,7 @@ using System.Linq;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
 using CsdBridge.Core.Drawing;
+using CsdBridge.Core.Geometry;
 using Teigha.Colors;
 using Teigha.DatabaseServices;
 using Teigha.Geometry;
@@ -547,6 +548,401 @@ namespace CsdBridge.BricsCAD
             }
 
             return result;
+        }
+
+        // ================================================================ exact geometry
+        // All computed by BricsCAD's geometry engine, so results match BricsCAD exactly.
+
+        public IReadOnlyList<ItemResult> OffsetEntities(IReadOnlyList<OffsetOperation> operations)
+        {
+            var results = new List<ItemResult>();
+            using (_doc.LockDocument())
+            using (Transaction tr = Db.TransactionManager.StartTransaction())
+            {
+                for (int i = 0; i < operations.Count; i++)
+                {
+                    OffsetOperation op = operations[i];
+
+                    // Build every offset first; only add them if the whole operation works.
+                    var pending = new List<(Curve Curve, ObjectId Owner)>();
+                    string? error = null;
+                    try
+                    {
+                        foreach (string h in op.Handles)
+                        {
+                            error = OffsetOne(h, op, tr, pending);
+                            if (error != null)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        error = ex.Message;
+                    }
+
+                    if (error != null)
+                    {
+                        pending.ForEach(p => p.Curve.Dispose());
+                        results.Add(ItemResult.Failure(i, error));
+                        continue;
+                    }
+
+                    var item = ItemResult.Success(i);
+                    item.NewHandles = new List<string>();
+                    if (op.Layer != null && GetOrCreateLayer(tr, op.Layer, out _))
+                    {
+                        item.Note = $"created layer {op.Layer}";
+                    }
+
+                    foreach (var (curve, owner) in pending)
+                    {
+                        if (op.Layer != null)
+                        {
+                            curve.Layer = op.Layer;
+                        }
+
+                        var space = (BlockTableRecord)tr.GetObject(owner, OpenMode.ForWrite);
+                        space.AppendEntity(curve);
+                        tr.AddNewlyCreatedDBObject(curve, true);
+                        item.NewHandles.Add(curve.Handle.ToString());
+                    }
+
+                    results.Add(item);
+                }
+
+                tr.Commit();
+            }
+
+            Flush();
+            return results;
+        }
+
+        private string? OffsetOne(string handle, OffsetOperation op, Transaction tr, List<(Curve Curve, ObjectId Owner)> pending)
+        {
+            ObjectId id = ResolveHandle(handle);
+            if (id.IsNull)
+            {
+                return $"Unknown or erased handle {handle}";
+            }
+
+            if (!(tr.GetObject(id, OpenMode.ForRead) is Curve source))
+            {
+                return $"{handle} is not a curve; only lines, polylines, arcs, circles, ellipses and splines can be offset";
+            }
+
+            if (op.Side != OffsetSide.TowardsPoint && !source.Closed)
+            {
+                return $"{handle} is not closed, so 'inside'/'outside' doesn't apply; give a side_point instead";
+            }
+
+            for (int k = 1; k <= op.Count; k++)
+            {
+                List<Curve> plus = OffsetCurves(source, op.Distance * k);
+                List<Curve> minus = OffsetCurves(source, -op.Distance * k);
+                List<Curve>? chosen = ChooseSide(source, plus, minus, op, out string? why);
+                foreach (Curve c in plus.Concat(minus).Where(c => chosen == null || !chosen.Contains(c)))
+                {
+                    c.Dispose();
+                }
+
+                if (chosen == null)
+                {
+                    return $"{handle}: {why}";
+                }
+
+                pending.AddRange(chosen.Select(c => (c, source.OwnerId)));
+            }
+
+            return null;
+        }
+
+        private static List<Curve> OffsetCurves(Curve curve, double distance)
+        {
+            var list = new List<Curve>();
+            try
+            {
+                foreach (DBObject o in curve.GetOffsetCurves(distance))
+                {
+                    if (o is Curve c)
+                    {
+                        list.Add(c);
+                    }
+                    else
+                    {
+                        o.Dispose();
+                    }
+                }
+            }
+            catch (System.Exception)
+            {
+                // No offset on this side (e.g. too large to fit inside); the caller decides.
+            }
+
+            return list;
+        }
+
+        /// <summary>Same rules as the offline host: the side containing side_point, or by enclosed area.</summary>
+        private static List<Curve>? ChooseSide(Curve original, List<Curve> plus, List<Curve> minus, OffsetOperation op, out string? error)
+        {
+            error = null;
+            if (op.Side == OffsetSide.TowardsPoint)
+            {
+                Point3d side = P3(op.SidePoint);
+                Point3d q = original.GetClosestPointTo(side, false);
+                double distance = q.DistanceTo(side);
+                if (distance < 1e-9)
+                {
+                    error = "side_point is on the curve; give a point clearly on one side";
+                    return null;
+                }
+
+                Vector3d v = side - q;
+                List<Curve>? best = null;
+                double bestDot = 0;
+                foreach (List<Curve> candidate in new[] { plus, minus })
+                {
+                    if (candidate.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    Point3d c = candidate
+                        .Select(x => x.GetClosestPointTo(q, false))
+                        .OrderBy(x => x.DistanceTo(q))
+                        .First();
+                    double dot = (c - q).DotProduct(v) / distance;
+                    if (dot > bestDot + 1e-9)
+                    {
+                        best = candidate;
+                        bestDot = dot;
+                    }
+                }
+
+                if (best == null)
+                {
+                    error = plus.Count == 0 || minus.Count == 0
+                        ? "the offset distance is too large for this shape on that side"
+                        : "side_point is in line with the curve; give a point clearly to one side of it";
+                }
+
+                return best;
+            }
+
+            if (plus.Count == 0 && minus.Count == 0)
+            {
+                error = "this shape can't be offset by that distance";
+                return null;
+            }
+
+            if (plus.Count == 0 || minus.Count == 0)
+            {
+                if (op.Side == OffsetSide.Inside)
+                {
+                    error = "the offset distance is too large to fit inside this shape";
+                    return null;
+                }
+
+                return plus.Count > 0 ? plus : minus;
+            }
+
+            bool plusIsInside = plus.Sum(c => c.Area) < minus.Sum(c => c.Area);
+            return (op.Side == OffsetSide.Inside) == plusIsInside ? plus : minus;
+        }
+
+        public IntersectionResult Intersect(IntersectQuery query)
+        {
+            var result = new IntersectionResult();
+            var skipped = new List<string>();
+            using (Transaction tr = Db.TransactionManager.StartTransaction())
+            {
+                var curves = new Dictionary<string, Curve>(StringComparer.OrdinalIgnoreCase);
+                foreach (string h in query.Handles.Concat(query.With ?? new List<string>()).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    ObjectId id = ResolveHandle(h);
+                    if (id.IsNull)
+                    {
+                        skipped.Add($"{h}: not found");
+                    }
+                    else if (tr.GetObject(id, OpenMode.ForRead) is Curve c)
+                    {
+                        curves[h] = c;
+                    }
+                    else
+                    {
+                        skipped.Add($"{h}: not a curve");
+                    }
+                }
+
+                IEnumerable<(string A, string B)> pairs = query.With == null
+                    ? query.Handles.SelectMany((a, i) => query.Handles.Skip(i + 1).Select(b => (a, b)))
+                    : query.Handles.SelectMany(a => query.With.Where(b => !string.Equals(a, b, StringComparison.OrdinalIgnoreCase)).Select(b => (a, b)));
+
+                foreach (var (a, b) in pairs)
+                {
+                    if (!curves.TryGetValue(a, out Curve? ca) || !curves.TryGetValue(b, out Curve? cb))
+                    {
+                        continue;
+                    }
+
+                    result.PairsChecked++;
+                    var points = new Point3dCollection();
+                    ca.IntersectWith(cb, query.Extend ? Teigha.DatabaseServices.Intersect.ExtendBoth : Teigha.DatabaseServices.Intersect.OnBothOperands, points, IntPtr.Zero, IntPtr.Zero);
+                    var unique = new List<Point3d>();
+                    foreach (Point3d p in points)
+                    {
+                        if (!unique.Any(u => u.DistanceTo(p) < 1e-6))
+                        {
+                            unique.Add(p);
+                        }
+                    }
+
+                    if (unique.Count > 0)
+                    {
+                        result.Intersections.Add(new IntersectionPair { A = a, B = b, Points = unique.Select(Arr).ToList() });
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            result.Skipped = skipped.Count > 0 ? skipped : null;
+            return result;
+        }
+
+        public MeasureResult Measure(MeasureQuery query)
+        {
+            var result = new MeasureResult();
+            using (Transaction tr = Db.TransactionManager.StartTransaction())
+            {
+                foreach (string h in query.Handles)
+                {
+                    ObjectId id = ResolveHandle(h);
+                    if (id.IsNull || !(tr.GetObject(id, OpenMode.ForRead) is Entity ent))
+                    {
+                        result.Entities.Add(new EntityMeasurement { Handle = h, Error = "not found" });
+                        continue;
+                    }
+
+                    EntitySummary summary = Summarize(ent, tr);
+                    var m = new EntityMeasurement
+                    {
+                        Handle = summary.Handle,
+                        Kind = summary.Kind,
+                        BoundsMin = summary.BoundsMin,
+                        BoundsMax = summary.BoundsMax,
+                    };
+
+                    try
+                    {
+                        if (ent is Curve c)
+                        {
+                            double length = CurveLength(c);
+                            m.Length = Math.Round(length, 6);
+                            m.Closed = c.Closed;
+                            if (c.Closed)
+                            {
+                                m.Area = Math.Round(c.Area, 6);
+                            }
+                            else
+                            {
+                                m.Start = Arr(c.StartPoint);
+                                m.End = Arr(c.EndPoint);
+                            }
+
+                            m.Mid = Arr(PointAt(c, length / 2, length));
+                            if (query.Point is Point2 p)
+                            {
+                                Point3d closest = c.GetClosestPointTo(P3(p), false);
+                                m.ClosestPoint = Arr(closest);
+                                m.DistanceToPoint = Math.Round(closest.DistanceTo(P3(p)), 6);
+                            }
+                        }
+                        else if (ent is Dimension d)
+                        {
+                            m.Measurement = Math.Round(d.Measurement, 6);
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        m.Error = ex.Message;
+                    }
+
+                    result.Entities.Add(m);
+                }
+
+                tr.Commit();
+            }
+
+            return result;
+        }
+
+        public IReadOnlyList<CurvePoints> PointsOnCurves(IReadOnlyList<PointsRequest> requests)
+        {
+            var results = new List<CurvePoints>();
+            using (Transaction tr = Db.TransactionManager.StartTransaction())
+            {
+                for (int i = 0; i < requests.Count; i++)
+                {
+                    PointsRequest r = requests[i];
+                    var item = new CurvePoints { Index = i, Handle = r.Handle };
+                    ObjectId id = ResolveHandle(r.Handle);
+                    if (id.IsNull || !(tr.GetObject(id, OpenMode.ForRead) is Curve c))
+                    {
+                        item.Error = id.IsNull ? "not found" : "not a curve";
+                        results.Add(item);
+                        continue;
+                    }
+
+                    try
+                    {
+                        double length = CurveLength(c);
+                        item.Length = Math.Round(length, 6);
+                        item.Points = SetOut.Distances(r, length, c.Closed)
+                            .Select(d =>
+                            {
+                                Point3d p = PointAt(c, d, length);
+                                Vector3d t = c.GetFirstDerivative(p);
+                                double angle = Deg(Math.Atan2(t.Y, t.X));
+                                return new PointOnCurve
+                                {
+                                    Point = Arr(p),
+                                    Distance = Math.Round(d, 6),
+                                    Angle = Math.Round(angle < 0 ? angle + 360 : angle, 6),
+                                };
+                            })
+                            .ToList();
+                        item.Ok = true;
+                    }
+                    catch (System.Exception ex)
+                    {
+                        item.Error = ex.Message;
+                    }
+
+                    results.Add(item);
+                }
+
+                tr.Commit();
+            }
+
+            return results;
+        }
+
+        private static double CurveLength(Curve c) =>
+            c.GetDistanceAtParameter(c.EndParam) - c.GetDistanceAtParameter(c.StartParam);
+
+        private static Point3d PointAt(Curve c, double distance, double length)
+        {
+            try
+            {
+                return c.GetPointAtDist(Math.Max(0, Math.Min(length, distance)));
+            }
+            catch (System.Exception)
+            {
+                // Rounding right at an end can be rejected; fall back to that end.
+                return distance >= length / 2 ? c.EndPoint : c.StartPoint;
+            }
         }
 
         // ================================================================ user input

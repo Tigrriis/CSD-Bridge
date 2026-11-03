@@ -33,6 +33,11 @@ namespace CsdBridge.Core.Tools
         public const string ModifyEntities = "modify_entities";
         public const string PickPoint = "pick_point";
         public const string SelectEntities = "select_entities";
+        public const string Calculate = "calculate";
+        public const string OffsetEntities = "offset_entities";
+        public const string Intersect = "intersect";
+        public const string Measure = "measure";
+        public const string PointsOnCurve = "points_on_curve";
 
         public const int MaxEntitiesPerCall = 500;
         public const int MaxOperationsPerCall = 200;
@@ -149,6 +154,84 @@ namespace CsdBridge.Core.Tools
                 "\"layer\":{\"type\":\"string\"},\"color\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":255}" +
                 "},\"required\":[\"action\",\"handles\"]}}" +
                 "},\"required\":[\"operations\"]}"),
+
+            new ToolDefinition(
+                Calculate,
+                "Evaluate arithmetic exactly. Use this for every non-trivial number you need (bay widths, spacings, " +
+                "set-out coordinates, trigonometry, unit conversions) instead of working it out yourself. Give a list of " +
+                "expressions; each may have a name that later expressions can use, e.g. " +
+                "[{\"name\":\"bays\",\"expr\":\"ceil(6000/2400)\"},{\"name\":\"bay\",\"expr\":\"6000/bays\"}]. " +
+                "Operators + - * / % ^ and parentheses; functions sqrt, abs, round(x[, digits]), floor, ceil, min, max, " +
+                "hypot, sin, cos, tan, asin, acos, atan, atan2(y, x) with angles in degrees; constant pi. An error in one " +
+                "expression doesn't stop the others.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"expressions\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":200,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"name\":{\"type\":\"string\",\"description\":\"Optional; letters, digits and _, starting with a letter.\"}," +
+                "\"expr\":{\"type\":\"string\"}" +
+                "},\"required\":[\"expr\"]}}" +
+                "},\"required\":[\"expressions\"]}"),
+
+            new ToolDefinition(
+                OffsetEntities,
+                "Offset curves (lines, polylines, arcs, circles) by an exact distance using the CAD geometry engine. Use " +
+                "this instead of computing offset coordinates yourself: cover lines, wall thicknesses, setbacks, parallel " +
+                "lines. Each operation applies to its handles and needs distance (> 0) and a side: side_point (any point " +
+                "on the side to offset towards) or side 'inside' / 'outside' (closed shapes only). Optional count makes " +
+                "offsets at distance, 2 x distance, ...; optional layer puts the new curves on that layer (created if " +
+                "missing; default: the source's layer). Corners of offset polylines are mitred. Returns the new handles.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"offsets\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":100,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"handles\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"minItems\":1}," +
+                "\"distance\":{\"type\":\"number\"}," +
+                "\"side_point\":" + Point + "," +
+                "\"side\":{\"type\":\"string\",\"enum\":[\"inside\",\"outside\"]}," +
+                "\"count\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100}," +
+                "\"layer\":{\"type\":\"string\"}" +
+                "},\"required\":[\"handles\",\"distance\"]}}" +
+                "},\"required\":[\"offsets\"]}"),
+
+            new ToolDefinition(
+                Intersect,
+                "Find exact intersection points between entities (lines, polylines, arcs, circles). Every pair among " +
+                "handles is checked; or give with to check each of handles against each of with. extend: true treats " +
+                "lines as infinite and arcs as full circles, to find where things would meet if extended (e.g. wall " +
+                "centrelines). Returns only the pairs that intersect, with their points.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"handles\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"minItems\":1,\"maxItems\":200}," +
+                "\"with\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":200}," +
+                "\"extend\":{\"type\":\"boolean\"}" +
+                "},\"required\":[\"handles\"]}"),
+
+            new ToolDefinition(
+                Measure,
+                "Measure exactly. For entities (handles): length, enclosed area and open/closed for curves, start, end " +
+                "and mid points, bounding box, and the measured value of dimensions; with point, also each entity's " +
+                "closest point to it and the distance. With from and to (no entities needed): distance, dx, dy and angle " +
+                "between two points. Use this to get exact positions to build on and to check your work.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"handles\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":500}," +
+                "\"point\":" + Point + "," +
+                "\"from\":" + Point + "," +
+                "\"to\":" + Point +
+                "}}"),
+
+            new ToolDefinition(
+                PointsOnCurve,
+                "Exact set-out points along curves (lines, polylines, arcs, circles): e.g. pier positions every 1800 " +
+                "along a wall line, or a beam divided into 5 equal bays. Each request has a handle and one of: divide " +
+                "(number of equal parts; open curves include both ends), spacing (with optional start_offset; points from " +
+                "the start up to the end), or distances (explicit distances along the curve). from_end: true measures " +
+                "from the end. Returns each point with its distance along and the curve's direction there (degrees).",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"requests\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":100,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"handle\":{\"type\":\"string\"}," +
+                "\"divide\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":1000}," +
+                "\"spacing\":{\"type\":\"number\"}," +
+                "\"start_offset\":{\"type\":\"number\"}," +
+                "\"distances\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"maxItems\":1000}," +
+                "\"from_end\":{\"type\":\"boolean\"}" +
+                "},\"required\":[\"handle\"]}}" +
+                "},\"required\":[\"requests\"]}"),
 
             new ToolDefinition(
                 PickPoint,
