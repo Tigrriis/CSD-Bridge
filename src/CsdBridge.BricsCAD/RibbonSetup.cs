@@ -15,11 +15,15 @@ namespace CsdBridge.BricsCAD
     ///   Chat | Draft | History   (large)    New chat / Status / API key   (small)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
+    ///
+    /// BricsCAD exposes its ribbon through ComponentManager.Ribbon. RibbonServices'
+    /// RibbonPaletteSet (the AutoCAD route) can be null even while the ribbon shows.
     /// </summary>
     internal static class RibbonSetup
     {
         private const string TabId = "CSDBRIDGE_TAB";
         private static bool _waitingForRibbon;
+        private static bool _waitingForIdle;
         private static bool _watchingWorkspace;
 
         /// <summary>Called at startup. Adds the tab now, or as soon as the ribbon exists.</summary>
@@ -33,11 +37,21 @@ namespace CsdBridge.BricsCAD
                     CadApp.SystemVariableChanged += OnSystemVariableChanged;
                 }
 
-                if (RibbonServices.RibbonPaletteSet != null)
+                if (GetRibbon() != null)
                 {
                     AddTab();
+                    return;
                 }
-                else if (!_waitingForRibbon)
+
+                // Not built yet (e.g. loaded at startup): try again once BricsCAD is idle,
+                // and when the ribbon palette is created.
+                if (!_waitingForIdle)
+                {
+                    _waitingForIdle = true;
+                    CadApp.Idle += OnFirstIdle;
+                }
+
+                if (!_waitingForRibbon)
                 {
                     _waitingForRibbon = true;
                     RibbonServices.RibbonPaletteSetCreated += OnRibbonCreated;
@@ -49,20 +63,30 @@ namespace CsdBridge.BricsCAD
             }
         }
 
-        /// <summary>Add the tab if it isn't there. Returns a message for the command line.</summary>
-        public static string AddTab()
+        /// <summary>
+        /// Add the tab if it isn't there. With <paramref name="activate"/>, also switch the
+        /// ribbon to it (used by AIRIBBON). Returns a message for the command line.
+        /// </summary>
+        public static string AddTab(bool activate = false)
         {
             try
             {
-                RibbonControl? ribbon = RibbonServices.RibbonPaletteSet?.RibbonControl;
+                RibbonControl? ribbon = GetRibbon();
                 if (ribbon == null)
                 {
-                    return "the ribbon isn't showing. Turn it on with the RIBBON command, then run AIRIBBON.";
+                    return "BricsCAD didn't give the add-in access to the ribbon. If the ribbon is off, turn it on with RIBBON and run AIRIBBON again.";
                 }
 
-                if (ribbon.FindTab(TabId) != null)
+                RibbonTab? existing = ribbon.FindTab(TabId);
+                if (existing != null)
                 {
-                    return "the CSD-Bridge ribbon tab is already there.";
+                    existing.IsVisible = true;
+                    if (activate)
+                    {
+                        ribbon.ActiveTab = existing;
+                    }
+
+                    return "the CSD-Bridge ribbon tab is already there" + (activate ? " (switched to it)." : ".");
                 }
 
                 var source = new RibbonPanelSource { Id = "CSDBRIDGE_PANEL", Name = "Claude", Title = "Claude" };
@@ -81,11 +105,51 @@ namespace CsdBridge.BricsCAD
                 var tab = new RibbonTab { Id = TabId, Name = "CSD-Bridge", Title = "CSD-Bridge" };
                 tab.Panels.Add(new RibbonPanel { Source = source });
                 ribbon.Tabs.Add(tab);
-                return "added the CSD-Bridge ribbon tab.";
+                if (activate)
+                {
+                    ribbon.ActiveTab = tab;
+                }
+
+                return "added the CSD-Bridge ribbon tab" + (activate ? " and switched to it." : ".");
             }
             catch (Exception ex)
             {
                 return "could not add the ribbon tab: " + ex.Message;
+            }
+        }
+
+        private static RibbonControl? GetRibbon()
+        {
+            try
+            {
+                RibbonControl? ribbon = ComponentManager.Ribbon;
+                if (ribbon != null)
+                {
+                    return ribbon;
+                }
+            }
+            catch (Exception)
+            {
+                // fall through to the AutoCAD-style route
+            }
+
+            try
+            {
+                return RibbonServices.RibbonPaletteSet?.RibbonControl;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private static void OnFirstIdle(object? sender, EventArgs e)
+        {
+            CadApp.Idle -= OnFirstIdle;
+            _waitingForIdle = false;
+            if (GetRibbon() != null)
+            {
+                AddTab();
             }
         }
 
