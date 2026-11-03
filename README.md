@@ -1,0 +1,129 @@
+# CSD-Bridge
+
+A BricsCAD add-in that lets you ask Claude to draft in the open drawing ("draw a 6 m x 4 m slab
+outline on S-CONC with a 2.4 m grid, and dimension it"). The add-in calls the Claude API itself.
+There is no MCP server and no Claude desktop app in the loop.
+
+```
+BricsCAD ── CSD-Bridge add-in ── Claude API
+              │  agent loop + 7 drafting tools
+              └─ draws, edits, asks you to pick points / select objects
+```
+
+## What it does
+
+- **AIDRAFT** (command line) or **AIPANEL** (dockable chat panel): describe what you want.
+- Claude reads the drawing setup (units, layers, blocks, styles), plans the geometry, then draws it
+  in batches: lines, polylines, circles, arcs, text, mtext, linear/aligned dimensions, and block
+  inserts with attribute values.
+- It can edit by handle (move, copy/array, rotate, scale, erase, change layer/colour).
+- It can **ask you to click a point or select objects** mid-request, which an external MCP
+  client can't do naturally.
+- Objects you select *before* asking are passed in as context ("dimension these").
+- Conversations are per drawing, so follow-ups work ("make it 300 wider").
+- The whole request is **one UNDO step**. Esc or Stop cancels.
+- Claude can only use these tools. It cannot run commands, LISP, scripts or open files.
+
+## Status
+
+This is a working scaffold for exploration, not a finished product.
+
+| Part | State |
+|---|---|
+| Core (agent loop, tools, validation) | Built and unit-tested: 16 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
+| BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
+| Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
+
+See [docs/architecture.md](docs/architecture.md) for the design, and "First things to test" there.
+
+## Repository layout
+
+```
+src/CsdBridge.Core/        CAD-independent: Claude agent loop, tool schemas, input validation,
+                           in-memory drawing + DXF preview (netstandard2.0 + net8.0)
+src/CsdBridge.BricsCAD/    The add-in: commands, chat panel, BricsCAD drawing host, settings
+tools/CsdBridge.Cli/       Try prompts without BricsCAD; writes a DXF preview
+tests/CsdBridge.Core.Tests Unit tests (no API key or BricsCAD needed)
+install/                   Autoload registration script
+docs/architecture.md       Design notes, threading, caching, risks, roadmap
+```
+
+## Quick start
+
+### 1. Try it without BricsCAD (any OS)
+
+Needs the .NET 8 SDK and an Anthropic API key.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+```bash
+dotnet run --project tools/CsdBridge.Cli -- --standards src/CsdBridge.BricsCAD/office-standards.md "Draw a 6000 x 4000 slab outline with grid lines at 2400 centres both ways, labelled, and dimension the overall size"
+```
+
+This draws into an in-memory drawing and writes `preview.dxf`; open it in BricsCAD to look.
+Run with no prompt for an interactive session. `pick_point` and `select_entities` prompt in
+the console. It is the quickest way to tune prompts, tool descriptions and office standards.
+
+### 2. Build the add-in (Windows, BricsCAD installed)
+
+```bash
+dotnet build src/CsdBridge.BricsCAD -c Release -p:BricsCADVersion=25
+```
+
+```bash
+dotnet build src/CsdBridge.BricsCAD -c Release -p:BricsCADVersion=26
+```
+
+Output goes to `src/CsdBridge.BricsCAD/bin/Release/V25/` (or `V26/`). If BricsCAD isn't in
+`C:\Program Files\Bricsys\BricsCAD V25 en_US`, add `-p:BricsCADDir="..."`. V26 needs the
+x64 .NET 8 Desktop Runtime on the user's machine.
+
+### 3. Load it
+
+1. In BricsCAD: `NETLOAD`, then pick `CsdBridge.BricsCAD.dll` from the output folder.
+2. `AIKEY`, then paste your Anthropic API key. It is stored encrypted for your Windows account.
+3. `AIPANEL` opens the chat panel, or use `AIDRAFT` on the command line.
+
+To load automatically at startup:
+`install\Register-Autoload.ps1 -DllPath <full path to dll> -BricsCADVersion 25`.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `AIDRAFT` | Ask Claude on the command line. Uses any pre-selected objects as context. |
+| `AIPANEL` | Open the chat panel (Enter sends, Shift+Enter for a new line, Stop cancels) |
+| `AIRESET` | New conversation for this drawing; reloads settings |
+| `AIKEY` | Set or remove the stored API key |
+| `AISTATUS` | Show model, key source, standards file, settings and log locations, usage |
+
+## Settings
+
+`%APPDATA%\CsdBridge\settings.json` is created on first use:
+
+| Key | Default | Notes |
+|---|---|---|
+| `model` | `claude-opus-5-5` | Any Claude model ID |
+| `effort` | `high` | `low` / `medium` / `high` / `xhigh` / `max`. Lower is faster and cheaper. |
+| `max_turns` | `30` | Safety limit on model round trips per request |
+| `server_side_fallback` | `true` | If Claude declines a request on policy grounds, Anthropic retries it on a fallback model. Claude API only. |
+| `standards_file` | *(blank)* | Path to your office standards. Blank uses `office-standards.md` next to the DLL. |
+| `base_url` | *(blank)* | Optional internal gateway URL that holds the API key centrally |
+
+## Office standards
+
+`office-standards.md` is added to Claude's instructions on every request: layers, colours,
+lineweights, text heights, dimension conventions. **The shipped file is an example; replace it
+with your real standards.** To share one file across the office, put it on a network drive and
+point `standards_file` at it.
+
+## Cost and logs
+
+Each request is several API calls, one per round of tool use. The ~3,400-token system prompt
+and tool definitions are prompt-cached, so repeat calls mostly pay the cheap cache-read rate.
+The command line and panel show token usage after every request. A full log of prompts, tool
+calls, results and usage is written to `%LOCALAPPDATA%\CsdBridge\logs\`. Use those numbers
+rather than estimates when deciding on effort level or model.

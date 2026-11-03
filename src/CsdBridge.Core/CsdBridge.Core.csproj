@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    CAD-independent core: the Claude agent loop, the drafting tool catalogue and
+    input validation.
+
+    Two targets on purpose:
+    - netstandard2.0 for BricsCAD V24/V25 (.NET Framework 4.8).
+    - net8.0 for BricsCAD V26 (.NET 8). The Anthropic SDK's net8.0 build uses
+      init-only setters where its netstandard2.0 build uses plain setters, so a
+      netstandard2.0-only Core fails with MissingMethodException on .NET 8.
+  -->
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <RootNamespace>CsdBridge.Core</RootNamespace>
+    <AssemblyName>CsdBridge.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Anthropic" Version="13.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="CsdBridge.Core.Tests" />
+  </ItemGroup>
+
+</Project>

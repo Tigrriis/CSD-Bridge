@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Try the drafting agent without BricsCAD: it draws into an in-memory drawing
+    and writes a DXF preview you can open in BricsCAD. Calls the real Claude API
+    (needs ANTHROPIC_API_KEY), so it is the quickest way to iterate on prompts,
+    tool descriptions and office standards.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>csd-bridge</AssemblyName>
+    <RootNamespace>CsdBridge.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CsdBridge.Core\CsdBridge.Core.csproj" />
+  </ItemGroup>
+
+</Project>
