@@ -32,8 +32,10 @@ namespace CsdBridge.BricsCAD
             docs.DocumentToBeDestroyed += (s, e) => AgentRunner.Forget(e.Document);
             docs.DocumentActivated += (s, e) => ChatPalette.OnDocumentActivated(e.Document);
 
+            RibbonSetup.Initialize();
+
             docs.MdiActiveDocument?.Editor.WriteMessage(
-                "\nCSD-Bridge loaded. Commands: AIDRAFT, AIPANEL, AIRESET, AIKEY, AISTATUS.\n");
+                "\nCSD-Bridge loaded. Commands: AIDRAFT, AIPANEL, AIHISTORY, AIRESET, AIKEY, AISTATUS (or use the CSD-Bridge ribbon tab).\n");
         }
     }
 

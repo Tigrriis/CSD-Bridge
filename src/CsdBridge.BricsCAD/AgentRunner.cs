@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -10,6 +9,7 @@ using Anthropic;
 using Bricscad.ApplicationServices;
 using CsdBridge.Core.Agent;
 using CsdBridge.Core.Drawing;
+using CsdBridge.Core.History;
 using CsdBridge.Core.Tools;
 using Teigha.DatabaseServices;
 
@@ -25,11 +25,21 @@ namespace CsdBridge.BricsCAD
         private static AnthropicClient? _client;
         private static BridgeSettings? _settings;
         private static CancellationTokenSource? _current;
+        private static string? _pendingPrompt;
 
         /// <summary>Raised with true when a request starts and false when it ends.</summary>
         public static event Action<bool>? BusyChanged;
 
+        /// <summary>Raised when a request starts, after each step, and when it finishes.</summary>
+        public static event Action<RunRecord>? RunUpdated;
+
         public static bool IsBusy => _current != null;
+
+        /// <summary>The request running now, if any (not saved to history until it ends).</summary>
+        public static RunRecord? CurrentRun { get; private set; }
+
+        /// <summary>Saved requests (%LOCALAPPDATA%\CsdBridge\logs\yyyy-MM-dd.jsonl).</summary>
+        public static HistoryStore History { get; } = new HistoryStore(BridgeSettings.LogFolder);
 
         public static BridgeSettings Settings => _settings ??= BridgeSettings.Load();
 
@@ -60,6 +70,31 @@ namespace CsdBridge.BricsCAD
         public static void Cancel() => _current?.Cancel();
 
         /// <summary>
+        /// Run a prompt in the active drawing from a panel or window (not a command).
+        /// It starts our run command so the request runs in command context like AIDRAFT.
+        /// Returns false if there is no drawing open or a request is already running.
+        /// </summary>
+        public static bool QueueRun(string prompt)
+        {
+            Document? doc = Bricscad.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null || IsBusy || string.IsNullOrWhiteSpace(prompt))
+            {
+                return false;
+            }
+
+            _pendingPrompt = prompt.Trim();
+            doc.SendStringToExecute(Commands.QueuedRunCommand + " ", true, false, false);
+            return true;
+        }
+
+        public static string? TakePendingPrompt()
+        {
+            string? p = _pendingPrompt;
+            _pendingPrompt = null;
+            return p;
+        }
+
+        /// <summary>
         /// Run one request to completion. Must be called from inside a command (AIDRAFT or
         /// the palette's run command) so the document is locked and undo is grouped.
         /// </summary>
@@ -83,15 +118,28 @@ namespace CsdBridge.BricsCAD
             var cts = new CancellationTokenSource();
             _current = cts;
             BusyChanged?.Invoke(true);
-            var log = new RunLog(doc, prompt);
-            output.Started();
+            var record = new RunRecord
+            {
+                Drawing = Path.GetFileName(doc.Name),
+                DrawingPath = doc.Name,
+                Prompt = prompt,
+                SelectedCount = preselected?.Length ?? 0,
+                Model = Settings.Model,
+            };
+            CurrentRun = record;
+            output.Started(prompt);
+            Notify(record);
 
             try
             {
                 var progress = new PumpedProgress(e =>
                 {
                     output.Event(e);
-                    log.Event(e);
+                    record.Record(e);
+                    if (e.Kind != AgentEventKind.Waiting)
+                    {
+                        Notify(record);
+                    }
                 });
 
                 Task<AgentRunResult> task = Task.Run(() => agent.RunAsync(fullPrompt, progress, cts.Token));
@@ -107,18 +155,45 @@ namespace CsdBridge.BricsCAD
 
                 AgentRunResult result = task.GetAwaiter().GetResult();
                 output.Finished(result);
-                log.Finished(result);
+                record.Complete(result);
             }
             catch (Exception ex)
             {
                 output.Error(ex.Message);
-                log.Line("EXCEPTION " + ex);
+                record.Fail(ex.Message);
             }
             finally
             {
                 _current = null;
+                CurrentRun = null;
                 cts.Dispose();
+                Save(record);
                 BusyChanged?.Invoke(false);
+                Notify(record);
+            }
+        }
+
+        private static void Save(RunRecord record)
+        {
+            try
+            {
+                History.Append(record);
+            }
+            catch (Exception)
+            {
+                // History must never break a drafting request.
+            }
+        }
+
+        private static void Notify(RunRecord record)
+        {
+            try
+            {
+                RunUpdated?.Invoke(record);
+            }
+            catch (Exception)
+            {
+                // A UI problem in the history window must not stop the request.
             }
         }
 
@@ -200,9 +275,10 @@ namespace CsdBridge.BricsCAD
                 _doc = doc;
             }
 
-            public void Started()
+            public void Started(string prompt)
             {
                 Write("\nCSD-Bridge: working... (Esc to cancel)");
+                ChatPalette.Control?.AppendUser(prompt);
                 ChatPalette.Control?.SetStatus("Working... (Esc or Stop to cancel)");
             }
 
@@ -263,43 +339,6 @@ namespace CsdBridge.BricsCAD
             private void Write(string text) => _doc.Editor.WriteMessage(text);
 
             private static string Shorten(string s) => s.Length > 300 ? s.Substring(0, 300) + "..." : s;
-        }
-
-        /// <summary>Plain-text log of each request, for reviewing prompts, failures and cost.</summary>
-        private sealed class RunLog
-        {
-            private readonly string _path;
-
-            public RunLog(Document doc, string prompt)
-            {
-                _path = Path.Combine(BridgeSettings.LogFolder, DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".log");
-                Line($"---- {DateTime.Now:HH:mm:ss} {Path.GetFileName(doc.Name)}");
-                Line("USER " + prompt.Replace("\n", " "));
-            }
-
-            public void Event(AgentEvent e)
-            {
-                if (e.Kind != AgentEventKind.Waiting)
-                {
-                    Line($"{e.Kind.ToString().ToUpperInvariant()} {(e.ToolName == null ? "" : e.ToolName + ": ")}{e.Text.Replace("\n", " ")}{(e.IsError ? " [error]" : "")}");
-                }
-            }
-
-            public void Finished(AgentRunResult r) =>
-                Line($"RESULT {r.Status} tools={r.ToolCalls} usage=[{r.Usage}]{(r.Error == null ? "" : " error=" + r.Error)}");
-
-            public void Line(string text)
-            {
-                try
-                {
-                    Directory.CreateDirectory(BridgeSettings.LogFolder);
-                    File.AppendAllText(_path, text + Environment.NewLine);
-                }
-                catch (Exception)
-                {
-                    // Logging must never break a drafting request.
-                }
-            }
         }
     }
 }

@@ -12,6 +12,8 @@ namespace CsdBridge.BricsCAD
     /// <summary>
     /// AIDRAFT    ask Claude to draw or change something (command line)
     /// AIPANEL    open the chat panel
+    /// AIHISTORY  open the history of requests to Claude
+    /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
     /// AIRESET    start a new conversation for this drawing
     /// AIKEY      set or remove the Anthropic API key
     /// AISTATUS   show settings, key source and usage
@@ -20,8 +22,8 @@ namespace CsdBridge.BricsCAD
     {
         private const string Group = "CSDBRIDGE";
 
-        /// <summary>Internal: run the prompt queued by the chat panel.</summary>
-        internal const string PaletteRunCommand = "CSDAI_PALETTE_RUN";
+        /// <summary>Internal: run the prompt queued by the chat panel, history window or ribbon.</summary>
+        internal const string QueuedRunCommand = "CSDAI_PALETTE_RUN";
 
         [CommandMethod(Group, "AIDRAFT", CommandFlags.Modal | CommandFlags.UsePickSet)]
         public void AiDraft()
@@ -40,10 +42,10 @@ namespace CsdBridge.BricsCAD
             AgentRunner.Run(doc, res.StringResult, preselected);
         }
 
-        [CommandMethod(Group, PaletteRunCommand, CommandFlags.Modal | CommandFlags.UsePickSet)]
-        public void PaletteRun()
+        [CommandMethod(Group, QueuedRunCommand, CommandFlags.Modal | CommandFlags.UsePickSet)]
+        public void QueuedRun()
         {
-            string? prompt = ChatPalette.TakePendingPrompt();
+            string? prompt = AgentRunner.TakePendingPrompt();
             if (prompt == null)
             {
                 return;
@@ -55,6 +57,16 @@ namespace CsdBridge.BricsCAD
 
         [CommandMethod(Group, "AIPANEL", CommandFlags.Modal)]
         public void AiPanel() => ChatPalette.Show();
+
+        [CommandMethod(Group, "AIHISTORY", CommandFlags.Modal)]
+        public void AiHistory() => HistoryWindow.ShowWindow();
+
+        [CommandMethod(Group, "AIRIBBON", CommandFlags.Modal)]
+        public void AiRibbon()
+        {
+            string result = RibbonSetup.AddTab();
+            CadApp.DocumentManager.MdiActiveDocument.Editor.WriteMessage("\nCSD-Bridge: " + result + "\n");
+        }
 
         [CommandMethod(Group, "AIRESET", CommandFlags.Modal)]
         public void AiReset()

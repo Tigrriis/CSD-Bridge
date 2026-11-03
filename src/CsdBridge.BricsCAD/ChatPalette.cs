@@ -19,7 +19,6 @@ namespace CsdBridge.BricsCAD
     {
         private static readonly Guid PaletteId = new Guid("4f0d6f2a-6c1e-4f43-9a52-2b8b3f1d7c11");
         private static PaletteSet? _set;
-        private static string? _pendingPrompt;
 
         /// <summary>The panel's control, or null if the panel was never opened.</summary>
         public static ChatControl? Control { get; private set; }
@@ -42,15 +41,6 @@ namespace CsdBridge.BricsCAD
             _set.Visible = true;
         }
 
-        public static void Queue(string prompt) => _pendingPrompt = prompt;
-
-        public static string? TakePendingPrompt()
-        {
-            string? p = _pendingPrompt;
-            _pendingPrompt = null;
-            return p;
-        }
-
         public static void OnDocumentActivated(Document? doc)
         {
             if (doc != null && Control != null && !AgentRunner.IsBusy)
@@ -67,6 +57,7 @@ namespace CsdBridge.BricsCAD
         private readonly Button _send;
         private readonly Button _stop;
         private readonly Button _new;
+        private readonly Button _history;
         private readonly Label _status;
 
         public ChatControl()
@@ -88,12 +79,14 @@ namespace CsdBridge.BricsCAD
             _send = new Button { Text = "Send", AutoSize = true };
             _stop = new Button { Text = "Stop", AutoSize = true, Enabled = false };
             _new = new Button { Text = "New chat", AutoSize = true };
+            _history = new Button { Text = "History", AutoSize = true };
             _send.Click += (s, e) => Send();
             _stop.Click += (s, e) => AgentRunner.Cancel();
             _new.Click += (s, e) => NewChat();
+            _history.Click += (s, e) => HistoryWindow.ShowWindow();
 
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, AutoSize = true };
-            buttons.Controls.AddRange(new Control[] { _send, _stop, _new });
+            buttons.Controls.AddRange(new Control[] { _send, _stop, _new, _history });
 
             _status = new Label { Dock = DockStyle.Bottom, AutoSize = false, Height = 34, ForeColor = SystemColors.GrayText, Text = "Enter to send, Shift+Enter for a new line." };
 
@@ -131,19 +124,25 @@ namespace CsdBridge.BricsCAD
                 return;
             }
 
-            Document? doc = CadApp.DocumentManager.MdiActiveDocument;
-            if (doc == null)
+            if (CadApp.DocumentManager.MdiActiveDocument == null)
             {
                 AppendError("Open a drawing first.");
                 return;
             }
 
-            AppendUser(text);
-            _input.Clear();
-            ChatPalette.Queue(text);
+            // Runs in command context (see class comment); the run echoes the prompt here.
+            if (AgentRunner.QueueRun(text))
+            {
+                _input.Clear();
+            }
+        }
 
-            // Run in command context (see class comment).
-            doc.SendStringToExecute(Commands.PaletteRunCommand + " ", true, false, false);
+        /// <summary>Put text in the input box for editing (used by "Edit in chat" in History).</summary>
+        public void SetInput(string text)
+        {
+            _input.Text = text;
+            _input.SelectionStart = _input.TextLength;
+            _input.Focus();
         }
 
         private void NewChat()
