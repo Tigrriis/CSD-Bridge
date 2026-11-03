@@ -27,6 +27,8 @@ namespace CsdBridge.BricsCAD
         private const int MainWindowDepth = 2;
         private const int MaxNodes = 8000;
         private const int MaxText = 200;
+        private const int GridSampleRows = 8;
+        private const int GridSampleColumns = 14;
 
         public static string Folder { get; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CsdBridge", "uidumps");
@@ -147,6 +149,13 @@ namespace CsdBridge.BricsCAD
             stats.Nodes++;
             sb.Append(' ', depth * 2).AppendLine(Describe(element, stats));
 
+            // Grids: show a sample of cell contents instead of hundreds of cell elements.
+            if (SupportsPattern(element, GridPattern.Pattern))
+            {
+                SampleGrid(element, depth + 1, sb);
+                return;
+            }
+
             AutomationElement? child;
             try
             {
@@ -165,7 +174,10 @@ namespace CsdBridge.BricsCAD
 
             while (child != null)
             {
-                Walk(child, depth + 1, maxDepth, sb, stats);
+                // Dialogs (e.g. Civil Site Design's) sit under the main window in the UI
+                // Automation tree; always expand them fully.
+                int childMax = IsDialog(child) ? depth + 1 + MaxDepth : maxDepth;
+                Walk(child, depth + 1, childMax, sb, stats);
                 try
                 {
                     child = TreeWalker.ControlViewWalker.GetNextSibling(child);
@@ -301,6 +313,124 @@ namespace CsdBridge.BricsCAD
             }
 
             return string.Join("; ", parts);
+        }
+
+        private static bool IsDialog(AutomationElement e)
+        {
+            try
+            {
+                var c = e.Current;
+                return c.ControlType == ControlType.Window
+                    && (c.FrameworkId == "WinForm" || c.FrameworkId == "WPF" || c.ClassName == "#32770");
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static bool SupportsPattern(AutomationElement e, AutomationPattern pattern)
+        {
+            try
+            {
+                return e.GetSupportedPatterns().Contains(pattern);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// First rows of a grid: each cell's value (or name), with * marking cells whose value
+        /// can be set directly. Column headers if the grid reports them.
+        /// </summary>
+        private static void SampleGrid(AutomationElement element, int depth, StringBuilder sb)
+        {
+            string indent = new string(' ', depth * 2);
+            try
+            {
+                var grid = (GridPattern)element.GetCurrentPattern(GridPattern.Pattern);
+                int rows = grid.Current.RowCount, cols = grid.Current.ColumnCount;
+                int showCols = Math.Min(cols, GridSampleColumns);
+
+                if (element.TryGetCurrentPattern(TablePattern.Pattern, out object tableObj))
+                {
+                    AutomationElement[] headers = ((TablePattern)tableObj).Current.GetColumnHeaders();
+                    if (headers.Length > 0)
+                    {
+                        sb.Append(indent).Append("[headers] ")
+                          .AppendLine(string.Join(" | ", headers.Take(showCols).Select(h => Short(SafeName(h)))));
+                    }
+                }
+
+                int editable = 0, readable = 0;
+                for (int r = 0; r < Math.Min(rows, GridSampleRows); r++)
+                {
+                    var cells = new List<string>();
+                    for (int col = 0; col < showCols; col++)
+                    {
+                        cells.Add(Cell(grid, r, col, ref editable, ref readable));
+                    }
+
+                    sb.Append(indent).Append($"[row {r}] ").AppendLine(string.Join(" | ", cells));
+                }
+
+                sb.Append(indent).AppendLine(
+                    $"[grid: {rows} rows x {cols} columns; sampled cells with text: {readable}, settable (*): {editable}" +
+                    (cols > showCols ? $"; first {showCols} columns shown" : "") + "]");
+            }
+            catch (Exception ex)
+            {
+                sb.Append(indent).AppendLine("[grid cells could not be read: " + ex.GetType().Name + "]");
+            }
+        }
+
+        private static string Cell(GridPattern grid, int row, int col, ref int editable, ref int readable)
+        {
+            try
+            {
+                AutomationElement cell = grid.GetItem(row, col);
+                if (cell == null)
+                {
+                    return "-";
+                }
+
+                string text = SafeName(cell);
+                bool settable = false;
+                if (cell.TryGetCurrentPattern(ValuePattern.Pattern, out object valueObj))
+                {
+                    var value = ((ValuePattern)valueObj).Current;
+                    if (!string.IsNullOrEmpty(value.Value))
+                    {
+                        text = value.Value;
+                    }
+
+                    settable = !value.IsReadOnly;
+                }
+
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    readable++;
+                }
+
+                if (settable)
+                {
+                    editable++;
+                }
+
+                text = Short(text);
+                if (text.Length > 30)
+                {
+                    text = text.Substring(0, 30) + "...";
+                }
+
+                return (text.Length == 0 ? "\"\"" : text) + (settable ? "*" : "");
+            }
+            catch (Exception)
+            {
+                return "?";
+            }
         }
 
         // ------------------------------------------------------------------ summary
