@@ -16,6 +16,7 @@ namespace CsdBridge.BricsCAD
     /// AIHISTORY  open the history of requests to Claude
     /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
     /// AIEFFORT   choose how hard Claude works: Auto, Quick, Normal or Thorough
+    /// AIUIDUMP   diagnostic: save the controls of open dialogs to a text file
     /// AIRESET    start a new conversation for this drawing
     /// AIKEY      set or remove the Anthropic API key
     /// AISTATUS   show settings, key source and usage
@@ -82,6 +83,41 @@ namespace CsdBridge.BricsCAD
             ed.WriteMessage(mode == EffortMode.Auto
                 ? "\nCSD-Bridge: effort is Auto: Quick for simple edits and questions, Thorough for big multi-step jobs, Normal otherwise.\n"
                 : $"\nCSD-Bridge: effort is {mode} for every request until you change it.\n");
+        }
+
+        [CommandMethod(Group, "AIUIDUMP", CommandFlags.Modal)]
+        public void AiUiDump()
+        {
+            Editor ed = CadApp.DocumentManager.MdiActiveDocument.Editor;
+            var options = new PromptIntegerOptions("\nSeconds before capturing (open the dialog in that time)")
+            {
+                DefaultValue = 10,
+                UseDefaultValue = true,
+                AllowNone = true,
+                AllowNegative = false,
+                LowerLimit = 0,
+                UpperLimit = 120,
+            };
+
+            PromptIntegerResult res = ed.GetInteger(options);
+            int seconds;
+            if (res.Status == PromptStatus.OK)
+            {
+                seconds = res.Value;
+            }
+            else if (res.Status == PromptStatus.None)
+            {
+                seconds = 10;
+            }
+            else
+            {
+                return;
+            }
+
+            UiDump.CaptureAfter(seconds);
+            ed.WriteMessage(
+                $"\nCSD-Bridge: capturing open windows in {seconds} s. Open the Civil Site Design dialog now and leave it on screen." +
+                $"\nYou'll hear a chime when it's saved, and Explorer will open on the file in {UiDump.Folder}\n");
         }
 
         [CommandMethod(Group, "AIHISTORY", CommandFlags.Modal)]

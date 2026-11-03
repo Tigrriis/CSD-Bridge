@@ -165,6 +165,7 @@ with `-Remove`.
 | `AIRESET` | New conversation for this drawing; reloads settings |
 | `AIKEY` | Set or remove the stored API key |
 | `AISTATUS` | Show model, key source, standards file, settings and log locations, usage |
+| `AIUIDUMP` | Diagnostic: after a countdown (default 10 s), saves the controls of BricsCAD's open dialogs (labels, values, buttons, keyboard shortcuts) to `%LOCALAPPDATA%\CsdBridge\uidumps\`. Read-only. Used to check whether other add-ins' dialogs, such as Civil Site Design's, can be automated. |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, and small New chat,
