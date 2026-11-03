@@ -13,6 +13,13 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
 ## What it does
 
 - **AIDRAFT** (command line) or **AIPANEL** (dockable chat panel): describe what you want.
+  Both are also on the **CSD-Bridge ribbon tab**.
+- **AIHISTORY** opens a history window:
+  - every request, across all drawings and days, searchable
+  - each one's full detail: what you asked, every step Claude took, its reply, the result and
+    token use
+  - updates live while a request runs
+  - "Run again", "Edit in chat" and "Copy request" buttons
 - Claude reads the drawing setup (units, layers, blocks, styles), plans the geometry, then draws it
   in batches: lines, polylines, circles, arcs, text, mtext, linear/aligned dimensions, and block
   inserts with attribute values.
@@ -44,6 +51,7 @@ src/CsdBridge.Core/        CAD-independent: Claude agent loop, tool schemas, inp
                            in-memory drawing + DXF preview (netstandard2.0 + net8.0)
 src/CsdBridge.BricsCAD/    The add-in: commands, chat panel, BricsCAD drawing host, settings
 tools/CsdBridge.Cli/       Try prompts without BricsCAD; writes a DXF preview
+tools/icons/               Generates the ribbon icons (Python + Pillow)
 tests/CsdBridge.Core.Tests Unit tests (no API key or BricsCAD needed)
 install/                   Update script (pull, build, install) and autoload registration
 docs/architecture.md       Design notes, threading, caching, risks, roadmap
@@ -128,9 +136,15 @@ shared copy. Changes to `settings.json` or the standards file need no rebuild: j
 |---|---|
 | `AIDRAFT` | Ask Claude on the command line. Uses any pre-selected objects as context. |
 | `AIPANEL` | Open the chat panel (Enter sends, Shift+Enter for a new line, Stop cancels) |
+| `AIHISTORY` | Open the history window: every request and what Claude did |
 | `AIRESET` | New conversation for this drawing; reloads settings |
 | `AIKEY` | Set or remove the stored API key |
 | `AISTATUS` | Show model, key source, standards file, settings and log locations, usage |
+| `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
+
+The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, and small New chat,
+Status and API key buttons. It's added when the add-in loads. If your workspace hides the
+ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
 ## Settings
 
@@ -156,9 +170,10 @@ point `standards_file` at it.
 
 Each request is several API calls, one per round of tool use. The ~3,400-token system prompt
 and tool definitions are prompt-cached, so repeat calls mostly pay the cheap cache-read rate.
-The command line and panel show token usage after every request. A full log of prompts, tool
-calls, results and usage is written to `%LOCALAPPDATA%\CsdBridge\logs\`. Use those numbers
-rather than estimates when deciding on effort level or model.
+The command line and panel show token usage after every request. The history window
+(`AIHISTORY`) shows each request's usage and today's total. Every request is saved to
+`%LOCALAPPDATA%\CsdBridge\logs\` as one line of JSON in a file per day (`yyyy-MM-dd.jsonl`).
+Use those numbers rather than estimates when deciding on effort level or model.
 
 ## Troubleshooting
 

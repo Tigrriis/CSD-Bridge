@@ -20,7 +20,7 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
 ```
 ┌──────────────────────── BricsCAD process ────────────────────────────┐
 │                                                                      │
-│  Commands (AIDRAFT, AIPANEL…)      ChatPalette (WinForms panel)      │
+│  Commands, ribbon tab, ChatPalette, HistoryWindow (WinForms)         │
 │          │                                  │ queues prompt, then    │
 │          ▼                                  │ SendStringToExecute    │
 │     AgentRunner ◄───────────────────────────┘                        │
