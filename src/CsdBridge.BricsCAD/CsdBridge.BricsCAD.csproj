@@ -1,18 +1,52 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The BricsCAD add-in. Build for one BricsCAD version at a time:
+    The BricsCAD add-in. Builds against one BricsCAD version at a time:
 
+      dotnet build -c Release                          (newest BricsCAD found)
       dotnet build -c Release -p:BricsCADVersion=25    (V24/V25: .NET Framework 4.8)
-      dotnet build -c Release -p:BricsCADVersion=26    (V26:     .NET 8, x64)
+      dotnet build -c Release -p:BricsCADVersion=26    (V26+:    .NET 8, x64)
 
-    BrxMgd.dll / TD_Mgd.dll come from the BricsCAD install folder and are not
-    copied to the output. Override the folder with -p:BricsCADDir="...".
+    BrxMgd.dll / TD_Mgd.dll come from the BricsCAD install folder (found under
+    C:\Program Files\Bricsys) and are not copied to the output. If BricsCAD is
+    somewhere else, pass -p:BricsCADDir="full path to the BricsCAD folder".
   -->
-  <PropertyGroup>
-    <BricsCADVersion Condition="'$(BricsCADVersion)' == ''">25</BricsCADVersion>
-    <BricsCADDir Condition="'$(BricsCADDir)' == ''">C:\Program Files\Bricsys\BricsCAD V$(BricsCADVersion) en_US</BricsCADDir>
 
+  <!-- Where BricsCAD versions are installed. -->
+  <PropertyGroup>
+    <BricsysRoot Condition="'$(BricsysRoot)' == '' and '$(ProgramW6432)' != ''">$(ProgramW6432)\Bricsys</BricsysRoot>
+    <BricsysRoot Condition="'$(BricsysRoot)' == ''">$(ProgramFiles)\Bricsys</BricsysRoot>
+    <_BricsysRootExists Condition="Exists('$(BricsysRoot)')">true</_BricsysRootExists>
+  </PropertyGroup>
+
+  <!-- A BricsCAD folder was given but no version: read the version from the folder name. -->
+  <PropertyGroup Condition="'$(BricsCADVersion)' == '' and '$(BricsCADDir)' != '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(BricsCADDir)', 'V\d+'))">
+    <BricsCADVersion>$([System.Text.RegularExpressions.Regex]::Match('$(BricsCADDir)', 'V(\d+)').Groups[1].Value)</BricsCADVersion>
+  </PropertyGroup>
+
+  <!-- No version given: use the newest BricsCAD installed. -->
+  <PropertyGroup Condition="'$(BricsCADVersion)' == '' and '$(_BricsysRootExists)' == 'true'">
+    <BricsCADVersion Condition="'$(BricsCADVersion)' == '' and '$([System.IO.Directory]::GetDirectories(`$(BricsysRoot)`, `BricsCAD V30*`))' != ''">30</BricsCADVersion>
+    <BricsCADVersion Condition="'$(BricsCADVersion)' == '' and '$([System.IO.Directory]::GetDirectories(`$(BricsysRoot)`, `BricsCAD V29*`))' != ''">29</BricsCADVersion>
+    <BricsCADVersion Condition="'$(BricsCADVersion)' == '' and '$([System.IO.Directory]::GetDirectories(`$(BricsysRoot)`, `BricsCAD V28*`))' != ''">28</BricsCADVersion>
+    <BricsCADVersion Condition="'$(BricsCADVersion)' == '' and '$([System.IO.Directory]::GetDirectories(`$(BricsysRoot)`, `BricsCAD V27*`))' != ''">27</BricsCADVersion>
+    <BricsCADVersion Condition="'$(BricsCADVersion)' == '' and '$([System.IO.Directory]::GetDirectories(`$(BricsysRoot)`, `BricsCAD V26*`))' != ''">26</BricsCADVersion>
+    <BricsCADVersion Condition="'$(BricsCADVersion)' == '' and '$([System.IO.Directory]::GetDirectories(`$(BricsysRoot)`, `BricsCAD V25*`))' != ''">25</BricsCADVersion>
+    <BricsCADVersion Condition="'$(BricsCADVersion)' == '' and '$([System.IO.Directory]::GetDirectories(`$(BricsysRoot)`, `BricsCAD V24*`))' != ''">24</BricsCADVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Nothing found: assume V25 so the project still loads; CheckBricsCAD explains the problem. -->
+    <BricsCADVersion Condition="'$(BricsCADVersion)' == ''">25</BricsCADVersion>
+  </PropertyGroup>
+
+  <!-- Find the install folder for that version (first match if several languages are installed). -->
+  <PropertyGroup Condition="'$(BricsCADDir)' == '' and '$(_BricsysRootExists)' == 'true'">
+    <_BricsCADMatches>$([System.IO.Directory]::GetDirectories('$(BricsysRoot)', 'BricsCAD V$(BricsCADVersion)*'))</_BricsCADMatches>
+    <BricsCADDir Condition="'$(_BricsCADMatches)' != ''">$([System.Text.RegularExpressions.Regex]::Match('$(_BricsCADMatches)', '^[^;]+').Value)</BricsCADDir>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <TargetFramework Condition="$(BricsCADVersion) &gt;= 26">net8.0-windows</TargetFramework>
     <TargetFramework Condition="$(BricsCADVersion) &lt; 26">net48</TargetFramework>
 
@@ -59,5 +93,17 @@
   <ItemGroup>
     <None Include="office-standards.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- Stop with one clear message, instead of hundreds of "type not found" errors,
+       when the BricsCAD API files can't be found. -->
+  <Target Name="CheckBricsCAD" BeforeTargets="ResolveAssemblyReferences;CoreCompile">
+    <PropertyGroup>
+      <_InstalledBricsCAD Condition="'$(_BricsysRootExists)' == 'true'">$([System.IO.Directory]::GetDirectories('$(BricsysRoot)', 'BricsCAD*'))</_InstalledBricsCAD>
+      <_InstalledBricsCAD Condition="'$(_InstalledBricsCAD)' == ''">none found in $(BricsysRoot)</_InstalledBricsCAD>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(BricsCADDir)\BrxMgd.dll') or !Exists('$(BricsCADDir)\TD_Mgd.dll')"
+           Text="BricsCAD V$(BricsCADVersion) API files (BrxMgd.dll, TD_Mgd.dll) were not found in '$(BricsCADDir)'. BricsCAD folders on this PC: $(_InstalledBricsCAD.Replace(';', ', ')). Build with -p:BricsCADVersion=NN to pick a version, or -p:BricsCADDir=&quot;full path to your BricsCAD folder&quot;." />
+    <Message Importance="high" Text="Building CSD-Bridge for BricsCAD V$(BricsCADVersion) ($(TargetFramework)) using $(BricsCADDir)" />
+  </Target>
 
 </Project>
