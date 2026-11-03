@@ -22,6 +22,12 @@
 
 .EXAMPLE
   .\install\Update.ps1 -BricsCADVersion 25 -RegisterAutoload
+
+.EXAMPLE
+  .\install\Update.ps1 -Unattended
+  For scheduled runs (see Register-AutoUpdate.ps1): never prompts, does nothing if
+  already up to date, skips the update if BricsCAD has the add-in loaded (it will
+  try again next time), and logs to %LOCALAPPDATA%\CsdBridge\logs\update.log.
 #>
 [CmdletBinding()]
 param(
@@ -38,7 +44,10 @@ param(
     [switch]$SkipPull,
 
     # Also make BricsCAD load the add-in at startup (runs Register-Autoload.ps1).
-    [switch]$RegisterAutoload
+    [switch]$RegisterAutoload,
+
+    # For scheduled runs: no prompts, skip if up to date or if BricsCAD is using the add-in.
+    [switch]$Unattended
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,6 +57,15 @@ $env:DOTNET_NOLOGO = "1"
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1"
 
 $repo = Split-Path -Parent $PSScriptRoot
+$stampName = "installed-commit.txt"
+
+if ($Unattended) {
+    $logRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [IO.Path]::GetTempPath() }
+    $logDir = [IO.Path]::Combine($logRoot, "CsdBridge", "logs")
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    Start-Transcript -Path (Join-Path $logDir "update.log") -Append | Out-Null
+    Write-Host "CSD-Bridge unattended update, $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+}
 $project = [IO.Path]::Combine($repo, "src", "CsdBridge.BricsCAD", "CsdBridge.BricsCAD.csproj")
 
 function Write-Step([string]$text) { Write-Host ""; Write-Host "== $text" -ForegroundColor Cyan }
@@ -56,6 +74,28 @@ function Stop-Update([string]$text) {
     Write-Host ""
     Write-Host $text -ForegroundColor Red
     exit 1
+}
+
+function Stop-Quietly([string]$text) {
+    Write-Host $text
+    exit 0
+}
+
+# The commit the repo is on, or $null if this isn't a git checkout.
+function Get-Commit {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $commit = & git -C $repo rev-parse HEAD 2>$null
+        if ($LASTEXITCODE -eq 0 -and $commit) { return ([string]$commit).Trim() }
+    }
+    catch {
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+
+    return $null
 }
 
 function Test-FileLocked([string]$path) {
@@ -89,6 +129,19 @@ if (-not $SkipPull) {
     Write-Host "Branch: $branch"
 }
 
+$commit = Get-Commit
+$installedDll = Join-Path $InstallDir "CsdBridge.BricsCAD.dll"
+$stamp = Join-Path $InstallDir $stampName
+if ($Unattended) {
+    if ($commit -and (Test-Path $installedDll) -and (Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $commit)) {
+        Stop-Quietly "Already up to date ($($commit.Substring(0, 7)))."
+    }
+
+    if (Test-FileLocked $installedDll) {
+        Stop-Quietly "BricsCAD has the add-in loaded, so it can't be replaced now. Will try again next time."
+    }
+}
+
 # ---------------------------------------------------------------- 2. build
 Write-Step "Finding BricsCAD"
 $evaluation = (& dotnet msbuild $project -nologo "-getProperty:BricsCADVersion" "-getProperty:BricsCADDir" @buildProps) | Out-String
@@ -112,7 +165,10 @@ if (-not (Test-Path (Join-Path $outDir "CsdBridge.BricsCAD.dll"))) {
 
 # ---------------------------------------------------------------- 3. install
 Write-Step "Installing to $InstallDir"
-$installedDll = Join-Path $InstallDir "CsdBridge.BricsCAD.dll"
+if ($Unattended -and (Test-FileLocked $installedDll)) {
+    Stop-Quietly "BricsCAD was started during the build, so the add-in can't be replaced now. Will try again next time."
+}
+
 while (Test-FileLocked $installedDll) {
     Write-Host "The add-in is in use. Close BricsCAD, then press Enter (Ctrl+C to stop)." -ForegroundColor Yellow
     [void](Read-Host)
@@ -134,6 +190,10 @@ try {
 }
 catch {
     Stop-Update "Copying failed: $($_.Exception.Message). If BricsCAD is open, close it and run this again."
+}
+
+if ($commit) {
+    Set-Content -Path $stamp -Value $commit
 }
 
 if ($RegisterAutoload) {

@@ -137,6 +137,23 @@ make them in `src\CsdBridge.BricsCAD\office-standards.md`, or point `standards_f
 shared copy. Changes to `settings.json` or the standards file need no rebuild: just run
 `AIRESET`.
 
+### 5. Automatic updates (optional)
+
+```bash
+powershell -ExecutionPolicy Bypass -File install\Register-AutoUpdate.ps1
+```
+
+This creates a Windows scheduled task, "CSD-Bridge auto-update", that runs `Update.ps1 -Unattended`
+when you log in and daily at 07:30 (`-DailyAt 12:30` to change). Each run does one of four things:
+- If nothing has changed, it does nothing.
+- If BricsCAD has the add-in loaded, it skips and tries again next time.
+- Otherwise it builds and installs the update, and BricsCAD uses it from its next start.
+- If the build fails, it leaves the installed add-in untouched.
+
+Each run is logged to `%LOCALAPPDATA%\CsdBridge\logs\update.log`. To run it now, use
+`Start-ScheduledTask -TaskName 'CSD-Bridge auto-update'`. To turn it off, run the same script
+with `-Remove`.
+
 ## Commands
 
 | Command | What it does |
