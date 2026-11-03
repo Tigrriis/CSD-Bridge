@@ -21,7 +21,8 @@ using CsdBridge.Core.Tools;
 //   --text-height <n>       Default text height (default: 2.5)
 //   --block <name>          Pretend this block exists (repeatable)
 //   --model <id>            Claude model (default: claude-opus-5-5)
-//   --effort <level>        low | medium | high | xhigh | max (default: high)
+//   --effort <level>        auto | quick | normal | thorough, or an API level
+//                           low | medium | high | xhigh | max (default: high)
 //   --standards <file.md>   Office standards appended to the system prompt
 //   --no-fallback           Don't send the server-side refusal fallback
 
@@ -29,6 +30,8 @@ var options = new AgentOptions { HostName = "BricsCAD (offline preview harness)"
 var host = new InMemoryDrawingHost();
 string outPath = "preview.dxf";
 var promptParts = new List<string>();
+EffortMode? effortMode = null;
+var effortLevels = new EffortLevels();
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -40,12 +43,26 @@ for (int i = 0; i < args.Length; i++)
         case "--text-height": host.DefaultTextHeight = double.Parse(Next(), CultureInfo.InvariantCulture); break;
         case "--block": host.Blocks.Add(Next()); break;
         case "--model": options.Model = Next(); break;
-        case "--effort": options.Effort = Next(); break;
+        case "--effort":
+        {
+            string value = Next();
+            if (EffortPolicy.TryParseMode(value, out EffortMode mode))
+            {
+                effortMode = mode;
+            }
+            else
+            {
+                options.Effort = value;
+                effortLevels.Normal = DraftingAgent.NormalizeEffort(value);
+            }
+
+            break;
+        }
         case "--standards": options.OfficeStandards = File.ReadAllText(Next()); break;
         case "--no-fallback": options.ServerSideFallback = false; break;
         case "-h":
         case "--help":
-            Console.WriteLine("csd-bridge [--out preview.dxf] [--units Millimeters] [--model id] [--effort high] [--standards file.md] [\"prompt\"]");
+            Console.WriteLine("csd-bridge [--out preview.dxf] [--units Millimeters] [--model id] [--effort auto|quick|normal|thorough|high] [--standards file.md] [\"prompt\"]");
             return 0;
         default: promptParts.Add(args[i]); break;
     }
@@ -98,7 +115,15 @@ Console.CancelKeyPress += (_, e) =>
 async Task<bool> RunOnce(string prompt)
 {
     var progress = new ConsoleProgress();
-    AgentRunResult result = await agent.RunAsync(prompt, progress, cts.Token);
+    string? effort = null;
+    if (effortMode is EffortMode mode)
+    {
+        EffortChoice choice = EffortPolicy.Choose(mode, prompt, 0, effortLevels);
+        effort = choice.Effort;
+        Console.WriteLine($"  effort: {choice.Describe()} -> {choice.Effort}");
+    }
+
+    AgentRunResult result = await agent.RunAsync(prompt, progress, cts.Token, effort);
     Console.WriteLine();
     if (!string.IsNullOrWhiteSpace(result.FinalText) && !progress.PrintedFinal(result.FinalText))
     {
@@ -120,7 +145,7 @@ if (promptParts.Count > 0)
     return await RunOnce(string.Join(" ", promptParts)) ? 0 : 1;
 }
 
-Console.WriteLine($"CSD-Bridge offline harness - {options.Model}, effort {options.Effort}, units {host.Units}. Type 'exit' to quit, 'reset' for a new conversation.");
+Console.WriteLine($"CSD-Bridge offline harness - {options.Model}, effort {(effortMode?.ToString() ?? options.Effort)}, units {host.Units}. Type 'exit' to quit, 'reset' for a new conversation.");
 while (true)
 {
     Console.Write("\n> ");

@@ -26,6 +26,13 @@ namespace CsdBridge.Core.Agent
     public sealed class DraftingAgent
     {
         private const string FallbackBeta = "server-side-fallback-2026-07-01";
+        private const string PerMessageEffortBeta = "mid-conversation-output-config-2026-07-01";
+
+        /// <summary>Models that accept a per-message effort change (an effort-only system message).</summary>
+        private static readonly HashSet<string> PerMessageEffortModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-haiku-5-5",
+        };
 
         private readonly AnthropicClient _client;
         private readonly ToolDispatcher _dispatcher;
@@ -34,6 +41,8 @@ namespace CsdBridge.Core.Agent
         private readonly string _systemPrompt;
         private readonly List<BetaToolUnion> _tools;
         private readonly List<BetaMessageParam> _messages = new List<BetaMessageParam>();
+        private string _conversationEffort; // level currently in effect in the conversation
+        private string _requestEffort;      // top-level effort sent with this run's requests
         private int _running;
 
         public DraftingAgent(AnthropicClient client, ToolDispatcher dispatcher, AgentOptions options, IMainThreadInvoker? invoker = null)
@@ -44,7 +53,19 @@ namespace CsdBridge.Core.Agent
             _invoker = invoker ?? InlineInvoker.Instance;
             _systemPrompt = SystemPrompt.Build(options);
             _tools = ToolCatalog.All.Select(ToSdkTool).ToList();
+            _conversationEffort = NormalizeEffort(options.Effort);
+            _requestEffort = _conversationEffort;
         }
+
+        /// <summary>
+        /// True when effort can change per request without restarting the prompt cache
+        /// (an effort-only system message after the user's turn). Otherwise the top-level
+        /// effort changes per request instead.
+        /// </summary>
+        public bool UsesPerMessageEffort => PerMessageEffortModels.Contains(_options.Model ?? "");
+
+        /// <summary>The effort level in effect for the conversation now.</summary>
+        public string CurrentEffort => _conversationEffort;
 
         public bool IsRunning => Volatile.Read(ref _running) == 1;
 
@@ -63,9 +84,11 @@ namespace CsdBridge.Core.Agent
             }
 
             _messages.Clear();
+            _conversationEffort = NormalizeEffort(_options.Effort);
         }
 
-        public async Task<AgentRunResult> RunAsync(string userPrompt, IProgress<AgentEvent>? progress = null, CancellationToken ct = default)
+        /// <param name="effort">Effort for this request (low | medium | high | xhigh | max); null uses the default from options.</param>
+        public async Task<AgentRunResult> RunAsync(string userPrompt, IProgress<AgentEvent>? progress = null, CancellationToken ct = default, string? effort = null)
         {
             if (string.IsNullOrWhiteSpace(userPrompt))
             {
@@ -79,7 +102,7 @@ namespace CsdBridge.Core.Agent
 
             try
             {
-                AgentRunResult result = await RunCoreAsync(userPrompt, progress, ct).ConfigureAwait(false);
+                AgentRunResult result = await RunCoreAsync(userPrompt, effort, progress, ct).ConfigureAwait(false);
                 ConversationUsage.Add(result.Usage);
                 return result;
             }
@@ -89,11 +112,32 @@ namespace CsdBridge.Core.Agent
             }
         }
 
-        private async Task<AgentRunResult> RunCoreAsync(string userPrompt, IProgress<AgentEvent>? progress, CancellationToken ct)
+        private async Task<AgentRunResult> RunCoreAsync(string userPrompt, string? effort, IProgress<AgentEvent>? progress, CancellationToken ct)
         {
             var result = new AgentRunResult();
             int historyLengthAtStart = _messages.Count;
+            string effortAtStart = _conversationEffort;
+            string desired = NormalizeEffort(effort ?? _options.Effort);
+            result.Effort = desired;
+
             _messages.Add(new BetaUserMessageParam { Content = userPrompt });
+            if (UsesPerMessageEffort)
+            {
+                // Right after the user's turn, an effort-only system message sets the level for
+                // this reply and later ones. The top-level effort and everything before this
+                // point stay byte-identical, so the prompt cache keeps working.
+                if (desired != _conversationEffort)
+                {
+                    _messages.Add(EffortMessage(desired));
+                    _conversationEffort = desired;
+                }
+
+                _requestEffort = NormalizeEffort(_options.Effort);
+            }
+            else
+            {
+                _requestEffort = desired;
+            }
 
             for (int turn = 1; ; turn++)
             {
@@ -147,6 +191,7 @@ namespace CsdBridge.Core.Agent
                     if (result.ToolCalls == 0)
                     {
                         _messages.RemoveRange(historyLengthAtStart, _messages.Count - historyLengthAtStart);
+                        _conversationEffort = effortAtStart;
                     }
 
                     return result;
@@ -236,10 +281,21 @@ namespace CsdBridge.Core.Agent
 
         private MessageCreateParams BuildParams()
         {
-            var effort = new BetaOutputConfig { Effort = ParseEffort(_options.Effort) };
+            var effort = new BetaOutputConfig { Effort = ParseEffort(_requestEffort) };
 
             // A copy of the history, so later appends never alias a request in flight.
             var messages = new List<BetaMessageParam>(_messages);
+
+            var betas = new List<string>();
+            if (_options.ServerSideFallback)
+            {
+                betas.Add(FallbackBeta);
+            }
+
+            if (UsesPerMessageEffort)
+            {
+                betas.Add(PerMessageEffortBeta);
+            }
 
             if (_options.ServerSideFallback)
             {
@@ -253,7 +309,7 @@ namespace CsdBridge.Core.Agent
                     Thinking = new BetaThinkingConfigAdaptive(),
                     OutputConfig = effort,
                     CacheControl = new BetaCacheControlEphemeral(),
-                    Betas = [FallbackBeta],
+                    Betas = [.. betas],
                     Fallbacks = new Default(), // serialises as "default"
                 };
             }
@@ -268,7 +324,33 @@ namespace CsdBridge.Core.Agent
                 Thinking = new BetaThinkingConfigAdaptive(),
                 OutputConfig = effort,
                 CacheControl = new BetaCacheControlEphemeral(),
+                Betas = betas.Count > 0 ? [.. betas] : null,
             };
+        }
+
+        private static BetaMessageParam EffortMessage(string effort) => new BetaSystemMessageParam
+        {
+            Content = new List<SystemMessageContentBlock>(),
+            OutputConfig = new BetaSystemMessageOutputConfig { Effort = ToSystemEffort(effort) },
+        };
+
+        private static BetaSystemMessageOutputConfigEffort ToSystemEffort(string effort)
+        {
+            switch (effort)
+            {
+                case "low": return BetaSystemMessageOutputConfigEffort.Low;
+                case "medium": return BetaSystemMessageOutputConfigEffort.Medium;
+                case "xhigh": return BetaSystemMessageOutputConfigEffort.Xhigh;
+                case "max": return BetaSystemMessageOutputConfigEffort.Max;
+                default: return BetaSystemMessageOutputConfigEffort.High;
+            }
+        }
+
+        /// <summary>low | medium | high | xhigh | max; anything else becomes high.</summary>
+        public static string NormalizeEffort(string? effort)
+        {
+            string e = (effort ?? "").Trim().ToLowerInvariant();
+            return e == "low" || e == "medium" || e == "high" || e == "xhigh" || e == "max" ? e : "high";
         }
 
         private sealed class AssistantTurn

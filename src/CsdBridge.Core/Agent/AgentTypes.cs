@@ -137,6 +137,10 @@ namespace CsdBridge.Core.Agent
         public string FinalText { get; set; } = "";
 
         public int ToolCalls { get; set; }
+
+        /// <summary>The effort level this request ran at.</summary>
+        public string? Effort { get; set; }
+
         public UsageTotals Usage { get; set; } = new UsageTotals();
         public string? Error { get; set; }
     }

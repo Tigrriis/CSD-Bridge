@@ -111,8 +111,17 @@ Twelve tools:
 
 ## Model settings and conversation rules
 
-- **Model:** `claude-opus-5-5`, with `thinking: adaptive` and `effort: high` (configurable).
-  Geometry mistakes cost more than a few seconds of waiting. Try `medium` for speed.
+- **Model:** `claude-opus-5-5`, with `thinking: adaptive`.
+- **Effort per request:** Auto picks Quick (`low`), Normal (`high`) or Thorough (`xhigh`)
+  from the request wording, or the user fixes one mode.
+  - **How it's sent:** the top-level effort stays at the Normal level. A change is an
+    effort-only `role: "system"` message placed right after the user's turn (beta
+    `mid-conversation-output-config-2026-07-01`), sent only when the level changes. Earlier
+    messages stay byte-identical, so the prompt cache and earlier thinking stay valid.
+  - **Older models:** models without per-message effort get a top-level change per request
+    instead.
+  - **Why not switch models per request:** switching drops the previous model's thinking and
+    restarts the per-model cache.
 - **Server-side refusal fallback** (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`)
   is on by default. If a request is declined on policy grounds, Anthropic re-runs it on its
   recommended fallback model. That is unlikely for drafting, but it costs nothing otherwise.

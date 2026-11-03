@@ -1,6 +1,7 @@
 using System.IO;
 using Bricscad.ApplicationServices;
 using Bricscad.EditorInput;
+using CsdBridge.Core.Agent;
 using Teigha.DatabaseServices;
 using Teigha.Runtime;
 using CadApp = Bricscad.ApplicationServices.Application;
@@ -14,6 +15,7 @@ namespace CsdBridge.BricsCAD
     /// AIPANEL    open the chat panel
     /// AIHISTORY  open the history of requests to Claude
     /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
+    /// AIEFFORT   choose how hard Claude works: Auto, Quick, Normal or Thorough
     /// AIRESET    start a new conversation for this drawing
     /// AIKEY      set or remove the Anthropic API key
     /// AISTATUS   show settings, key source and usage
@@ -57,6 +59,30 @@ namespace CsdBridge.BricsCAD
 
         [CommandMethod(Group, "AIPANEL", CommandFlags.Modal)]
         public void AiPanel() => ChatPalette.Show();
+
+        [CommandMethod(Group, "AIEFFORT", CommandFlags.Modal)]
+        public void AiEffort()
+        {
+            Editor ed = CadApp.DocumentManager.MdiActiveDocument.Editor;
+            var options = new PromptKeywordOptions($"\nEffort for Claude requests (now {AgentRunner.EffortMode})");
+            options.Keywords.Add("Auto");
+            options.Keywords.Add("Quick");
+            options.Keywords.Add("Normal");
+            options.Keywords.Add("Thorough");
+            options.Keywords.Default = AgentRunner.EffortMode.ToString();
+            options.AllowNone = true;
+
+            PromptResult res = ed.GetKeywords(options);
+            if (res.Status != PromptStatus.OK || !EffortPolicy.TryParseMode(res.StringResult, out EffortMode mode))
+            {
+                return;
+            }
+
+            AgentRunner.SetEffortMode(mode);
+            ed.WriteMessage(mode == EffortMode.Auto
+                ? "\nCSD-Bridge: effort is Auto: Quick for simple edits and questions, Thorough for big multi-step jobs, Normal otherwise.\n"
+                : $"\nCSD-Bridge: effort is {mode} for every request until you change it.\n");
+        }
 
         [CommandMethod(Group, "AIHISTORY", CommandFlags.Modal)]
         public void AiHistory() => HistoryWindow.ShowWindow();
@@ -113,7 +139,9 @@ namespace CsdBridge.BricsCAD
             string standards = s.ResolvedStandardsPath();
 
             ed.WriteMessage("\nCSD-Bridge status");
-            ed.WriteMessage($"\n  Model:      {s.Model} (effort {s.Effort}, max {s.MaxTurns} turns, fallback {(s.ServerSideFallback ? "on" : "off")})");
+            EffortLevels levels = s.EffortLevels();
+            ed.WriteMessage($"\n  Model:      {s.Model} (max {s.MaxTurns} turns, fallback {(s.ServerSideFallback ? "on" : "off")})");
+            ed.WriteMessage($"\n  Effort:     {AgentRunner.EffortMode} (Quick = {levels.Quick}, Normal = {levels.Normal}, Thorough = {levels.Thorough})");
             ed.WriteMessage($"\n  API key:    {keySource}");
             ed.WriteMessage($"\n  Standards:  {standards}{(File.Exists(standards) ? "" : " (not found)")}");
             ed.WriteMessage($"\n  Settings:   {BridgeSettings.SettingsPath}");

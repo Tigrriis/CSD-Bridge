@@ -26,9 +26,13 @@ namespace CsdBridge.BricsCAD
         private static BridgeSettings? _settings;
         private static CancellationTokenSource? _current;
         private static string? _pendingPrompt;
+        private static EffortMode? _effortMode;
 
         /// <summary>Raised with true when a request starts and false when it ends.</summary>
         public static event Action<bool>? BusyChanged;
+
+        /// <summary>Raised when the effort mode changes (chat panel, AIEFFORT or settings reload).</summary>
+        public static event Action<EffortMode>? EffortModeChanged;
 
         /// <summary>Raised when a request starts, after each step, and when it finishes.</summary>
         public static event Action<RunRecord>? RunUpdated;
@@ -42,6 +46,45 @@ namespace CsdBridge.BricsCAD
         public static HistoryStore History { get; } = new HistoryStore(BridgeSettings.LogFolder);
 
         public static BridgeSettings Settings => _settings ??= BridgeSettings.Load();
+
+        /// <summary>Auto, Quick, Normal or Thorough; from settings.json until changed.</summary>
+        public static EffortMode EffortMode =>
+            _effortMode ??= EffortPolicy.TryParseMode(Settings.EffortModeName, out EffortMode m) ? m : EffortMode.Auto;
+
+        /// <summary>Change the effort mode and remember it in settings.json.</summary>
+        public static void SetEffortMode(EffortMode mode)
+        {
+            _effortMode = mode;
+            try
+            {
+                // Re-read the file so manual edits made since loading aren't overwritten.
+                BridgeSettings onDisk = BridgeSettings.Load();
+                onDisk.EffortModeName = mode.ToString().ToLowerInvariant();
+                onDisk.Save();
+                if (_settings != null)
+                {
+                    _settings.EffortModeName = onDisk.EffortModeName;
+                }
+            }
+            catch (Exception)
+            {
+                // Still applies for this session.
+            }
+
+            NotifyEffortMode();
+        }
+
+        private static void NotifyEffortMode()
+        {
+            try
+            {
+                EffortModeChanged?.Invoke(EffortMode);
+            }
+            catch (Exception)
+            {
+                // UI listeners must not break anything.
+            }
+        }
 
         /// <summary>Drop all conversations and reload settings / API key on next use.</summary>
         public static void ResetAll()
@@ -63,6 +106,8 @@ namespace CsdBridge.BricsCAD
         {
             _settings = null;
             _client = null;
+            _effortMode = null;
+            NotifyEffortMode();
         }
 
         public static DraftingAgent? Peek(Document doc) => Agents.TryGetValue(doc, out DraftingAgent? a) ? a : null;
@@ -115,6 +160,7 @@ namespace CsdBridge.BricsCAD
             }
 
             string fullPrompt = WithSelectionContext(doc, prompt, preselected);
+            EffortChoice effort = EffortPolicy.Choose(EffortMode, prompt, preselected?.Length ?? 0, Settings.EffortLevels());
             var cts = new CancellationTokenSource();
             _current = cts;
             BusyChanged?.Invoke(true);
@@ -125,9 +171,11 @@ namespace CsdBridge.BricsCAD
                 Prompt = prompt,
                 SelectedCount = preselected?.Length ?? 0,
                 Model = Settings.Model,
+                Effort = effort.Effort,
+                EffortChoice = effort.Describe(),
             };
             CurrentRun = record;
-            output.Started(prompt);
+            output.Started(prompt, effort);
             Notify(record);
 
             try
@@ -142,7 +190,7 @@ namespace CsdBridge.BricsCAD
                     }
                 });
 
-                Task<AgentRunResult> task = Task.Run(() => agent.RunAsync(fullPrompt, progress, cts.Token));
+                Task<AgentRunResult> task = Task.Run(() => agent.RunAsync(fullPrompt, progress, cts.Token, effort.Effort));
 
                 MainThreadPump.Instance.PumpUntil(task, EscapePressed, () =>
                 {
@@ -154,7 +202,7 @@ namespace CsdBridge.BricsCAD
                 });
 
                 AgentRunResult result = task.GetAwaiter().GetResult();
-                output.Finished(result);
+                output.Finished(result, effort);
                 record.Complete(result);
             }
             catch (Exception ex)
@@ -275,10 +323,11 @@ namespace CsdBridge.BricsCAD
                 _doc = doc;
             }
 
-            public void Started(string prompt)
+            public void Started(string prompt, EffortChoice effort)
             {
-                Write("\nCSD-Bridge: working... (Esc to cancel)");
+                Write($"\nCSD-Bridge: working, {effort.Describe()} effort... (Esc to cancel)");
                 ChatPalette.Control?.AppendUser(prompt);
+                ChatPalette.Control?.AppendTool($"{effort.Describe()} effort");
                 ChatPalette.Control?.SetStatus("Working... (Esc or Stop to cancel)");
             }
 
@@ -310,7 +359,7 @@ namespace CsdBridge.BricsCAD
                 ChatPalette.Control?.AppendTool(text);
             }
 
-            public void Finished(AgentRunResult r)
+            public void Finished(AgentRunResult r, EffortChoice effort)
             {
                 string status = r.Status == AgentRunStatus.Completed ? "Done" : r.Status.ToString();
                 if (r.Status == AgentRunStatus.Refused)
@@ -324,7 +373,7 @@ namespace CsdBridge.BricsCAD
                     Error(r.Error);
                 }
 
-                string summary = $"{status} - {r.ToolCalls} tool call(s), {r.Usage}. Use U to undo.";
+                string summary = $"{status} - {effort.Tier} effort, {r.ToolCalls} tool call(s), {r.Usage}. Use U to undo.";
                 Write("\nCSD-Bridge: " + summary + "\n");
                 ChatPalette.Control?.SetStatus(summary);
             }

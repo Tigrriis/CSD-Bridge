@@ -29,9 +29,21 @@ namespace CsdBridge.BricsCAD
         [JsonPropertyName("model")]
         public string Model { get; set; } = "claude-opus-5-5";
 
-        /// <summary>low | medium | high | xhigh | max.</summary>
+        /// <summary>Effort level for Normal requests: low | medium | high | xhigh | max.</summary>
         [JsonPropertyName("effort")]
         public string Effort { get; set; } = "high";
+
+        /// <summary>auto | quick | normal | thorough. Auto picks per request.</summary>
+        [JsonPropertyName("effort_mode")]
+        public string EffortModeName { get; set; } = "auto";
+
+        /// <summary>Effort level for Quick requests (simple edits and questions).</summary>
+        [JsonPropertyName("effort_quick")]
+        public string EffortQuick { get; set; } = "low";
+
+        /// <summary>Effort level for Thorough requests (big, multi-step jobs).</summary>
+        [JsonPropertyName("effort_thorough")]
+        public string EffortThorough { get; set; } = "xhigh";
 
         [JsonPropertyName("max_turns")]
         public int MaxTurns { get; set; } = 30;
@@ -74,6 +86,13 @@ namespace CsdBridge.BricsCAD
             Directory.CreateDirectory(Folder);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
         }
+
+        public EffortLevels EffortLevels() => new EffortLevels
+        {
+            Quick = DraftingAgent.NormalizeEffort(EffortQuick),
+            Normal = DraftingAgent.NormalizeEffort(Effort),
+            Thorough = DraftingAgent.NormalizeEffort(EffortThorough),
+        };
 
         public AgentOptions ToAgentOptions() => new AgentOptions
         {

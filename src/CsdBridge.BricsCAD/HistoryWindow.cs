@@ -364,7 +364,8 @@ namespace CsdBridge.BricsCAD
 
             Append("");
             string took = r.FinishedAt is { } end ? $" in {Seconds(end - r.StartedAt)}" : "";
-            Append($"{ResultText(r)}{took}  -  {r.ToolCalls} tool call(s)  -  {r.UsageSummary()}{(r.Model == null ? "" : "  -  " + r.Model)}", SystemColors.GrayText);
+            string effort = r.EffortChoice != null ? $"  -  {r.EffortChoice} effort ({r.Effort})" : r.Effort != null ? $"  -  effort {r.Effort}" : "";
+            Append($"{ResultText(r)}{took}{effort}  -  {r.ToolCalls} tool call(s)  -  {r.UsageSummary()}{(r.Model == null ? "" : "  -  " + r.Model)}", SystemColors.GrayText);
             _detail.SelectionStart = 0;
             _detail.ScrollToCaret();
         }

@@ -180,9 +180,75 @@ namespace CsdBridge.Core.Tests
             Assert.Equal(3, agent.MessageCount); // user, assistant(tool_use x2), user(tool_result x2)
         }
 
+        [Fact]
+        public async Task Per_request_effort_is_an_effort_only_system_message_and_the_prefix_never_changes()
+        {
+            var http = new FakeAnthropic(
+                Response("end_turn", @"{""type"":""text"",""text"":""a""}"),
+                Response("end_turn", @"{""type"":""text"",""text"":""b""}"),
+                Response("end_turn", @"{""type"":""text"",""text"":""c""}"));
+            var agent = NewAgent(http, new InMemoryDrawingHost());
+
+            AgentRunResult first = await agent.RunAsync("move it left 100", null, default, "low");
+            await agent.RunAsync("draw a slab");   // default (high): switch back
+            await agent.RunAsync("draw another");  // still high: no new message
+
+            Assert.Equal("low", first.Effort);
+            Assert.All(http.Bodies, b => Assert.Equal("high", b.GetProperty("output_config").GetProperty("effort").GetString()));
+            Assert.All(http.BetaHeaders, h => Assert.Contains("mid-conversation-output-config-2026-07-01", h));
+
+            JsonElement m0 = http.Bodies[0].GetProperty("messages");
+            Assert.Equal(2, m0.GetArrayLength());
+            Assert.Equal("system", m0[1].GetProperty("role").GetString());
+            Assert.Equal(0, m0[1].GetProperty("content").GetArrayLength());
+            Assert.Equal("low", m0[1].GetProperty("output_config").GetProperty("effort").GetString());
+
+            JsonElement m1 = http.Bodies[1].GetProperty("messages");
+            Assert.Equal(5, m1.GetArrayLength()); // user, system(low), assistant, user, system(high)
+            Assert.Equal("high", m1[4].GetProperty("output_config").GetProperty("effort").GetString());
+
+            JsonElement m2 = http.Bodies[2].GetProperty("messages");
+            Assert.Equal(7, m2.GetArrayLength());
+            Assert.Equal("user", m2[6].GetProperty("role").GetString());
+
+            // Append-only: every earlier message is byte-identical in later requests.
+            for (int i = 0; i < m1.GetArrayLength(); i++)
+            {
+                Assert.Equal(m1[i].GetRawText(), m2[i].GetRawText());
+            }
+
+            Assert.Equal("high", agent.CurrentEffort);
+        }
+
+        [Fact]
+        public async Task Older_models_set_the_top_level_effort_per_request_instead()
+        {
+            var http = new FakeAnthropic(Response("end_turn", @"{""type"":""text"",""text"":""a""}"));
+            var agent = NewAgent(http, new InMemoryDrawingHost(), options: new AgentOptions { Model = "claude-opus-4-8" });
+
+            await agent.RunAsync("move it", null, default, "low");
+
+            Assert.False(agent.UsesPerMessageEffort);
+            Assert.Equal("low", http.Bodies[0].GetProperty("output_config").GetProperty("effort").GetString());
+            Assert.Equal(1, http.Bodies[0].GetProperty("messages").GetArrayLength());
+            Assert.DoesNotContain("mid-conversation", http.BetaHeaders[0]);
+        }
+
+        [Fact]
+        public async Task Refused_request_rolls_back_its_effort_change_too()
+        {
+            var http = new FakeAnthropic(Response("refusal"));
+            var agent = NewAgent(http, new InMemoryDrawingHost());
+
+            await agent.RunAsync("something", null, default, "xhigh");
+
+            Assert.Equal(0, agent.MessageCount);
+            Assert.Equal("high", agent.CurrentEffort);
+        }
+
         // ------------------------------------------------------------------ helpers
 
-        private static DraftingAgent NewAgent(FakeAnthropic http, InMemoryDrawingHost host, IMainThreadInvoker? invoker = null)
+        private static DraftingAgent NewAgent(FakeAnthropic http, InMemoryDrawingHost host, IMainThreadInvoker? invoker = null, AgentOptions? options = null)
         {
             var client = new AnthropicClient
             {
@@ -190,7 +256,7 @@ namespace CsdBridge.Core.Tests
                 HttpClient = new HttpClient(http),
                 MaxRetries = 0,
             };
-            return new DraftingAgent(client, new ToolDispatcher(host), new AgentOptions(), invoker);
+            return new DraftingAgent(client, new ToolDispatcher(host), options ?? new AgentOptions(), invoker);
         }
 
         private static string ToolUse(string id, string name, string inputJson) =>
