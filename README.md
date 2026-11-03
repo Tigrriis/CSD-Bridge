@@ -45,7 +45,7 @@ src/CsdBridge.Core/        CAD-independent: Claude agent loop, tool schemas, inp
 src/CsdBridge.BricsCAD/    The add-in: commands, chat panel, BricsCAD drawing host, settings
 tools/CsdBridge.Cli/       Try prompts without BricsCAD; writes a DXF preview
 tests/CsdBridge.Core.Tests Unit tests (no API key or BricsCAD needed)
-install/                   Autoload registration script
+install/                   Update script (pull, build, install) and autoload registration
 docs/architecture.md       Design notes, threading, caching, risks, roadmap
 ```
 
@@ -95,6 +95,32 @@ x64 .NET 8 Desktop Runtime on the user's machine.
 
 To load automatically at startup:
 `install\Register-Autoload.ps1 -DllPath <full path to dll> -BricsCADVersion 25`.
+
+### 4. Updating after changes
+
+From the repo folder:
+
+```bash
+powershell -ExecutionPolicy Bypass -File install\Update.ps1
+```
+
+The script does four things:
+- pulls the latest code
+- builds for the newest BricsCAD installed (BricsCAD can stay open while it builds)
+- if the add-in is in use, asks you to close BricsCAD
+- copies the build to `C:\CsdBridge`
+
+Then start BricsCAD again, and `NETLOAD` unless autoload is registered. Useful options:
+- `-BricsCADVersion 25` builds for a specific version.
+- `-RegisterAutoload` also sets up loading at startup.
+- `-InstallDir D:\Tools\CsdBridge` installs somewhere else.
+- `-SkipPull` builds what you already have, without pulling.
+
+The update doesn't touch your API key or `settings.json`. If `C:\CsdBridge\office-standards.md`
+was edited, the old copy is saved as `office-standards.md.bak`. To keep edits across updates,
+make them in `src\CsdBridge.BricsCAD\office-standards.md`, or point `standards_file` at a
+shared copy. Changes to `settings.json` or the standards file need no rebuild: just run
+`AIRESET`.
 
 ## Commands
 
