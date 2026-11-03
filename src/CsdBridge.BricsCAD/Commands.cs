@@ -17,6 +17,7 @@ namespace CsdBridge.BricsCAD
     /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
     /// AIEFFORT   choose how hard Claude works: Auto, Quick, Normal or Thorough
     /// AIUIDUMP   diagnostic: save the controls of open dialogs to a text file
+    /// AIFORMDUMP diagnostic: save open dialogs' WinForms controls and grid cells (read from inside)
     /// AIRESET    start a new conversation for this drawing
     /// AIKEY      set or remove the Anthropic API key
     /// AISTATUS   show settings, key source and usage
@@ -89,6 +90,34 @@ namespace CsdBridge.BricsCAD
         public void AiUiDump()
         {
             Editor ed = CadApp.DocumentManager.MdiActiveDocument.Editor;
+            if (!TryGetCountdown(ed, out int seconds))
+            {
+                return;
+            }
+
+            UiDump.CaptureAfter(seconds);
+            ed.WriteMessage(
+                $"\nCSD-Bridge: capturing open windows in {seconds} s. Open the Civil Site Design dialog now and leave it on screen." +
+                $"\nYou'll hear a chime when it's saved, and Explorer will open on the file in {UiDump.Folder}\n");
+        }
+
+        [CommandMethod(Group, "AIFORMDUMP", CommandFlags.Modal)]
+        public void AiFormDump()
+        {
+            Editor ed = CadApp.DocumentManager.MdiActiveDocument.Editor;
+            if (!TryGetCountdown(ed, out int seconds))
+            {
+                return;
+            }
+
+            FormDump.CaptureAfter(seconds);
+            ed.WriteMessage(
+                $"\nCSD-Bridge: reading open dialogs from the inside in {seconds} s. Open the Civil Site Design dialog(s) now and leave them on screen." +
+                $"\nYou'll hear a chime when it's saved, and Explorer will open on the file in {FormDump.Folder}\n");
+        }
+
+        private static bool TryGetCountdown(Editor ed, out int seconds)
+        {
             var options = new PromptIntegerOptions("\nSeconds before capturing (open the dialog in that time)")
             {
                 DefaultValue = 10,
@@ -100,24 +129,14 @@ namespace CsdBridge.BricsCAD
             };
 
             PromptIntegerResult res = ed.GetInteger(options);
-            int seconds;
+            seconds = 10;
             if (res.Status == PromptStatus.OK)
             {
                 seconds = res.Value;
-            }
-            else if (res.Status == PromptStatus.None)
-            {
-                seconds = 10;
-            }
-            else
-            {
-                return;
+                return true;
             }
 
-            UiDump.CaptureAfter(seconds);
-            ed.WriteMessage(
-                $"\nCSD-Bridge: capturing open windows in {seconds} s. Open the Civil Site Design dialog now and leave it on screen." +
-                $"\nYou'll hear a chime when it's saved, and Explorer will open on the file in {UiDump.Folder}\n");
+            return res.Status == PromptStatus.None;
         }
 
         [CommandMethod(Group, "AIHISTORY", CommandFlags.Modal)]

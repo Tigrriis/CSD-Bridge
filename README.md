@@ -166,6 +166,7 @@ with `-Remove`.
 | `AIKEY` | Set or remove the stored API key |
 | `AISTATUS` | Show model, key source, standards file, settings and log locations, usage |
 | `AIUIDUMP` | Diagnostic: after a countdown (default 10 s), saves the controls of BricsCAD's open dialogs (labels, values, buttons, keyboard shortcuts) to `%LOCALAPPDATA%\CsdBridge\uidumps\`. Read-only. Used to check whether other add-ins' dialogs, such as Civil Site Design's, can be automated. |
+| `AIFORMDUMP` | Diagnostic: like `AIUIDUMP`, but reads open dialogs from inside BricsCAD as WinForms controls, so it also gets internal control names, grid cell values and the grid component's type and version. Read-only; saves to the same folder. |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, and small New chat,
