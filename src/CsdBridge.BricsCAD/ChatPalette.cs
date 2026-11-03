@@ -3,6 +3,7 @@ using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
 using Bricscad.ApplicationServices;
+using CsdBridge.Core.Agent;
 using CadApp = Bricscad.ApplicationServices.Application;
 using DockSides = Bricscad.Windows.DockSides;
 using PaletteSet = Bricscad.Windows.PaletteSet;
@@ -58,7 +59,9 @@ namespace CsdBridge.BricsCAD
         private readonly Button _stop;
         private readonly Button _new;
         private readonly Button _history;
+        private readonly ComboBox _effort;
         private readonly Label _status;
+        private bool _updatingEffort;
 
         public ChatControl()
         {
@@ -85,8 +88,18 @@ namespace CsdBridge.BricsCAD
             _new.Click += (s, e) => NewChat();
             _history.Click += (s, e) => HistoryWindow.ShowWindow();
 
+            _effort = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 82, Margin = new Padding(3, 4, 3, 3) };
+            _effort.Items.AddRange(new object[] { "Auto", "Quick", "Normal", "Thorough" });
+            _effort.SelectedItem = AgentRunner.EffortMode.ToString();
+            _effort.SelectedIndexChanged += OnEffortChanged;
+            new ToolTip().SetToolTip(_effort,
+                "How hard Claude works on each request.\n" +
+                "Auto: Quick for simple edits and questions, Thorough for big multi-step jobs, Normal otherwise.\n" +
+                "Quick is fastest and cheapest; Thorough is slowest and most careful.");
+            var effortLabel = new Label { Text = "Effort", AutoSize = true, Margin = new Padding(6, 8, 0, 0) };
+
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, AutoSize = true };
-            buttons.Controls.AddRange(new Control[] { _send, _stop, _new, _history });
+            buttons.Controls.AddRange(new Control[] { _send, _stop, _new, _history, _effort, effortLabel });
 
             _status = new Label { Dock = DockStyle.Bottom, AutoSize = false, Height = 34, ForeColor = SystemColors.GrayText, Text = "Enter to send, Shift+Enter for a new line." };
 
@@ -99,6 +112,7 @@ namespace CsdBridge.BricsCAD
             Controls.Add(_status);
 
             AgentRunner.BusyChanged += OnBusyChanged;
+            AgentRunner.EffortModeChanged += OnEffortModeChanged;
             AppendInfo("Ask Claude to draw or change something in the current drawing. Select objects first to give it context.");
         }
 
@@ -168,6 +182,21 @@ namespace CsdBridge.BricsCAD
             }
         }
 
+        private void OnEffortChanged(object? sender, EventArgs e)
+        {
+            if (!_updatingEffort && EffortPolicy.TryParseMode(_effort.SelectedItem as string, out EffortMode mode))
+            {
+                AgentRunner.SetEffortMode(mode);
+            }
+        }
+
+        private void OnEffortModeChanged(EffortMode mode)
+        {
+            _updatingEffort = true;
+            _effort.SelectedItem = mode.ToString();
+            _updatingEffort = false;
+        }
+
         private void OnBusyChanged(bool busy)
         {
             _send.Enabled = !busy;
@@ -190,6 +219,7 @@ namespace CsdBridge.BricsCAD
             if (disposing)
             {
                 AgentRunner.BusyChanged -= OnBusyChanged;
+                AgentRunner.EffortModeChanged -= OnEffortModeChanged;
             }
 
             base.Dispose(disposing);

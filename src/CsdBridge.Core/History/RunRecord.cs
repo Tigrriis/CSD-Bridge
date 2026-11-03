@@ -34,6 +34,12 @@ namespace CsdBridge.Core.History
         public string? FinalText { get; set; }
         public string? Error { get; set; }
         public string? Model { get; set; }
+
+        /// <summary>API effort level the request ran at (low ... max).</summary>
+        public string? Effort { get; set; }
+
+        /// <summary>How it was chosen, e.g. "Quick (auto: a simple edit)".</summary>
+        public string? EffortChoice { get; set; }
         public int ToolCalls { get; set; }
         public int Requests { get; set; }
         public long InputTokens { get; set; }
@@ -69,6 +75,7 @@ namespace CsdBridge.Core.History
             FinalText = string.IsNullOrWhiteSpace(result.FinalText) ? null : result.FinalText;
             Error = result.Error;
             ToolCalls = result.ToolCalls;
+            Effort = result.Effort ?? Effort;
             Requests = result.Usage.Requests;
             InputTokens = result.Usage.InputTokens;
             OutputTokens = result.Usage.OutputTokens;

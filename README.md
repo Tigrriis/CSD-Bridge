@@ -144,6 +144,7 @@ shared copy. Changes to `settings.json` or the standards file need no rebuild: j
 | `AIDRAFT` | Ask Claude on the command line. Uses any pre-selected objects as context. |
 | `AIPANEL` | Open the chat panel (Enter sends, Shift+Enter for a new line, Stop cancels) |
 | `AIHISTORY` | Open the history window: every request and what Claude did |
+| `AIEFFORT` | Choose how hard Claude works: Auto, Quick, Normal or Thorough (also the Effort box in the chat panel) |
 | `AIRESET` | New conversation for this drawing; reloads settings |
 | `AIKEY` | Set or remove the stored API key |
 | `AISTATUS` | Show model, key source, standards file, settings and log locations, usage |
@@ -160,11 +161,31 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 | Key | Default | Notes |
 |---|---|---|
 | `model` | `claude-opus-5-5` | Any Claude model ID |
-| `effort` | `high` | `low` / `medium` / `high` / `xhigh` / `max`. Lower is faster and cheaper. |
+| `effort_mode` | `auto` | `auto` / `quick` / `normal` / `thorough`. Also set from the chat panel's Effort box or `AIEFFORT`. |
+| `effort_quick` | `low` | Effort level for Quick requests (`low` / `medium` / `high` / `xhigh` / `max`). |
+| `effort` | `high` | Effort level for Normal requests. |
+| `effort_thorough` | `xhigh` | Effort level for Thorough requests. |
 | `max_turns` | `30` | Safety limit on model round trips per request |
 | `server_side_fallback` | `true` | If Claude declines a request on policy grounds, Anthropic retries it on a fallback model. Claude API only. |
 | `standards_file` | *(blank)* | Path to your office standards. Blank uses `office-standards.md` next to the DLL. |
 | `base_url` | *(blank)* | Optional internal gateway URL that holds the API key centrally |
+
+## Effort
+
+Effort sets how hard Claude thinks before acting. Lower effort is faster and cheaper; higher
+effort is more careful. It stays the same model throughout, so the conversation and its cache
+carry on.
+
+| Mode | Used for | Default level |
+|---|---|---|
+| **Quick** | Simple edits ("move these 200 right", "delete the old grid") and questions about the drawing | `low` |
+| **Normal** | Ordinary drafting ("draw a 6000 x 4000 slab with a 2400 grid and dimension it") | `high` |
+| **Thorough** | Big or multi-step jobs: layouts, plans, sections, schedules, or three or more steps | `xhigh` |
+| **Auto** (default) | Picks one of the above from the wording of each request | |
+
+The chosen effort shows on the command line when a request starts, and in the History window.
+Auto uses simple word rules (`src/CsdBridge.Core/Agent/EffortPolicy.cs`), so it costs nothing
+and is easy to tune. To try the rules without BricsCAD, use `--effort auto` in the CLI harness.
 
 ## Office standards
 
