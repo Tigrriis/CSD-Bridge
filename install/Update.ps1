@@ -1,0 +1,138 @@
+<#
+.SYNOPSIS
+  Update CSD-Bridge in BricsCAD: get the latest code, build it, and install it.
+
+.DESCRIPTION
+  Run from the repo folder:
+
+    powershell -ExecutionPolicy Bypass -File install\Update.ps1
+
+  1. git pull (fast-forward only) in the repo this script lives in.
+  2. Builds the add-in for the newest BricsCAD installed (or -BricsCADVersion).
+     BricsCAD can stay open while this runs.
+  3. If the installed add-in is in use, waits until you close BricsCAD (Windows
+     locks a loaded add-in), then copies the build to -InstallDir.
+
+  Not touched: your API key and settings.json (%APPDATA%\CsdBridge). If the
+  installed office-standards.md was edited and differs from the repo copy, the
+  installed one is saved as office-standards.md.bak before it is replaced.
+
+.EXAMPLE
+  .\install\Update.ps1
+
+.EXAMPLE
+  .\install\Update.ps1 -BricsCADVersion 25 -RegisterAutoload
+#>
+[CmdletBinding()]
+param(
+    # Where BricsCAD loads the add-in from.
+    [string]$InstallDir = "C:\CsdBridge",
+
+    # Build for this BricsCAD version instead of the newest one installed.
+    [int]$BricsCADVersion,
+
+    # BricsCAD install folder, if it is not under C:\Program Files\Bricsys.
+    [string]$BricsCADDir,
+
+    # Build and install what is already checked out, without git pull.
+    [switch]$SkipPull,
+
+    # Also make BricsCAD load the add-in at startup (runs Register-Autoload.ps1).
+    [switch]$RegisterAutoload
+)
+
+$ErrorActionPreference = "Stop"
+
+$repo = Split-Path -Parent $PSScriptRoot
+$project = [IO.Path]::Combine($repo, "src", "CsdBridge.BricsCAD", "CsdBridge.BricsCAD.csproj")
+
+function Write-Step([string]$text) { Write-Host ""; Write-Host "== $text" -ForegroundColor Cyan }
+
+function Stop-Update([string]$text) {
+    Write-Host ""
+    Write-Host $text -ForegroundColor Red
+    exit 1
+}
+
+function Test-FileLocked([string]$path) {
+    if (-not (Test-Path $path)) { return $false }
+    try {
+        $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $stream.Close()
+        return $false
+    }
+    catch {
+        return $true
+    }
+}
+
+if (-not (Test-Path $project)) { Stop-Update "Can't find $project. Run this script from the CSD-Bridge repo." }
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { Stop-Update "The .NET SDK (dotnet) is not installed or not on PATH." }
+
+# Extra build settings passed through to the project.
+$buildProps = @()
+if ($BricsCADVersion) { $buildProps += "-p:BricsCADVersion=$BricsCADVersion" }
+if ($BricsCADDir) { $buildProps += "-p:BricsCADDir=$BricsCADDir" }
+
+# ---------------------------------------------------------------- 1. pull
+if (-not $SkipPull) {
+    Write-Step "Getting the latest code"
+    $branch = (& git -C $repo rev-parse --abbrev-ref HEAD)
+    & git -C $repo pull --ff-only
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Update "git pull failed (see above). If you changed files in the repo, commit or undo them, then run this again. Your installed add-in is unchanged."
+    }
+    Write-Host "Branch: $branch"
+}
+
+# ---------------------------------------------------------------- 2. build
+Write-Step "Finding BricsCAD"
+$evaluation = (& dotnet msbuild $project -nologo "-getProperty:BricsCADVersion" "-getProperty:BricsCADDir" @buildProps) | Out-String
+if ($LASTEXITCODE -ne 0) { Stop-Update "Could not read the project settings:`n$evaluation" }
+$found = ($evaluation | ConvertFrom-Json).Properties
+$version = $found.BricsCADVersion
+if ($found.BricsCADDir) { Write-Host "BricsCAD V$version at $($found.BricsCADDir)" }
+
+Write-Step "Building for BricsCAD V$version"
+& dotnet build $project -c Release -nologo @buildProps
+if ($LASTEXITCODE -ne 0) { Stop-Update "Build failed (see the errors above). Nothing was copied; your installed add-in is unchanged." }
+
+$outDir = [IO.Path]::Combine($repo, "src", "CsdBridge.BricsCAD", "bin", "Release", "V$version")
+if (-not (Test-Path (Join-Path $outDir "CsdBridge.BricsCAD.dll"))) {
+    Stop-Update "The build finished but CsdBridge.BricsCAD.dll is not in $outDir."
+}
+
+# ---------------------------------------------------------------- 3. install
+Write-Step "Installing to $InstallDir"
+$installedDll = Join-Path $InstallDir "CsdBridge.BricsCAD.dll"
+while (Test-FileLocked $installedDll) {
+    Write-Host "The add-in is in use. Close BricsCAD, then press Enter (Ctrl+C to stop)." -ForegroundColor Yellow
+    [void](Read-Host)
+}
+
+New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+
+$installedStandards = Join-Path $InstallDir "office-standards.md"
+$newStandards = Join-Path $outDir "office-standards.md"
+if ((Test-Path $installedStandards) -and (Test-Path $newStandards) -and
+    ((Get-FileHash $installedStandards).Hash -ne (Get-FileHash $newStandards).Hash)) {
+    Copy-Item $installedStandards "$installedStandards.bak" -Force
+    Write-Host "The installed office-standards.md was different from the repo copy, so it was saved as office-standards.md.bak." -ForegroundColor Yellow
+    Write-Host "To keep your edits across updates, put them in src\CsdBridge.BricsCAD\office-standards.md in the repo, or set standards_file in settings.json." -ForegroundColor Yellow
+}
+
+try {
+    Copy-Item -Path (Join-Path $outDir "*") -Destination $InstallDir -Recurse -Force
+}
+catch {
+    Stop-Update "Copying failed: $($_.Exception.Message). If BricsCAD is open, close it and run this again."
+}
+
+if ($RegisterAutoload) {
+    Write-Step "Registering autoload"
+    & (Join-Path $PSScriptRoot "Register-Autoload.ps1") -DllPath $installedDll -BricsCADVersion $version
+}
+
+Write-Host ""
+Write-Host "Done: CSD-Bridge for BricsCAD V$version is installed in $InstallDir." -ForegroundColor Green
+Write-Host "Start BricsCAD. If it doesn't load automatically, run NETLOAD and pick $installedDll"
