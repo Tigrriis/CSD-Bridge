@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using CsdBridge.Core.Drawing;
+using CsdBridge.Core.Geometry;
 
 namespace CsdBridge.Core.Offline
 {
@@ -253,6 +254,317 @@ namespace CsdBridge.Core.Offline
             }
 
             return results;
+        }
+
+        // ------------------------------------------------------------------ exact geometry
+
+        public IReadOnlyList<ItemResult> OffsetEntities(IReadOnlyList<OffsetOperation> operations)
+        {
+            var results = new List<ItemResult>();
+            for (int i = 0; i < operations.Count; i++)
+            {
+                OffsetOperation op = operations[i];
+                var missing = op.Handles.Where(h => Find(h) == null).ToList();
+                if (missing.Count > 0)
+                {
+                    results.Add(ItemResult.Failure(i, "Unknown handle(s): " + string.Join(", ", missing)));
+                    continue;
+                }
+
+                // Build everything first so a failure part-way leaves the drawing unchanged.
+                var created = new List<EntitySpec>();
+                string? error = null;
+                foreach (StoredEntity source in op.Handles.Select(h => Find(h)!))
+                {
+                    error = OffsetOne(source, op, created);
+                    if (error != null)
+                    {
+                        break;
+                    }
+                }
+
+                if (error != null)
+                {
+                    results.Add(ItemResult.Failure(i, error));
+                    continue;
+                }
+
+                var item = ItemResult.Success(i);
+                item.NewHandles = new List<string>();
+                foreach (EntitySpec spec in created)
+                {
+                    if (!_layers.ContainsKey(spec.Layer!))
+                    {
+                        _layers[spec.Layer!] = new LayerInfo { Name = spec.Layer!, Color = 7, Linetype = "CONTINUOUS" };
+                    }
+
+                    string handle = NewHandle();
+                    _entities.Add(new StoredEntity(handle, spec));
+                    item.NewHandles.Add(handle);
+                }
+
+                results.Add(item);
+            }
+
+            return results;
+        }
+
+        private static string? OffsetOne(StoredEntity source, OffsetOperation op, List<EntitySpec> created)
+        {
+            Path2? path = Path2.From(source.Spec);
+            if (path == null)
+            {
+                return $"{source.Handle} is {KindName(source.Spec)}, not a curve; only lines, polylines, arcs and circles can be offset";
+            }
+
+            if (op.Side != OffsetSide.TowardsPoint && !path.Closed)
+            {
+                return $"{source.Handle} is not closed, so 'inside'/'outside' doesn't apply; give a side_point instead";
+            }
+
+            for (int k = 1; k <= op.Count; k++)
+            {
+                EntitySpec? plus, minus;
+                try
+                {
+                    plus = Offsets.Offset(source.Spec, op.Distance * k);
+                    minus = Offsets.Offset(source.Spec, -op.Distance * k);
+                }
+                catch (NotSupportedException ex)
+                {
+                    return ex.Message;
+                }
+
+                EntitySpec? chosen = ChooseSide(path, plus, minus, op, out string? why);
+                if (chosen == null)
+                {
+                    return $"{source.Handle}: {why}";
+                }
+
+                chosen.Layer = op.Layer ?? source.Layer;
+                chosen.ColorIndex = source.Spec.ColorIndex;
+                created.Add(chosen);
+            }
+
+            return null;
+        }
+
+        private static EntitySpec? ChooseSide(Path2 original, EntitySpec? plus, EntitySpec? minus, OffsetOperation op, out string? error)
+        {
+            error = null;
+            var candidates = new[] { plus, minus }.Where(c => c != null).Select(c => c!).ToList();
+
+            if (op.Side == OffsetSide.TowardsPoint)
+            {
+                var (q, _, distance) = original.Closest(op.SidePoint);
+                if (distance < 1e-9)
+                {
+                    error = "side_point is on the curve; give a point clearly on one side";
+                    return null;
+                }
+
+                double vx = op.SidePoint.X - q.X, vy = op.SidePoint.Y - q.Y;
+                EntitySpec? best = null;
+                double bestDot = 0;
+                foreach (EntitySpec c in candidates)
+                {
+                    var (p, _, _) = Path2.From(c)!.Closest(q);
+                    double dot = ((p.X - q.X) * vx + (p.Y - q.Y) * vy) / distance;
+                    if (dot > bestDot + 1e-9)
+                    {
+                        best = c;
+                        bestDot = dot;
+                    }
+                }
+
+                if (best == null)
+                {
+                    error = candidates.Count < 2
+                        ? "the offset distance is too large for this shape on that side"
+                        : "side_point is in line with the curve; give a point clearly to one side of it";
+                }
+
+                return best;
+            }
+
+            // Inside / outside of a closed shape: compare enclosed areas. An inward offset
+            // that is too large collapses (null); outward offsets always exist.
+            if (candidates.Count == 0)
+            {
+                error = "this shape can't be offset";
+                return null;
+            }
+
+            if (candidates.Count == 1)
+            {
+                if (op.Side == OffsetSide.Inside)
+                {
+                    error = "the offset distance is too large to fit inside this shape";
+                    return null;
+                }
+
+                return candidates[0];
+            }
+
+            double areaPlus = Path2.From(plus!)!.Area, areaMinus = Path2.From(minus!)!.Area;
+            bool plusIsInside = areaPlus < areaMinus;
+            return (op.Side == OffsetSide.Inside) == plusIsInside ? plus : minus;
+        }
+
+        public IntersectionResult Intersect(IntersectQuery query)
+        {
+            var result = new IntersectionResult();
+            var skipped = new List<string>();
+            var paths = new Dictionary<string, Path2>(StringComparer.OrdinalIgnoreCase);
+            foreach (string h in query.Handles.Concat(query.With ?? new List<string>()).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                StoredEntity? e = Find(h);
+                Path2? path = e == null ? null : Path2.From(e.Spec);
+                if (e == null)
+                {
+                    skipped.Add($"{h}: not found");
+                }
+                else if (path == null)
+                {
+                    skipped.Add($"{h}: {KindName(e.Spec)} is not a curve");
+                }
+                else
+                {
+                    paths[h] = path;
+                }
+            }
+
+            IEnumerable<(string A, string B)> pairs = query.With == null
+                ? query.Handles.SelectMany((a, i) => query.Handles.Skip(i + 1).Select(b => (a, b)))
+                : query.Handles.SelectMany(a => query.With.Where(b => !string.Equals(a, b, StringComparison.OrdinalIgnoreCase)).Select(b => (a, b)));
+
+            foreach (var (a, b) in pairs)
+            {
+                if (!paths.TryGetValue(a, out Path2? pa) || !paths.TryGetValue(b, out Path2? pb))
+                {
+                    continue;
+                }
+
+                result.PairsChecked++;
+                List<Point2> points = Intersections.Find(pa, pb, query.Extend);
+                if (points.Count > 0)
+                {
+                    result.Intersections.Add(new IntersectionPair { A = a, B = b, Points = points.Select(p => p.ToArray()).ToList() });
+                }
+            }
+
+            result.Skipped = skipped.Count > 0 ? skipped : null;
+            return result;
+        }
+
+        public MeasureResult Measure(MeasureQuery query)
+        {
+            var result = new MeasureResult();
+            foreach (string h in query.Handles)
+            {
+                StoredEntity? e = Find(h);
+                if (e == null)
+                {
+                    result.Entities.Add(new EntityMeasurement { Handle = h, Error = "not found" });
+                    continue;
+                }
+
+                var m = new EntityMeasurement { Handle = e.Handle, Kind = KindName(e.Spec) };
+                Path2? path = Path2.From(e.Spec);
+                if (path != null)
+                {
+                    double length = path.Length;
+                    m.Length = Math.Round(length, 6);
+                    m.Closed = path.Closed;
+                    if (path.Closed)
+                    {
+                        m.Area = Math.Round(path.Area, 6);
+                    }
+                    else
+                    {
+                        m.Start = path.Start.ToArray();
+                        m.End = path.End.ToArray();
+                    }
+
+                    m.Mid = path.PointAt(length / 2).ToArray();
+                    if (query.Point is Point2 p)
+                    {
+                        var (closest, _, distance) = path.Closest(p);
+                        m.ClosestPoint = closest.ToArray();
+                        m.DistanceToPoint = Math.Round(distance, 6);
+                    }
+                }
+                else if (e.Spec is LinearDimensionSpec || e.Spec is AlignedDimensionSpec)
+                {
+                    m.Measurement = Math.Round(Measure(e.Spec), 6);
+                }
+
+                var (min, max) = Bounds(new[] { e.Spec });
+                m.BoundsMin = min.ToArray();
+                m.BoundsMax = max.ToArray();
+                result.Entities.Add(m);
+            }
+
+            return result;
+        }
+
+        public IReadOnlyList<CurvePoints> PointsOnCurves(IReadOnlyList<PointsRequest> requests)
+        {
+            var results = new List<CurvePoints>();
+            for (int i = 0; i < requests.Count; i++)
+            {
+                PointsRequest r = requests[i];
+                var item = new CurvePoints { Index = i, Handle = r.Handle };
+                StoredEntity? e = Find(r.Handle);
+                Path2? path = e == null ? null : Path2.From(e.Spec);
+                if (path == null)
+                {
+                    item.Error = e == null ? "not found" : $"{KindName(e.Spec)} is not a curve";
+                    results.Add(item);
+                    continue;
+                }
+
+                double length = path.Length;
+                item.Length = Math.Round(length, 6);
+                try
+                {
+                    item.Points = SetOut.Distances(r, length, path.Closed)
+                        .Select(d => new PointOnCurve
+                        {
+                            Point = path.PointAt(d).ToArray(),
+                            Distance = Math.Round(d, 6),
+                            Angle = Degrees(path.TangentAt(d)),
+                        })
+                        .ToList();
+                    item.Ok = true;
+                }
+                catch (ArgumentException ex)
+                {
+                    item.Error = ex.Message;
+                }
+
+                results.Add(item);
+            }
+
+            return results;
+        }
+
+        private static double Degrees(double radians)
+        {
+            double deg = radians * 180 / Math.PI % 360;
+            return Math.Round(deg < 0 ? deg + 360 : deg, 6);
+        }
+
+        private static string KindName(EntitySpec spec)
+        {
+            switch (spec)
+            {
+                case LinearDimensionSpec _:
+                case AlignedDimensionSpec _:
+                    return "dimension";
+                default:
+                    return Tools.ToolDispatcher.Snake(spec.Kind);
+            }
         }
 
         public PickPointResult PickPoint(string prompt)

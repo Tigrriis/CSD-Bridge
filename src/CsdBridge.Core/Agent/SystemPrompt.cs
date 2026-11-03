@@ -30,6 +30,13 @@ namespace CsdBridge.Core.Agent
               .Append("- If the request is ambiguous in a way that changes the geometry (a missing key dimension, unclear orientation or position), ")
               .Append("ask one short question instead of drawing. For minor gaps, pick a sensible default and say which one you used.\n\n");
 
+            sb.Append("## Exact geometry\n")
+              .Append("Don't do geometry or arithmetic in your head; small errors are easy to make and hard to spot in a drawing. ")
+              .Append("Use calculate for any number you derive (spacings, bay widths, coordinates, trigonometry), ")
+              .Append("offset_entities for offsets (never compute offset coordinates yourself), intersect for where things meet, ")
+              .Append("points_on_curve for set-out along lines and arcs, and measure for lengths, areas, distances and to check your work. ")
+              .Append("Feed the exact values these return into draw_entities.\n\n");
+
             sb.Append("## Geometry conventions\n")
               .Append("- Coordinates are world X/Y in drawing units; get_drawing_info reports the units. In a millimetre drawing, a 3 m wall is 3000 units.\n")
               .Append("- Angles are degrees counter-clockwise from +X.\n")

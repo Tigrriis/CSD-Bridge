@@ -36,7 +36,7 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
 ```
 
 - **CsdBridge.Core** has no BricsCAD dependency: the agent loop, tool schemas, input validation,
-  and `IDrawingHost`, the seven operations Claude may perform. It also has an in-memory host
+  and `IDrawingHost`, the operations Claude may perform. It also has an in-memory host
   and DXF writer for the CLI harness and tests. Porting to AutoCAD means writing another
   `IDrawingHost`. The BricsCAD host already uses the AutoCAD-compatible API, so that is mostly a
   namespace swap.
@@ -73,8 +73,24 @@ BricsCAD would freeze for the 10-60 s a request can take.
 
 ## Tool design
 
-Seven tools: `get_drawing_info`, `list_entities`, `ensure_layers`, `draw_entities`,
-`modify_entities`, `pick_point`, `select_entities`.
+Twelve tools:
+- **Drawing:** `get_drawing_info`, `list_entities`, `ensure_layers`, `draw_entities`, `modify_entities`
+- **User input:** `pick_point`, `select_entities`
+- **Exact geometry:** `calculate`, `offset_entities`, `intersect`, `measure`, `points_on_curve`
+
+- **Exact geometry is computed, never estimated.** LLMs make small arithmetic slips that are
+  hard to spot in a drawing. So every derived number goes through a tool:
+  - `calculate` is a safe expression parser, with named values that later lines can reuse.
+  - Offsets, intersections, lengths, areas, closest points and set-out points come from
+    BricsCAD's geometry engine (`GetOffsetCurves`, `IntersectWith`, `GetPointAtDist`, ...).
+    The system prompt tells Claude to use these and to feed their exact results into
+    `draw_entities`.
+
+  Offsets choose their side from a `side_point`, or from inside/outside for closed shapes. The
+  side is found by testing which candidate lies towards the point, so it doesn't depend on
+  which way the curve runs. The offline host has its own exact implementation (lines, arcs,
+  bulged polylines; mitred offsets for straight-sided polylines), so the tools behave the same
+  in the CLI harness and in tests.
 
 - **Constrained surface.** No "run command" or "eval LISP" tool. Everything Claude can do is
   listed in `IDrawingHost`, which keeps behaviour predictable and safe to give to all users.

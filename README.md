@@ -6,7 +6,7 @@ There is no MCP server and no Claude desktop app in the loop.
 
 ```
 BricsCAD ── CSD-Bridge add-in ── Claude API
-              │  agent loop + 7 drafting tools
+              │  agent loop + 12 drafting and geometry tools
               └─ draws, edits, asks you to pick points / select objects
 ```
 
@@ -24,6 +24,13 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
   in batches: lines, polylines, circles, arcs, text, mtext, linear/aligned dimensions, and block
   inserts with attribute values.
 - It can edit by handle (move, copy/array, rotate, scale, erase, change layer/colour).
+- **Exact geometry, not mental arithmetic.** Claude decides *what* to do; BricsCAD's own geometry
+  engine works out *where*:
+  - `calculate` for sums and trigonometry
+  - `offset_entities` for cover lines, wall thicknesses and setbacks
+  - `intersect` for where things meet, including when extended
+  - `measure` for lengths, areas, closest points and distances
+  - `points_on_curve` for set-out by divisions, spacing or distances
 - It can **ask you to click a point or select objects** mid-request, which an external MCP
   client can't do naturally.
 - Objects you select *before* asking are passed in as context ("dimension these").
@@ -168,7 +175,7 @@ point `standards_file` at it.
 
 ## Cost and logs
 
-Each request is several API calls, one per round of tool use. The ~3,400-token system prompt
+Each request is several API calls, one per round of tool use. The ~4,800-token system prompt
 and tool definitions are prompt-cached, so repeat calls mostly pay the cheap cache-read rate.
 The command line and panel show token usage after every request. The history window
 (`AIHISTORY`) shows each request's usage and today's total. Every request is saved to
