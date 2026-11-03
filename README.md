@@ -72,16 +72,19 @@ the console. It is the quickest way to tune prompts, tool descriptions and offic
 
 ### 2. Build the add-in (Windows, BricsCAD installed)
 
-```bash
-dotnet build src/CsdBridge.BricsCAD -c Release -p:BricsCADVersion=25
-```
+From the repo folder:
 
 ```bash
-dotnet build src/CsdBridge.BricsCAD -c Release -p:BricsCADVersion=26
+dotnet build src/CsdBridge.BricsCAD -c Release
 ```
 
-Output goes to `src/CsdBridge.BricsCAD/bin/Release/V25/` (or `V26/`). If BricsCAD isn't in
-`C:\Program Files\Bricsys\BricsCAD V25 en_US`, add `-p:BricsCADDir="..."`. V26 needs the
+The build finds the newest BricsCAD under `C:\Program Files\Bricsys` and prints which one it
+used. V24/V25 build for .NET Framework 4.8 and V26 onwards for .NET 8. To pick a version, add
+`-p:BricsCADVersion=25`. If BricsCAD is installed elsewhere, add
+`-p:BricsCADDir="D:\Apps\BricsCAD V25 en_US"`. If it can't find BricsCAD, the build stops
+with one message listing the BricsCAD folders it did find.
+
+The output goes to `src/CsdBridge.BricsCAD/bin/Release/V<version>/`. V26 and later need the
 x64 .NET 8 Desktop Runtime on the user's machine.
 
 ### 3. Load it
