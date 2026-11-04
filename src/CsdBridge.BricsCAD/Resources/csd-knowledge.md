@@ -11,16 +11,21 @@ Sources: Civil Site Design's help, knowledgebase and release notes (from search 
 - CSD needs an existing surface for most road work.
 
 ## commands: Typed commands
-- Commands use the legacy prefix ARDUV7 (many are ARDUV7AJEB...). csd_commands lists the commands this installation actually defines (read from CSD's assemblies) and the commands behind its ribbon/menu buttons (from CSD's menu file, C:\ProgramData\CSS\ARD\Menu\*.cui). Always take names from csd_commands; don't guess.
-- Confirmed in CSD's documentation:
-  - ARDUV7EDITDEFAULTS: Active Drawing Settings (per-drawing defaults including the VGE section: crest/sag K, max/min grade warnings, minimum VC length, segment length).
-  - ARDUV7AJEBINTERSECTIONMANAGER: Intersection Manager.
-  - ARDUV7AJEBUPDATEPROJECTEDPROFILES: Update Projected Profiles.
-  - ARDUV7REMOVEARDRUNFLAG: stop creating a -Data folder for a drawing with no CSD data.
-- Seen in forums or stack traces only (check with csd_commands): ARDUV7EDITTEMPLATE (template editor), arduv7PlotProfiles, arduv7SelectDisplay, ARDUV7INDEXROAD.
-- Ribbon tabs: General, Surfaces, Roads, Pipes, Data Share. Roads panels: Design, Select, Edit, Templates, Modelling, Reports, Plan Production.
-- Useful ribbon commands (find their typed names with csd_commands, filter by the button name): Create/Edit Road (Roads > Design), Vertical Grading Editor (Roads > Select), Open Cross Section (Roads > Select), Update All Road Objects (Roads > Edit), Create/Edit Section (Roads > Templates), Rebuild Models (Roads > Modelling), Volume (Roads > Reports), Create/Edit Surface and BricsCAD Surfaces (Surfaces tab), Thread Editor / Run Thread.
-- Many commands prompt at the command line first (for example "select alignment" or "select road"). csd_run_command then reports the command as still running; ask the user to answer the prompt in BricsCAD, then call csd_list_dialogs.
+Names below are in this office's CSD V27 install (from AICSD > List, Nov 2026). What each does is read from its name
+unless marked "confirmed"; check with csd_commands (it also shows the ribbon button behind a command) if unsure.
+- Vertical Grading Editor: ARDUV7NPROADVGE (confirmed: prompts to pick the road, opens frmPopUp). Also ARDUV7AJEBSELECTOPENVGE. csd_open_vge does the whole thing.
+- Roads: ARDUV7NPCREATEEDITROAD (Create/Edit Road: new road form, or the VGE for an existing road), ARDUV7CREATEROAD, ARDUV7ROADAUTO (Auto Road Creation), ARDUV7DELETECURRENTROAD.
+- Alignments: ARDUV7ALIGNMENTCREATE, ARDUV7ALIGNMENTCREATEALL, ARDUV7ALIGNMENTEDIT, ARDUV7AJEBELEMENTALIGNFROMPOLYLINE, ARDUV7AJEBELEMENTALIGNEDITOR, ARDUV7AJEBALIGNMENTGRIDEDITOR, ARDUV7AJEBOFFSETALIGNCREATE, ARDUV7LISTALIGNMENTS.
+- Design data: ARDUV7SELECTROADANDEDITDESIGN (Edit Design Data), ARDUV7AJEBSELECTDDF, ARDUV7AJEBSELECTSECTIONDESIGNDATA.
+- Templates: ARDUV7EDITTEMPLATE (template editor, frmTemplates), ARDUV7NPROADTEMPLATES.
+- Intersections and returns: ARDUV7AJEBINTERSECTIONMANAGER, ARDUV7KBCREATEEDIT (kerb returns), ARDUV7AJEBSELECTEDITKERBRETURN, ARDUV7AJEBSELECTEDITKNUCKLE, ARDUV7AJEBSELECTEDITROUNDABOUT, ARDUV7ROUNDABOUT, ARDUV7PBNEWCULDESACS.
+- Sections and volumes: ARDUV7AJEBSELECTVIEWCROSSSECTION, ARDUV7AJEBSELECTVOLUMEREPORT, ARDUV7VOLUMESREPORT, ARDUV7AJEBSECTIONALVOLUMES.
+- Models: ARDUV7AJEBSELECTREBUILDMODEL, ARDUV7BUILDALLACTIVEMODELS, ARDUV7AJEBSELECTOPENMODELBUILDER.
+- Surfaces: ARDUV7AJEBBRICSCADSURFACEMANAGER (BricsCAD Surface Exchange, used by sample_csd_ground), ARDUV7AJEBSELECTSURFACEMANAGER, ARDUV7AJEBCOMBINEDSURFACE.
+- Plan output: ARDUV7SAVE2DPLAN, ARDUV7SAVESEGMENTEDPLAN (CSD's 2D plan strings), ARDUV7PLOTPLAN.
+- Settings: ARDUV7EDITDEFAULTS (Active Drawing Settings: VGE K values, grade limits, minimum VC, segment length).
+- Commands with TEST, DEBUG, CRASH or MAKEANERROR in the name are CSD's internal test commands: never run them.
+- Ribbon tabs: General, Surfaces, Roads, Pipes, Data Share. Many commands prompt at the command line first (pick an alignment or road): csd_run_command then reports the command as still running; ask the user to answer the prompt, then call csd_list_dialogs.
 
 ## dialogs: CSD dialogs and their controls
 Names are the internal form names csd_list_dialogs shows.

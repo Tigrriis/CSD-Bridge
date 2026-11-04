@@ -54,6 +54,12 @@ namespace CsdBridge.Core.Tests
             Assert.Equal("adaptive", first.GetProperty("thinking").GetProperty("type").GetString());
             Assert.Equal("high", first.GetProperty("output_config").GetProperty("effort").GetString());
             Assert.Equal("ephemeral", first.GetProperty("cache_control").GetProperty("type").GetString());
+            Assert.Equal("1h", first.GetProperty("cache_control").GetProperty("ttl").GetString());
+            JsonElement clear = first.GetProperty("context_management").GetProperty("edits")[0];
+            Assert.Equal("clear_tool_uses_20250919", clear.GetProperty("type").GetString());
+            Assert.Equal(60000, clear.GetProperty("trigger").GetProperty("value").GetInt64());
+            Assert.Equal(6, clear.GetProperty("keep").GetProperty("value").GetInt64());
+            Assert.Contains("context-management-2025-06-27", http.BetaHeaders[0]);
             Assert.Equal(ToolCatalog.All.Count, first.GetProperty("tools").GetArrayLength());
             Assert.Contains("server-side-fallback-2026-07-01", http.BetaHeaders[0]);
             Assert.False(first.TryGetProperty("temperature", out _));

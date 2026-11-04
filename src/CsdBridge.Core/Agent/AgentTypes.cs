@@ -57,6 +57,22 @@ namespace CsdBridge.Core.Agent
 
         /// <summary>Office drafting standards appended to the system prompt (Markdown).</summary>
         public string? OfficeStandards { get; set; }
+
+        /// <summary>
+        /// Keep the prompt cache for an hour instead of 5 minutes. Writing it costs a little more
+        /// (2x instead of 1.25x the input price), but a drafting session with pauses between
+        /// requests then keeps reading it at a tenth of the price.
+        /// </summary>
+        public bool LongCache { get; set; } = true;
+
+        /// <summary>
+        /// Once a conversation's input passes this many tokens, the API drops the oldest tool
+        /// results (keeping the latest few), so long chats don't resend everything. 0 = off.
+        /// </summary>
+        public int ClearToolResultsAfterTokens { get; set; } = 60000;
+
+        /// <summary>How many of the most recent tool results are always kept.</summary>
+        public int KeepToolResults { get; set; } = 6;
     }
 
     public enum AgentEventKind

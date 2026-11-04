@@ -29,7 +29,7 @@ namespace CsdBridge.Core.Tools
     /// the result. Validation happens here, before anything touches the drawing, so a bad
     /// batch is rejected as a whole and Claude gets every problem back in one message.
     /// </summary>
-    public sealed class ToolDispatcher
+    public sealed partial class ToolDispatcher
     {
         private const int MaxReportedErrors = 20;
 
@@ -53,7 +53,7 @@ namespace CsdBridge.Core.Tools
                     case ToolCatalog.GetDrawingInfo:
                     {
                         DrawingInfo info = _host.GetDrawingInfo();
-                        return Ok(info, $"read drawing setup ({info.Units}, {info.Layers.Count} layers)");
+                        return Ok(DrawingInfoView.Compact(info, input), $"read drawing setup ({info.Units}, {info.Layers.Count} layers)");
                     }
 
                     case ToolCatalog.ListEntities:
@@ -143,7 +143,7 @@ namespace CsdBridge.Core.Tools
                     }
 
                     default:
-                        return Error($"Unknown tool '{toolName}'.", "unknown tool");
+                        return ExecuteEditing(toolName, input) ?? Error($"Unknown tool '{toolName}'.", "unknown tool");
                 }
             }
             catch (ToolInputException ex)
@@ -204,6 +204,7 @@ namespace CsdBridge.Core.Tools
                             q.Kinds.Add(EntityKind.AlignedDimension);
                             break;
                         case "block_insert": q.Kinds.Add(EntityKind.BlockInsert); break;
+                        case "hatch": q.Kinds.Add(EntityKind.Hatch); break;
                         case "other": q.IncludeOtherKinds = true; break;
                         default: throw new ToolInputException($"kinds: unknown kind '{k}'");
                     }
@@ -232,7 +233,23 @@ namespace CsdBridge.Core.Tools
                         Linetype = JsonArgs.OptionalString(items[i], "linetype", path),
                         LineweightMm = JsonArgs.OptionalNumber(items[i], "lineweight_mm", path),
                         Description = JsonArgs.OptionalString(items[i], "description", path),
+                        Plot = JsonArgs.TryGet(items[i], "plot", out _) ? JsonArgs.OptionalBool(items[i], "plot", path, true) : (bool?)null,
                     };
+                    List<JsonElement>? rgb = JsonArgs.OptionalArray(items[i], "rgb", path, 3, 3);
+                    if (rgb != null)
+                    {
+                        spec.Rgb = rgb.Select((c, k) =>
+                        {
+                            double v = JsonArgs.ReadNumber(c, JsonArgs.Index(JsonArgs.Path(path, "rgb"), k));
+                            if (v < 0 || v > 255)
+                            {
+                                throw new ToolInputException($"{path}.rgb values must be 0-255");
+                            }
+
+                            return (byte)Math.Round(v);
+                        }).ToArray();
+                    }
+
                     if (spec.LineweightMm != null && (spec.LineweightMm < 0 || spec.LineweightMm > 2.11))
                     {
                         throw new ToolInputException($"{path}.lineweight_mm must be between 0 and 2.11 mm");
@@ -425,6 +442,7 @@ namespace CsdBridge.Core.Tools
 
             spec.Layer = ValidateLayerName(JsonArgs.OptionalString(e, "layer", path), JsonArgs.Path(path, "layer"));
             spec.ColorIndex = JsonArgs.OptionalColor(e, "color", path);
+            spec.LinetypeScale = JsonArgs.OptionalPositive(e, "linetype_scale", path);
             return spec;
         }
 

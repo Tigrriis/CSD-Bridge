@@ -87,7 +87,7 @@ namespace CsdBridge.BricsCAD.Csd
         {
             CsdCommand cmd = FindCommand(commandName);
             Action work = CsdCommands.Prepare(cmd, cmd.Method != null ? "direct" : "command_line");
-            LaunchResult r = CsdWindows.Launch($"CSD command {cmd.Name}", CsdWindows.PostToMain, work, 30000);
+            LaunchResult r = CsdWindows.Launch($"CSD command {cmd.Name}", CsdWindows.MainPoster(), work, 30000);
             if (r.Error != null)
             {
                 throw new CsdException($"{cmd.Name} failed: {r.Error.Message}");
@@ -111,6 +111,11 @@ namespace CsdBridge.BricsCAD.Csd
                 return all.TryGetValue(name!.Trim().TrimStart('_', '.').ToUpperInvariant(), out CsdCommand? named)
                     ? named
                     : throw new CsdException($"'{name}' is not a CSD command known to this installation (see csd_commands).");
+            }
+
+            if (all.TryGetValue("ARDUV7AJEBBRICSCADSURFACEMANAGER", out CsdCommand? known))
+            {
+                return known;
             }
 
             int Score(CsdCommand c)

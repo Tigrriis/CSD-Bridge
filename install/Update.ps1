@@ -14,8 +14,8 @@
      locks a loaded add-in), then copies the build to -InstallDir.
 
   Not touched: your API key and settings.json (%APPDATA%\CsdBridge). If the
-  installed office-standards.md was edited and differs from the repo copy, the
-  installed one is saved as office-standards.md.bak before it is replaced.
+  installed office-standards.md or road-drafting.json was edited and differs from
+  the repo copy, the installed one is saved as .bak before it is replaced.
 
 .EXAMPLE
   .\install\Update.ps1
@@ -176,13 +176,16 @@ while (Test-FileLocked $installedDll) {
 
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
-$installedStandards = Join-Path $InstallDir "office-standards.md"
-$newStandards = Join-Path $outDir "office-standards.md"
-if ((Test-Path $installedStandards) -and (Test-Path $newStandards) -and
-    ((Get-FileHash $installedStandards).Hash -ne (Get-FileHash $newStandards).Hash)) {
-    Copy-Item $installedStandards "$installedStandards.bak" -Force
-    Write-Host "The installed office-standards.md was different from the repo copy, so it was saved as office-standards.md.bak." -ForegroundColor Yellow
-    Write-Host "To keep your edits across updates, put them in src\CsdBridge.BricsCAD\office-standards.md in the repo, or set standards_file in settings.json." -ForegroundColor Yellow
+foreach ($pair in @(@("office-standards.md", "standards_file"), @("road-drafting.json", "road_drafting_file"))) {
+    $file = $pair[0]
+    $installed = Join-Path $InstallDir $file
+    $new = Join-Path $outDir $file
+    if ((Test-Path $installed) -and (Test-Path $new) -and
+        ((Get-FileHash $installed).Hash -ne (Get-FileHash $new).Hash)) {
+        Copy-Item $installed "$installed.bak" -Force
+        Write-Host "The installed $file was different from the repo copy, so it was saved as $file.bak." -ForegroundColor Yellow
+        Write-Host "To keep your edits across updates, put them in src\CsdBridge.BricsCAD\$file in the repo, or set $($pair[1]) in settings.json." -ForegroundColor Yellow
+    }
 }
 
 try {

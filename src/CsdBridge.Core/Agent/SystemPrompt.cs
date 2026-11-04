@@ -36,7 +36,10 @@ namespace CsdBridge.Core.Agent
               .Append("Use calculate for any number you derive (spacings, bay widths, coordinates, trigonometry), ")
               .Append("offset_entities for offsets (never compute offset coordinates yourself), intersect for where things meet, ")
               .Append("points_on_curve for set-out along lines and arcs, and measure for lengths, areas, distances and to check your work. ")
-              .Append("Feed the exact values these return into draw_entities.\n\n");
+              .Append("Feed the exact values these return into draw_entities. ")
+              .Append("Finish linework exactly too: trim_extend for clean ends, fillet for tangent arcs such as kerb returns, join_curves to make ")
+              .Append("closed outlines, and hatch for areas. For road lines (kerbs, edges, footpaths) built from an alignment, use offset_by_chainage, ")
+              .Append("which keeps arcs as true arcs; analyse_offsets reads the offsets of existing lines such as CSD's code strings.\n\n");
 
             sb.Append("## Geometry conventions\n")
               .Append("- Coordinates are world X/Y in drawing units; get_drawing_info reports the units. In a millimetre drawing, a 3 m wall is 3000 units.\n")

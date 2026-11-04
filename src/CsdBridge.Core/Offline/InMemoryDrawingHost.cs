@@ -167,6 +167,16 @@ namespace CsdBridge.Core.Offline
                     continue;
                 }
 
+                if (spec is HatchSpec hatch)
+                {
+                    string? problem = ResolveHatch(hatch);
+                    if (problem != null)
+                    {
+                        results.Add(ItemResult.Failure(i, problem));
+                        continue;
+                    }
+                }
+
                 string? note = null;
                 spec.Layer ??= CurrentLayer;
                 if (!_layers.ContainsKey(spec.Layer))
@@ -191,6 +201,47 @@ namespace CsdBridge.Core.Offline
             }
 
             return results;
+        }
+
+        /// <summary>Turn boundary handles into explicit loops. Seed points need a real CAD application.</summary>
+        private string? ResolveHatch(HatchSpec h)
+        {
+            if (h.SeedPoints.Count > 0)
+            {
+                return "Finding a boundary from a point inside it needs BricsCAD; offline, give boundary_handles or points.";
+            }
+
+            foreach (string handle in h.BoundaryHandles)
+            {
+                StoredEntity? e = Find(handle);
+                Geometry.Path2? p = e == null ? null : Geometry.Path2.From(e.Spec);
+                if (p == null || !p.Closed)
+                {
+                    return $"{handle} is not a closed polyline or circle.";
+                }
+
+                h.Loops.Add(Geometry.PathOps.ToPolyline(p));
+            }
+
+            h.BoundaryHandles = new List<string>();
+            return h.Loops.Count == 0 ? "The hatch has no boundary." : null;
+        }
+
+        public IReadOnlyDictionary<string, EntitySpec> GetCurves(IReadOnlyList<string> handles)
+        {
+            var result = new Dictionary<string, EntitySpec>(StringComparer.OrdinalIgnoreCase);
+            foreach (string h in handles)
+            {
+                StoredEntity? e = Find(h);
+                if (e != null && (e.Spec is LineSpec || e.Spec is ArcSpec || e.Spec is CircleSpec || e.Spec is PolylineSpec))
+                {
+                    EntitySpec copy = Clone(e.Spec);
+                    copy.Layer = e.Layer;
+                    result[e.Handle] = copy;
+                }
+            }
+
+            return result;
         }
 
         public IReadOnlyList<ItemResult> ModifyEntities(IReadOnlyList<ModifyOperation> operations)
@@ -626,8 +677,23 @@ namespace CsdBridge.Core.Offline
                 case PolylineSpec p:
                     s.Kind = "polyline";
                     s.Points = p.Points.Select(pt => pt.ToArray()).ToArray();
+                    s.Bulges = p.Bulges != null && p.Bulges.Any(b => Math.Abs(b) > 1e-12) ? p.Bulges.Select(b => Math.Round(b, 6)).ToArray() : null;
                     s.Closed = p.Closed;
                     break;
+                case HatchSpec h:
+                {
+                    s.Kind = "hatch";
+                    s.Pattern = h.Pattern;
+                    double area = 0;
+                    for (int k = 0; k < h.Loops.Count; k++)
+                    {
+                        double a = Geometry.Path2.From(h.Loops[k])?.Area ?? 0;
+                        area += k == 0 ? a : -a;
+                    }
+
+                    s.Area = Math.Round(area, 4);
+                    break;
+                }
                 case CircleSpec c:
                     s.Kind = "circle";
                     s.Center = c.Center.ToArray();
@@ -720,6 +786,7 @@ namespace CsdBridge.Core.Offline
                 case LinearDimensionSpec d: return new[] { (d.P1, 0.0), (d.P2, 0.0), (d.DimLinePoint, 0.0) };
                 case AlignedDimensionSpec d: return new[] { (d.P1, 0.0), (d.P2, 0.0), (d.DimLinePoint, 0.0) };
                 case BlockInsertSpec b: return new[] { (b.Position, 0.0) };
+                case HatchSpec h: return h.Loops.SelectMany(l => l.Points).Select(pt => (pt, 0.0)).ToList();
                 default: return Array.Empty<(Point2, double)>();
             }
         }
@@ -742,6 +809,15 @@ namespace CsdBridge.Core.Offline
                     break;
                 case PolylineSpec p:
                     p.Points = p.Points.Select(T).ToList();
+                    break;
+                case HatchSpec h:
+                    foreach (PolylineSpec loop in h.Loops)
+                    {
+                        loop.Points = loop.Points.Select(T).ToList();
+                    }
+
+                    h.AngleDeg += angleDeg;
+                    h.Scale *= factor;
                     break;
                 case CircleSpec c:
                     c.Center = T(c.Center);
@@ -804,6 +880,15 @@ namespace CsdBridge.Core.Offline
                         Scale = b.Scale,
                         RotationDeg = b.RotationDeg,
                         Attributes = b.Attributes == null ? null : new Dictionary<string, string>(b.Attributes, StringComparer.OrdinalIgnoreCase),
+                    };
+                    break;
+                case HatchSpec h:
+                    c = new HatchSpec
+                    {
+                        Loops = h.Loops.Select(l => (PolylineSpec)Clone(l)).ToList(),
+                        Pattern = h.Pattern,
+                        Scale = h.Scale,
+                        AngleDeg = h.AngleDeg,
                     };
                     break;
                 default: throw new NotSupportedException(s.GetType().Name);

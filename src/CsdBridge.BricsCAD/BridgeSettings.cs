@@ -55,9 +55,21 @@ namespace CsdBridge.BricsCAD
         /// Office standards file. Point this at a network share so the whole office uses
         /// one file. Empty means office-standards.md next to the add-in DLL.
         /// </summary>
+        /// <summary>Prompt cache lifetime: "1h" (default, best for sessions with pauses) or "5m".</summary>
+        [JsonPropertyName("cache_ttl")]
+        public string CacheTtl { get; set; } = "1h";
+
+        /// <summary>Drop old tool results once a conversation passes this many input tokens (0 = never).</summary>
+        [JsonPropertyName("clear_old_tool_results_after_tokens")]
+        public int ClearToolResultsAfterTokens { get; set; } = 60000;
+
         /// <summary>Civil Site Design tools: "off", "read" (look but don't change; default) or "edit".</summary>
         [JsonPropertyName("csd_mode")]
         public string CsdMode { get; set; } = "read";
+
+        /// <summary>Road drafting conventions file. Empty means road-drafting.json next to the add-in DLL.</summary>
+        [JsonPropertyName("road_drafting_file")]
+        public string? RoadDraftingFile { get; set; }
 
         [JsonPropertyName("standards_file")]
         public string? StandardsFile { get; set; }
@@ -105,6 +117,8 @@ namespace CsdBridge.BricsCAD
             MaxTurns = MaxTurns,
             ServerSideFallback = ServerSideFallback,
             HostName = "BricsCAD",
+            LongCache = !string.Equals(CacheTtl, "5m", StringComparison.OrdinalIgnoreCase),
+            ClearToolResultsAfterTokens = Math.Max(0, ClearToolResultsAfterTokens),
             OfficeStandards = LoadStandards(),
         };
 
@@ -117,6 +131,39 @@ namespace CsdBridge.BricsCAD
 
             string dir = Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".";
             return Path.Combine(dir, "office-standards.md");
+        }
+
+        public string ResolvedRoadDraftingPath()
+        {
+            if (!string.IsNullOrWhiteSpace(RoadDraftingFile))
+            {
+                return Environment.ExpandEnvironmentVariables(RoadDraftingFile!);
+            }
+
+            string dir = Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".";
+            return Path.Combine(dir, "road-drafting.json");
+        }
+
+        /// <summary>The road drafting conventions, or null with the reason.</summary>
+        public CsdBridge.Core.Civil.RoadConventions? LoadRoadConventions(out string? error)
+        {
+            string path = ResolvedRoadDraftingPath();
+            error = null;
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    error = $"{path} not found";
+                    return null;
+                }
+
+                return CsdBridge.Core.Civil.RoadConventions.Load(path);
+            }
+            catch (Exception ex)
+            {
+                error = $"{path}: {ex.Message}";
+                return null;
+            }
         }
 
         private string? LoadStandards()

@@ -206,20 +206,22 @@ namespace CsdBridge.BricsCAD.Csd
         }
 
         /// <summary>
-        /// Queue work for BricsCAD's main thread without waiting: through the agent's pump when
-        /// it is free, otherwise through an open CSD dialog's message loop.
+        /// How to queue work for BricsCAD's main thread without waiting: through the agent's
+        /// pump when the main thread is free, otherwise through an open CSD dialog's message
+        /// loop. Decided now, before <see cref="Launch"/> marks the main thread busy with the
+        /// work itself (deciding inside Launch would see that mark and wrongly refuse).
         /// </summary>
-        public static void PostToMain(Action work)
+        public static Action<Action> MainPoster()
         {
             if (Busy == null)
             {
-                MainThreadPump.Instance.Post(work);
-                return;
+                return MainThreadPump.Instance.Post;
             }
 
             OpenDialog any = List().FirstOrDefault(o => o.Form != null)
                 ?? throw new CsdException($"BricsCAD's main thread is busy ({Busy}); finish or close that first.");
-            any.Form!.BeginInvoke(work);
+            Form form = any.Form!;
+            return work => form.BeginInvoke(work);
         }
 
         /// <summary>

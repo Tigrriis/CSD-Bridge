@@ -38,6 +38,12 @@ namespace CsdBridge.Core.Tools
         public const string Intersect = "intersect";
         public const string Measure = "measure";
         public const string PointsOnCurve = "points_on_curve";
+        public const string Hatch = "hatch";
+        public const string TrimExtend = "trim_extend";
+        public const string Fillet = "fillet";
+        public const string JoinCurves = "join_curves";
+        public const string OffsetByChainage = "offset_by_chainage";
+        public const string AnalyseOffsets = "analyse_offsets";
 
         public const int MaxEntitiesPerCall = 500;
         public const int MaxOperationsPerCall = 200;
@@ -51,10 +57,14 @@ namespace CsdBridge.Core.Tools
             new ToolDefinition(
                 GetDrawingInfo,
                 "Read the active drawing's setup: drawing units, extents, current layer/text style/dimension style, " +
-                "default text height, and the names of existing layers (with colour, linetype, lineweight and state), " +
-                "linetypes, text styles, dimension styles and block definitions. Call this once at the start of a task " +
-                "before drawing so you use the drawing's real units, layers and blocks.",
-                "{\"type\":\"object\",\"properties\":{}}"),
+                "default text height, and the existing layers as rows [name, colour, linetype, lineweight mm, state], " +
+                "linetypes, text styles, dimension styles and block definitions. Xref layers are left out unless asked for. " +
+                "Civil Site Design's string layers (CSD-3D-<road>-<code>, CSD-2D-...) are summarised as csd_roads: each road " +
+                "with its codes. Call this once at the start of a task before drawing so you use the drawing's real units, " +
+                "layers and blocks; use layer_filter to look for particular layers.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"layer_filter\":{\"type\":\"string\",\"description\":\"Only layers whose name contains this (case-insensitive).\"}," +
+                "\"include_xref_layers\":{\"type\":\"boolean\"}}}"),
 
             new ToolDefinition(
                 ListEntities,
@@ -66,7 +76,7 @@ namespace CsdBridge.Core.Tools
                 "'limit' and report 'truncated' when more matched. Handles returned here are what modify_entities takes.",
                 "{\"type\":\"object\",\"properties\":{" +
                 "\"layer\":{\"type\":\"string\",\"description\":\"Only entities on this layer (case-insensitive).\"}," +
-                "\"kinds\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"line\",\"polyline\",\"circle\",\"arc\",\"text\",\"mtext\",\"dimension\",\"block_insert\",\"other\"]},\"description\":\"Only these entity kinds.\"}," +
+                "\"kinds\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"line\",\"polyline\",\"circle\",\"arc\",\"text\",\"mtext\",\"dimension\",\"block_insert\",\"hatch\",\"other\"]},\"description\":\"Only these entity kinds.\"}," +
                 "\"handles\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Only these handles.\"}," +
                 "\"window_min\":" + Point + "," +
                 "\"window_max\":" + Point + "," +
@@ -84,7 +94,9 @@ namespace CsdBridge.Core.Tools
                 "\"color\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":255,\"description\":\"AutoCAD Color Index (1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta, 7 white/black, 8 dark grey, 9 light grey).\"}," +
                 "\"linetype\":{\"type\":\"string\",\"description\":\"e.g. CONTINUOUS, HIDDEN, CENTER, DASHED, PHANTOM.\"}," +
                 "\"lineweight_mm\":{\"type\":\"number\",\"description\":\"Plotted lineweight in mm, e.g. 0.18, 0.25, 0.35, 0.5, 0.7.\"}," +
-                "\"description\":{\"type\":\"string\"}" +
+                "\"description\":{\"type\":\"string\"}," +
+                "\"rgb\":{\"type\":\"array\",\"items\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":255},\"minItems\":3,\"maxItems\":3,\"description\":\"True colour, instead of color.\"}," +
+                "\"plot\":{\"type\":\"boolean\",\"description\":\"false = non-plotting layer.\"}" +
                 "},\"required\":[\"name\"]}}" +
                 "},\"required\":[\"layers\"]}"),
 
@@ -106,14 +118,15 @@ namespace CsdBridge.Core.Tools
                 "- aligned_dimension: p1, p2, dim_line_point, optional text_override\n" +
                 "- block_insert: block_name (must exist - see get_drawing_info), position, optional scale, rotation, " +
                 "attributes (object of TAG: value, e.g. title block fields; other attributes keep their defaults)\n" +
-                "Every item may also set 'layer' (created if missing; omit for the current layer) and 'color' (ACI; " +
-                "omit for ByLayer, which is preferred). Omitted heights use the drawing's default text height / dimension " +
+                "Every item may also set 'layer' (created if missing; omit for the current layer), 'color' (ACI; " +
+                "omit for ByLayer, which is preferred) and 'linetype_scale'. Omitted heights use the drawing's default text height / dimension " +
                 "style. Returns one result per item, in order, with the new entity's handle.",
                 "{\"type\":\"object\",\"properties\":{" +
                 "\"entities\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":500,\"items\":{\"type\":\"object\",\"properties\":{" +
                 "\"kind\":{\"type\":\"string\",\"enum\":[\"line\",\"polyline\",\"circle\",\"arc\",\"text\",\"mtext\",\"linear_dimension\",\"aligned_dimension\",\"block_insert\"]}," +
                 "\"layer\":{\"type\":\"string\"}," +
                 "\"color\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":255}," +
+                "\"linetype_scale\":{\"type\":\"number\"}," +
                 "\"start\":" + Point + ",\"end\":" + Point + "," +
                 "\"points\":{\"type\":\"array\",\"items\":" + Point + ",\"minItems\":2}," +
                 "\"bulges\":{\"type\":\"array\",\"items\":{\"type\":\"number\"}}," +
@@ -251,6 +264,93 @@ namespace CsdBridge.Core.Tools
                 "{\"type\":\"object\",\"properties\":{" +
                 "\"prompt\":{\"type\":\"string\",\"description\":\"e.g. 'Select the walls to dimension'\"}" +
                 "},\"required\":[\"prompt\"]}"),
+
+            new ToolDefinition(
+                Hatch,
+                "Hatch areas. Each item gives its boundary one of three ways: boundary_handles (closed polylines or circles; the " +
+                "first is the outline, any others are islands), seed_points (a point inside each area: the CAD finds the boundary " +
+                "from the linework around it, like picking points in HATCH; the area must be closed and on screen), or points " +
+                "(with optional bulges) for an explicit outline. pattern is a CAD pattern name (SOLID, ANSI31, AR-CONC, AR-SAND, " +
+                "DOTS, ...); scale and angle (degrees) as in HATCH. Up to 100 hatches per call.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"hatches\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":100,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"boundary_handles\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":100}," +
+                "\"seed_points\":{\"type\":\"array\",\"items\":" + Point + ",\"maxItems\":100}," +
+                "\"points\":{\"type\":\"array\",\"items\":" + Point + ",\"minItems\":3}," +
+                "\"bulges\":{\"type\":\"array\",\"items\":{\"type\":\"number\"}}," +
+                "\"pattern\":{\"type\":\"string\"},\"scale\":{\"type\":\"number\"},\"angle\":{\"type\":\"number\"}," +
+                "\"associative\":{\"type\":\"boolean\",\"description\":\"Keep linked to boundary_handles (default false).\"}," +
+                "\"layer\":{\"type\":\"string\"},\"color\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":255}" +
+                "}}}},\"required\":[\"hatches\"]}"),
+
+            new ToolDefinition(
+                TrimExtend,
+                "Trim or extend curves exactly to boundary curves. mode trim: cut the curve where it crosses the boundaries and keep " +
+                "the piece nearest keep_point. mode extend: lengthen the curve's start, end or both along its last line or arc to the " +
+                "nearest boundary ahead. The curve is replaced by the result (same layer and colour; a new handle is returned).",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"operations\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":100,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"handle\":{\"type\":\"string\"},\"mode\":{\"type\":\"string\",\"enum\":[\"trim\",\"extend\"]}," +
+                "\"boundaries\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"minItems\":1,\"maxItems\":50}," +
+                "\"keep_point\":" + Point + "," +
+                "\"end\":{\"type\":\"string\",\"enum\":[\"start\",\"end\",\"both\"]}" +
+                "},\"required\":[\"handle\",\"mode\",\"boundaries\"]}}},\"required\":[\"operations\"]}"),
+
+            new ToolDefinition(
+                Fillet,
+                "Fillet pairs of curves (lines, arcs, polylines) with a tangent arc, e.g. kerb returns: both curves are trimmed or " +
+                "extended to the tangent points. pick_a and pick_b are points on the part of each curve to keep (as when picking " +
+                "the lines in CAD). join: true joins a, the arc and b into one polyline. The curves are replaced (new handles " +
+                "returned); later items in the same call may use the old handles.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"fillets\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":100,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"a\":{\"type\":\"string\"},\"b\":{\"type\":\"string\"},\"radius\":{\"type\":\"number\"}," +
+                "\"pick_a\":" + Point + ",\"pick_b\":" + Point + "," +
+                "\"join\":{\"type\":\"boolean\"},\"layer\":{\"type\":\"string\",\"description\":\"Layer for the arc (default: a's layer).\"}" +
+                "},\"required\":[\"a\",\"b\",\"radius\",\"pick_a\",\"pick_b\"]}}},\"required\":[\"fillets\"]}"),
+
+            new ToolDefinition(
+                JoinCurves,
+                "Join curves that meet end to end (lines, arcs, polylines, in any order and direction) into one polyline, closed " +
+                "if the ends meet: e.g. to make a closed outline to hatch. The pieces are replaced by the polyline (first piece's " +
+                "layer unless 'layer' is given). Gaps up to 'tolerance' (default 0.001) are bridged.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"joins\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":50,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"handles\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"minItems\":2,\"maxItems\":500}," +
+                "\"tolerance\":{\"type\":\"number\"},\"layer\":{\"type\":\"string\"}," +
+                "\"keep_originals\":{\"type\":\"boolean\",\"description\":\"Leave the pieces in place (default false).\"}" +
+                "},\"required\":[\"handles\"]}}},\"required\":[\"joins\"]}"),
+
+            new ToolDefinition(
+                OffsetByChainage,
+                "Draw road lines (kerb, edge of seal, footpath...) exactly from an alignment and offsets by chainage. Each line is a " +
+                "list of stretches: {from, to, offset} for a constant offset, which is an exact offset of the alignment (arcs stay arcs " +
+                "with the right radius), or {from, to, offset_start, offset_end} for a straight taper between two offsets. Offsets " +
+                "are positive to the RIGHT of the alignment's direction, negative to the left. Chainage = start_chainage + distance " +
+                "along the alignment. Stretches should meet end to end; gaps are closed with straight lines. Use analyse_offsets " +
+                "to get the stretches from CSD's code strings.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"alignment\":{\"type\":\"string\",\"description\":\"Handle of the alignment polyline/line/arc.\"}," +
+                "\"start_chainage\":{\"type\":\"number\"}," +
+                "\"lines\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":50,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"stretches\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":200,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"from\":{\"type\":\"number\"},\"to\":{\"type\":\"number\"},\"offset\":{\"type\":\"number\"}," +
+                "\"offset_start\":{\"type\":\"number\"},\"offset_end\":{\"type\":\"number\"}},\"required\":[\"from\",\"to\"]}}," +
+                "\"layer\":{\"type\":\"string\"},\"color\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":255}" +
+                "},\"required\":[\"stretches\"]}}},\"required\":[\"alignment\",\"lines\"]}"),
+
+            new ToolDefinition(
+                AnalyseOffsets,
+                "Measure road lines (e.g. CSD's exported code polylines) against an alignment and describe each as stretches of " +
+                "constant offset and the straight transitions between them, within 'tolerance' (default 0.01). Only the lines' " +
+                "vertices are used, so CSD's chords between sample sections don't show up as false widening. Offsets are positive " +
+                "to the right. The stretches can go straight into offset_by_chainage (round them to the design values first).",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"alignment\":{\"type\":\"string\"},\"start_chainage\":{\"type\":\"number\"}," +
+                "\"lines\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"minItems\":1,\"maxItems\":50}," +
+                "\"tolerance\":{\"type\":\"number\"}," +
+                "\"arc_interval\":{\"type\":\"number\",\"description\":\"Sampling step along true arcs in the lines (default 1).\"}" +
+                "},\"required\":[\"alignment\",\"lines\"]}"),
         };
     }
 }

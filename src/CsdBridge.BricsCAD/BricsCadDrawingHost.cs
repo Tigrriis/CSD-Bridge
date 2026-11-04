@@ -22,7 +22,7 @@ namespace CsdBridge.BricsCAD
     /// </summary>
     internal sealed class BricsCadDrawingHost : IDrawingHost
     {
-        private const int MaxListedNames = 200;
+        private const int MaxListedNames = 5000;
         private const int MaxPolylinePoints = 500;
 
         private static readonly int[] ValidLineweights =
@@ -186,9 +186,18 @@ namespace CsdBridge.BricsCAD
                         notes.Add(created ? "created" : "updated");
                         ltr.UpgradeOpen();
 
-                        if (spec.ColorIndex != null)
+                        if (spec.Rgb != null && spec.Rgb.Length == 3)
+                        {
+                            ltr.Color = Color.FromRgb(spec.Rgb[0], spec.Rgb[1], spec.Rgb[2]);
+                        }
+                        else if (spec.ColorIndex != null)
                         {
                             ltr.Color = Color.FromColorIndex(ColorMethod.ByAci, spec.ColorIndex.Value);
+                        }
+
+                        if (spec.Plot != null)
+                        {
+                            ltr.IsPlottable = spec.Plot.Value;
                         }
 
                         if (spec.Linetype != null)
@@ -287,10 +296,28 @@ namespace CsdBridge.BricsCAD
             }
 
             ent.ColorIndex = spec.ColorIndex ?? 256; // 256 = ByLayer
+            if (spec.LinetypeScale is double ltScale && ltScale > 0)
+            {
+                ent.LinetypeScale = ltScale;
+            }
+
             ApplyTextDefaults(ent, spec);
 
             space.AppendEntity(ent);
             tr.AddNewlyCreatedDBObject(ent, true);
+
+            if (ent is Hatch hatchEnt && spec is HatchSpec hatchSpec)
+            {
+                try
+                {
+                    note = Join(note, FinishHatch(hatchEnt, hatchSpec, tr));
+                }
+                catch (System.Exception)
+                {
+                    hatchEnt.Erase(); // don't leave an empty hatch behind
+                    throw;
+                }
+            }
 
             if (ent is DBText text && text.HorizontalMode != TextHorizontalMode.TextLeft)
             {
@@ -327,6 +354,15 @@ namespace CsdBridge.BricsCAD
 
                 case CircleSpec c:
                     return new Circle(P3(c.Center), Vector3d.ZAxis, c.Radius);
+
+                case HatchSpec h:
+                {
+                    // Loops are added once the hatch is in the drawing (FinishHatch).
+                    var hatch = new Hatch();
+                    hatch.PatternScale = h.Scale;
+                    hatch.PatternAngle = Rad(h.AngleDeg);
+                    return hatch;
+                }
 
                 case ArcSpec a:
                     return new Arc(P3(a.Center), a.Radius, Rad(a.StartAngleDeg), Rad(a.EndAngleDeg));
@@ -947,6 +983,226 @@ namespace CsdBridge.BricsCAD
 
         // ================================================================ user input
 
+        /// <summary>Set the pattern and add the boundary loops of a hatch that is already in the drawing.</summary>
+        private string? FinishHatch(Hatch hatch, HatchSpec h, Transaction tr)
+        {
+            hatch.SetHatchPattern(HatchPatternType.PreDefined, h.Pattern.ToUpperInvariant());
+            int loops = 0;
+
+            foreach (PolylineSpec loop in h.Loops)
+            {
+                AppendPointLoop(hatch, loop.Points, loop.Bulges, loops++ == 0);
+            }
+
+            if (h.BoundaryHandles.Count > 0)
+            {
+                hatch.Associative = h.Associative;
+                foreach (string handle in h.BoundaryHandles)
+                {
+                    ObjectId id = ResolveHandle(handle);
+                    if (id.IsNull || !(tr.GetObject(id, OpenMode.ForRead) is Curve c) || !c.Closed)
+                    {
+                        throw new InvalidOperationException($"{handle} is not a closed curve, so it can't bound a hatch.");
+                    }
+
+                    hatch.AppendLoop(loops++ == 0 ? HatchLoopTypes.External : HatchLoopTypes.Default, new ObjectIdCollection { id });
+                }
+            }
+
+            foreach (Point2 seed in h.SeedPoints)
+            {
+                DBObjectCollection found = Ed.TraceBoundary(new Point3d(seed.X, seed.Y, 0), true);
+                if (found == null || found.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"No closed boundary was found around {seed}. The area must be fully enclosed by linework and visible on screen.");
+                }
+
+                bool outer = true;
+                foreach (DBObject o in found)
+                {
+                    using (o)
+                    {
+                        switch (o)
+                        {
+                            case Polyline pl:
+                            {
+                                var pts = new List<Point2>();
+                                var bulges = new List<double>();
+                                for (int i = 0; i < pl.NumberOfVertices; i++)
+                                {
+                                    Point3d v = pl.GetPoint3dAt(i);
+                                    pts.Add(new Point2(v.X, v.Y));
+                                    bulges.Add(pl.Normal.Z < 0 ? -pl.GetBulgeAt(i) : pl.GetBulgeAt(i));
+                                }
+
+                                AppendPointLoop(hatch, pts, bulges, outer);
+                                break;
+                            }
+
+                            case Circle circle:
+                            {
+                                Point2 c = new Point2(circle.Center.X, circle.Center.Y);
+                                var pts = new List<Point2> { new Point2(c.X + circle.Radius, c.Y), new Point2(c.X - circle.Radius, c.Y) };
+                                AppendPointLoop(hatch, pts, new List<double> { 1, 1 }, outer);
+                                break;
+                            }
+
+                            default:
+                                throw new InvalidOperationException($"The boundary around {seed} came back as a {o.GetType().Name}, which can't be hatched here; draw it with polylines.");
+                        }
+                    }
+
+                    outer = false;
+                    loops++;
+                }
+            }
+
+            if (loops == 0)
+            {
+                throw new InvalidOperationException("The hatch has no boundary.");
+            }
+
+            hatch.EvaluateHatch(true);
+            if (h.SendToBack)
+            {
+                var space = (BlockTableRecord)tr.GetObject(hatch.OwnerId, OpenMode.ForRead);
+                var order = (DrawOrderTable)tr.GetObject(space.DrawOrderTableId, OpenMode.ForWrite);
+                order.MoveToBottom(new ObjectIdCollection { hatch.ObjectId });
+            }
+
+            double area = 0;
+            try
+            {
+                area = hatch.Area;
+            }
+            catch (System.Exception)
+            {
+                // Area isn't available for every hatch.
+            }
+
+            return area > 0 ? $"area {Round(area)}" : null;
+        }
+
+        private static void AppendPointLoop(Hatch hatch, IReadOnlyList<Point2> points, IReadOnlyList<double>? bulges, bool outer)
+        {
+            var pts = new Point2dCollection();
+            var bs = new DoubleCollection();
+            for (int i = 0; i < points.Count; i++)
+            {
+                pts.Add(new Point2d(points[i].X, points[i].Y));
+                bs.Add(bulges != null && i < bulges.Count ? bulges[i] : 0);
+            }
+
+            // Close the loop explicitly: hatch polyline loops repeat the first point at the end.
+            if (points.Count > 0 && (points[0].X != points[points.Count - 1].X || points[0].Y != points[points.Count - 1].Y))
+            {
+                pts.Add(new Point2d(points[0].X, points[0].Y));
+                bs.Add(0);
+            }
+
+            hatch.AppendLoop((outer ? HatchLoopTypes.External : HatchLoopTypes.Default) | HatchLoopTypes.Polyline, pts, bs);
+        }
+
+        public IReadOnlyDictionary<string, EntitySpec> GetCurves(IReadOnlyList<string> handles)
+        {
+            var result = new Dictionary<string, EntitySpec>(StringComparer.OrdinalIgnoreCase);
+            using (Transaction tr = Db.TransactionManager.StartTransaction())
+            {
+                foreach (string h in handles)
+                {
+                    ObjectId id = ResolveHandle(h);
+                    if (id.IsNull || !(tr.GetObject(id, OpenMode.ForRead) is Entity ent))
+                    {
+                        continue;
+                    }
+
+                    EntitySpec? spec = CurveSpec(ent);
+                    if (spec != null)
+                    {
+                        spec.Layer = ent.Layer;
+                        spec.ColorIndex = ent.ColorIndex == 256 ? (short?)null : (short)ent.ColorIndex;
+                        result[ent.Handle.ToString()] = spec;
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            return result;
+        }
+
+        /// <summary>Exact plan geometry of a curve in world X/Y, or null if it isn't a line, arc, circle or polyline.</summary>
+        private static EntitySpec? CurveSpec(Entity ent)
+        {
+            switch (ent)
+            {
+                case Line l:
+                    return new LineSpec { Start = P2(l.StartPoint), End = P2(l.EndPoint) };
+
+                case Arc a:
+                    if (a.Normal.Z >= 0)
+                    {
+                        return new ArcSpec { Center = P2(a.Center), Radius = a.Radius, StartAngleDeg = Deg(a.StartAngle), EndAngleDeg = Deg(a.EndAngle) };
+                    }
+
+                    // Seen from below: it runs clockwise in plan, so swap the ends.
+                    return new ArcSpec
+                    {
+                        Center = P2(a.Center),
+                        Radius = a.Radius,
+                        StartAngleDeg = Deg(Math.Atan2(a.EndPoint.Y - a.Center.Y, a.EndPoint.X - a.Center.X)),
+                        EndAngleDeg = Deg(Math.Atan2(a.StartPoint.Y - a.Center.Y, a.StartPoint.X - a.Center.X)),
+                    };
+
+                case Circle c:
+                    return new CircleSpec { Center = P2(c.Center), Radius = c.Radius };
+
+                case Polyline p:
+                {
+                    var spec = new PolylineSpec { Closed = p.Closed, Bulges = new List<double>() };
+                    for (int i = 0; i < p.NumberOfVertices; i++)
+                    {
+                        spec.Points.Add(P2(p.GetPoint3dAt(i)));
+                        spec.Bulges.Add(p.Normal.Z < 0 ? -p.GetBulgeAt(i) : p.GetBulgeAt(i));
+                    }
+
+                    return spec;
+                }
+
+                case Polyline2d p2:
+                {
+                    var spec = new PolylineSpec { Closed = p2.Closed, Bulges = new List<double>() };
+                    foreach (Vertex2d v in p2)
+                    {
+                        spec.Points.Add(P2(v.Position));
+                        spec.Bulges.Add(p2.Normal.Z < 0 ? -v.Bulge : v.Bulge);
+                    }
+
+                    return spec;
+                }
+
+                case Polyline3d p3:
+                {
+                    var spec = new PolylineSpec { Closed = p3.Closed };
+                    foreach (ObjectId vid in p3)
+                    {
+                        if (vid.GetObject(OpenMode.ForRead) is PolylineVertex3d v)
+                        {
+                            spec.Points.Add(P2(v.Position));
+                        }
+                    }
+
+                    return spec;
+                }
+
+                default:
+                    return null;
+            }
+        }
+
+        private static Point2 P2(Point3d p) => new Point2(p.X, p.Y);
+
         public PickPointResult PickPoint(string prompt)
         {
             var options = new PromptPointOptions("\n" + prompt.TrimEnd(':', ' ') + ": ") { AllowNone = true };
@@ -1009,6 +1265,7 @@ namespace CsdBridge.BricsCAD
                 case Dimension _: return EntityKind.LinearDimension;
                 case Table _: return null;
                 case BlockReference _: return EntityKind.BlockInsert;
+                case Hatch _: return EntityKind.Hatch;
                 default: return null;
             }
         }
@@ -1035,9 +1292,28 @@ namespace CsdBridge.BricsCAD
                     s.Kind = "polyline";
                     int n = Math.Min(p.NumberOfVertices, MaxPolylinePoints);
                     s.Points = Enumerable.Range(0, n).Select(i => Arr(p.GetPoint2dAt(i))).ToArray();
+                    if (Enumerable.Range(0, n).Any(i => Math.Abs(p.GetBulgeAt(i)) > 1e-12))
+                    {
+                        s.Bulges = Enumerable.Range(0, n).Select(i => Math.Round(p.GetBulgeAt(i), 6)).ToArray();
+                    }
+
                     s.Closed = p.Closed;
                     break;
                 }
+
+                case Hatch h:
+                    s.Kind = "hatch";
+                    s.Pattern = h.PatternName;
+                    try
+                    {
+                        s.Area = Round(h.Area);
+                    }
+                    catch (System.Exception)
+                    {
+                        // Not every hatch can report its area.
+                    }
+
+                    break;
 
                 case Arc a:
                     s.Kind = "arc";
@@ -1251,7 +1527,7 @@ namespace CsdBridge.BricsCAD
 
         private static double Deg(double rad) => rad * 180.0 / Math.PI;
 
-        private static double Round(double v) => Math.Round(v, 4);
+        private static double Round(double v) => Math.Round(v, 3);
 
         private static double[] Arr(Point3d p) => new[] { Round(p.X), Round(p.Y) };
 
