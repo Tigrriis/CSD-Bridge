@@ -209,7 +209,8 @@ With CSD loaded, Claude can work in CSD's dialogs the way you would, but from in
 | `csd_press` | Presses buttons and menu items, including the Vertical Grading Editor's commands, and the buttons of CSD's message boxes. In read mode it refuses buttons that change the design (OK, Save, Delete, Adjust, Rebuild...). |
 | `csd_read_volumes` | Reads the VGE's cut/fill readout. |
 | `csd_help` | Built-in notes on CSD: dialogs and their controls, VGE and grading-grid workflow, design data, templates, volumes, ground levels. |
-| `sample_ground_profile` | Samples existing ground along a centreline from a BricsCAD TIN surface. CSD keeps its own surfaces, so make a BricsCAD copy with CSD's Surface Exchange first. |
+| `sample_csd_ground` | Gets existing ground levels along a centreline from a CSD surface. CSD surfaces can't be read directly, so it makes a temporary BricsCAD copy through CSD's Surface Exchange, samples it, then removes the copy and its exchange item. Nothing is left in the drawing (or, in edit mode, it can hide the copy on a frozen layer for reuse). |
+| `sample_ground_profile` | Samples a BricsCAD TIN surface that is already in the drawing. |
 | `design_vertical_profile`, `evaluate_vertical_profile` | Exact vertical design. Priorities, in order: grades and IP spacing within limits, then as few IPs as possible, then least centreline cut/fill. VC lengths come from a K value. It also checks a design for grade, K, spacing and VC-overlap problems. |
 | `csd_write_vc_file` | Writes an IP table to a text file for the VGE's File > Import VC. |
 

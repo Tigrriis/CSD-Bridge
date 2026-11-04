@@ -753,11 +753,20 @@ namespace CsdBridge.BricsCAD.Csd
             return grid.Rows[row].Cells[col.Index];
         }
 
-        private static ToolStripItem FindMenuItem(Form form, string menu)
+        private static ToolStripItem FindMenuItem(Form form, string menu) =>
+            TryFindMenuItem(form, menu)
+            ?? throw new CsdException($"No menu item '{menu}' in '{form.Text}'. Use a path such as \"File > Export Data\", or an item name from csd_read_dialog. " +
+                "For a menu that drops down from a button, press the button first.");
+
+        /// <summary>
+        /// Find a menu item by path ("File > Export Data") or name, in the form's menus and tool
+        /// strips, its context menus (including ones only held in fields), and any drop-down menu
+        /// open right now (e.g. one a button just showed). Call on the form's UI thread.
+        /// </summary>
+        public static ToolStripItem? TryFindMenuItem(Form form, string menu)
         {
             string[] parts = menu.Split('>').Select(p => CleanText(p)).Where(p => p.Length > 0).ToArray();
-            var strips = AllControls(form).OfType<ToolStrip>().ToList();
-            foreach (ToolStrip strip in strips)
+            foreach (ToolStrip strip in MenuSources(form))
             {
                 ToolStripItem? hit = parts.Length > 1 ? WalkPath(strip.Items, parts, 0) : FindItem(strip.Items, parts.Length == 1 ? parts[0] : menu);
                 if (hit != null)
@@ -766,7 +775,56 @@ namespace CsdBridge.BricsCAD.Csd
                 }
             }
 
-            throw new CsdException($"No menu item '{menu}' in '{form.Text}'. Use a path such as \"File > Export Data\", or an item name from csd_read_dialog.");
+            return null;
+        }
+
+        private static List<ToolStrip> MenuSources(Form form)
+        {
+            var strips = new List<ToolStrip>();
+            void Add(ToolStrip? t)
+            {
+                if (t != null && !t.IsDisposed && !strips.Contains(t))
+                {
+                    strips.Add(t);
+                }
+            }
+
+            foreach (ToolStrip t in AllControls(form).OfType<ToolStrip>())
+            {
+                Add(t);
+            }
+
+            Add(form.ContextMenuStrip);
+            foreach (Control c in AllControls(form))
+            {
+                Add(c.ContextMenuStrip);
+            }
+
+            // Context menus kept in the form's fields (VB "WithEvents" members) or its components.
+            for (Type? t = form.GetType(); t != null && t != typeof(Form); t = t.BaseType)
+            {
+                foreach (FieldInfo f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    if (typeof(ToolStrip).IsAssignableFrom(f.FieldType))
+                    {
+                        try
+                        {
+                            Add(f.GetValue(form) as ToolStrip);
+                        }
+                        catch (Exception)
+                        {
+                            // Unreadable field.
+                        }
+                    }
+                }
+            }
+
+            foreach (ToolStripDropDown open in CsdWindows.OpenDropDowns())
+            {
+                Add(open);
+            }
+
+            return strips;
         }
 
         private static ToolStripItem? WalkPath(ToolStripItemCollection items, string[] parts, int i)

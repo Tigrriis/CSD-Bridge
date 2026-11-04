@@ -31,6 +31,7 @@ namespace CsdBridge.BricsCAD.Csd
         public const string SetValues = "csd_set_values";
         public const string Press = "csd_press";
         public const string SampleGround = "sample_ground_profile";
+        public const string SampleCsdGround = "sample_csd_ground";
         public const string WriteVcFile = "csd_write_vc_file";
 
         private readonly Document _doc;
@@ -115,11 +116,27 @@ namespace CsdBridge.BricsCAD.Csd
                 "\"wait_seconds\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":120,\"description\":\"Default 15.\"}" +
                 "},\"required\":[\"dialog\"]}"),
 
+            new ToolDefinition(SampleCsdGround,
+                "Get existing ground levels along a centreline from a Civil Site Design surface (e.g. the natural surface, often named " +
+                "NS...). CSD surfaces can't be read directly, so this makes a temporary BricsCAD copy with CSD's Surface Exchange, samples " +
+                "it every 'interval' metres, then removes the copy and its exchange item (after: \"remove\", the default) or hides it on a " +
+                "frozen layer for reuse (\"hide\", edit mode only). Returns a ground_id for design_vertical_profile / " +
+                "evaluate_vertical_profile. If the surface name is wrong, the error lists the CSD surfaces in the drawing. The centreline " +
+                "is a polyline, line, arc or alignment (by handle); start_chainage is its chainage at the start (match CSD's).",
+                "{\"type\":\"object\",\"properties\":{\"csd_surface\":{\"type\":\"string\",\"description\":\"CSD surface name.\"}," +
+                "\"centreline\":{\"type\":\"string\",\"description\":\"Entity handle.\"}," +
+                "\"interval\":{\"type\":\"number\",\"description\":\"Metres. Default 5.\"}," +
+                "\"start_chainage\":{\"type\":\"number\"},\"from_chainage\":{\"type\":\"number\"},\"to_chainage\":{\"type\":\"number\"}," +
+                "\"reverse\":{\"type\":\"boolean\",\"description\":\"The polyline runs the opposite way to the road.\"}," +
+                "\"after\":{\"type\":\"string\",\"enum\":[\"remove\",\"hide\",\"keep\"]}," +
+                "\"exchange_command\":{\"type\":\"string\",\"description\":\"The command that opens Surface Exchange, if it can't be found automatically.\"}" +
+                "},\"required\":[\"csd_surface\",\"centreline\"]}"),
+
             new ToolDefinition(SampleGround,
                 "Sample existing ground levels along a centreline (a polyline, line, arc or alignment, by handle) from a BricsCAD TIN " +
+                "surface already in the drawing (for CSD surfaces use sample_csd_ground instead), " +
                 "surface, every 'interval' metres. Returns a ground_id for design_vertical_profile / evaluate_vertical_profile, the " +
-                "range and a short preview. start_chainage is the chainage at the start of the centreline (match CSD's). CSD's own " +
-                "surfaces must first be copied to a BricsCAD TIN with CSD's Surface Exchange (csd_help topic \"ground\").",
+                "range and a short preview. start_chainage is the chainage at the start of the centreline (match CSD's).",
                 "{\"type\":\"object\",\"properties\":{\"centreline\":{\"type\":\"string\",\"description\":\"Entity handle.\"}," +
                 "\"surface\":{\"type\":\"string\",\"description\":\"Surface name or handle; needed if there are several.\"}," +
                 "\"interval\":{\"type\":\"number\",\"description\":\"Metres. Default 5.\"}," +
@@ -149,7 +166,9 @@ namespace CsdBridge.BricsCAD.Csd
             "- If a tool says edits are off (read mode), tell the user they can turn them on with the AICSD command; don't work around it.\n" +
             "- If CSD shows a message box, read it and tell the user what it says before answering it.";
 
-        public bool RunsOnMainThread(string toolName) => toolName == SampleGround;
+        // Everything runs on the agent's background thread: the tools marshal to BricsCAD's main
+        // thread or the dialogs' UI thread themselves, which also works while a CSD dialog is open.
+        public bool RunsOnMainThread(string toolName) => false;
 
         public string? DescribeCall(string toolName, JsonElement input)
         {
@@ -165,6 +184,7 @@ namespace CsdBridge.BricsCAD.Csd
                 case SetValues: return $"changing values in {Arg("dialog")}";
                 case Press: return $"pressing {Arg("control") ?? Arg("menu")} in {Arg("dialog")}";
                 case SampleGround: return "sampling the ground along the centreline";
+                case SampleCsdGround: return $"getting ground levels from {Arg("csd_surface")}";
                 case WriteVcFile: return "writing a VC file";
                 default: return null;
             }
@@ -190,6 +210,7 @@ namespace CsdBridge.BricsCAD.Csd
                     case SetValues: return DoSetValues(input);
                     case Press: return DoPress(input);
                     case SampleGround: return DoSampleGround(input);
+                    case SampleCsdGround: return DoSampleCsdGround(input);
                     case WriteVcFile: return DoWriteVcFile(input);
                     default: return Fail($"Unknown tool '{toolName}'.");
                 }
@@ -297,11 +318,6 @@ namespace CsdBridge.BricsCAD.Csd
                 return Fail($"'{name}' is not a Civil Site Design command known to this installation. Find the name with csd_commands.");
             }
 
-            if (CsdWindows.Busy is string busy)
-            {
-                return Fail($"BricsCAD is still busy ({busy}). Finish or close that first; csd_list_dialogs shows what is open.");
-            }
-
             if (!CanEdit)
             {
                 string? word = CsdSafety.ChangingCommandWord(cmd.Name, cmd.Buttons);
@@ -317,7 +333,7 @@ namespace CsdBridge.BricsCAD.Csd
             }
 
             Action work = CsdCommands.Prepare(cmd, method);
-            LaunchResult r = CsdWindows.Launch($"CSD command {cmd.Name}", a => MainThreadPump.Instance.Post(a), work, wait * 1000);
+            LaunchResult r = CsdWindows.Launch($"CSD command {cmd.Name}", CsdWindows.PostToMain, work, wait * 1000);
             var dialogs = CsdWindows.List();
             string status = r.Error != null ? "failed" : r.Opened.Count > 0 ? "dialog_open" : r.Finished ? "finished" : "running";
             var payload = new
@@ -557,8 +573,41 @@ namespace CsdBridge.BricsCAD.Csd
                 throw new ToolInputException("interval must be at least 0.1 m");
             }
 
-            object r = GroundSampler.Sample(_doc, req);
+            object r = CsdWindows.OnMainThread(() => GroundSampler.Sample(_doc, req));
             return Json(r, "sampled the ground along the centreline");
+        }
+
+        private ToolOutcome DoSampleCsdGround(JsonElement input)
+        {
+            string csdSurface = JsonArgs.RequireString(input, "csd_surface", "");
+            string after = JsonArgs.OptionalString(input, "after", "") ?? "remove";
+            if (after != "remove" && after != "hide" && after != "keep")
+            {
+                throw new ToolInputException("after must be remove, hide or keep");
+            }
+
+            if (after != "remove" && !CanEdit)
+            {
+                return Fail($"Leaving a BricsCAD copy of the surface in the drawing (after: \"{after}\") needs CSD edits on (AICSD > Edit). With after: \"remove\" nothing is left behind.");
+            }
+
+            var req = new GroundSampler.Request
+            {
+                Centreline = JsonArgs.RequireString(input, "centreline", ""),
+                Interval = JsonArgs.OptionalPositive(input, "interval", "") ?? 5,
+                StartChainage = JsonArgs.OptionalNumber(input, "start_chainage", "") ?? 0,
+                From = JsonArgs.OptionalNumber(input, "from_chainage", ""),
+                To = JsonArgs.OptionalNumber(input, "to_chainage", ""),
+                Reverse = JsonArgs.OptionalBool(input, "reverse", "", false),
+            };
+
+            if (req.Interval < 0.1)
+            {
+                throw new ToolInputException("interval must be at least 0.1 m");
+            }
+
+            object r = SurfaceExchange.Sample(_doc, csdSurface, req, after, JsonArgs.OptionalString(input, "exchange_command", ""));
+            return Json(r, $"ground levels from {csdSurface}");
         }
 
         private static ToolOutcome DoWriteVcFile(JsonElement input)

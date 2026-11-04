@@ -177,6 +177,72 @@ namespace CsdBridge.BricsCAD.Csd
             return result;
         }
 
+        /// <summary>Drop-down menus of this process that are showing right now (e.g. a context menu a button opened).</summary>
+        public static List<ToolStripDropDown> OpenDropDowns()
+        {
+            var list = new List<ToolStripDropDown>();
+            int pid = Process.GetCurrentProcess().Id;
+            EnumWindows((hwnd, _) =>
+            {
+                GetWindowThreadProcessId(hwnd, out uint windowPid);
+                if (windowPid == pid && IsWindowVisible(hwnd))
+                {
+                    try
+                    {
+                        if (Control.FromHandle(hwnd) is ToolStripDropDown dd)
+                        {
+                            list.Add(dd);
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // Not a WinForms window.
+                    }
+                }
+
+                return true;
+            }, IntPtr.Zero);
+            return list;
+        }
+
+        /// <summary>
+        /// Queue work for BricsCAD's main thread without waiting: through the agent's pump when
+        /// it is free, otherwise through an open CSD dialog's message loop.
+        /// </summary>
+        public static void PostToMain(Action work)
+        {
+            if (Busy == null)
+            {
+                MainThreadPump.Instance.Post(work);
+                return;
+            }
+
+            OpenDialog any = List().FirstOrDefault(o => o.Form != null)
+                ?? throw new CsdException($"BricsCAD's main thread is busy ({Busy}); finish or close that first.");
+            any.Form!.BeginInvoke(work);
+        }
+
+        /// <summary>
+        /// Run work on BricsCAD's main thread from the agent's background thread: through the
+        /// agent's pump when it is free, otherwise through an open CSD dialog (a CSD command or
+        /// modal dialog is holding the main thread, and its message loop still runs our work).
+        /// </summary>
+        public static T OnMainThread<T>(Func<T> work, int timeoutMs = 120000)
+        {
+            if (Busy == null)
+            {
+                return MainThreadPump.Instance.InvokeAsync(work).GetAwaiter().GetResult();
+            }
+
+            OpenDialog? any = List().FirstOrDefault(o => o.Form != null);
+            if (any == null)
+            {
+                throw new CsdException($"BricsCAD's main thread is busy ({Busy}); finish or close that first.");
+            }
+
+            return OnUiThread(any.Form!, work, timeoutMs);
+        }
+
         /// <summary>Find a dialog by form name, win32:handle id, or a piece of its title.</summary>
         public static OpenDialog Find(string dialog)
         {
