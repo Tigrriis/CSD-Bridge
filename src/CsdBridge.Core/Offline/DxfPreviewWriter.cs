@@ -81,6 +81,26 @@ namespace CsdBridge.Core.Offline
                     dxf.Pair(0, "SEQEND").Common(layer, null);
                     break;
 
+                case HatchSpec h:
+                    // Preview: the boundary loops (the pattern itself isn't drawn).
+                    foreach (PolylineSpec loop in h.Loops)
+                    {
+                        dxf.Pair(0, "POLYLINE").Common(layer, color).Pair(66, 1).Point(10, new Point2(0, 0)).Pair(70, 1);
+                        for (int k = 0; k < loop.Points.Count; k++)
+                        {
+                            dxf.Pair(0, "VERTEX").Common(layer, null).Point(10, loop.Points[k]);
+                            double bulge = loop.Bulges != null && k < loop.Bulges.Count ? loop.Bulges[k] : 0;
+                            if (bulge != 0)
+                            {
+                                dxf.Pair(42, bulge);
+                            }
+                        }
+
+                        dxf.Pair(0, "SEQEND").Common(layer, null);
+                    }
+
+                    break;
+
                 case CircleSpec c:
                     dxf.Pair(0, "CIRCLE").Common(layer, color).Point(10, c.Center).Pair(40, c.Radius);
                     break;

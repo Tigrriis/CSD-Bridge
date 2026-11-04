@@ -34,6 +34,7 @@ namespace CsdBridge.Core.Drawing
         LinearDimension,
         AlignedDimension,
         BlockInsert,
+        Hatch,
     }
 
     public enum TextAlign
@@ -156,6 +157,25 @@ namespace CsdBridge.Core.Drawing
         public Dictionary<string, string>? Attributes { get; set; }
     }
 
+    /// <summary>
+    /// A hatch. The boundary comes from one of: explicit loops (first = outer, the rest
+    /// islands), existing closed curves by handle, or points inside the areas (the CAD
+    /// application traces the boundary from the linework around each point).
+    /// </summary>
+    public sealed class HatchSpec : EntitySpec
+    {
+        public override EntityKind Kind => EntityKind.Hatch;
+        public List<PolylineSpec> Loops { get; set; } = new List<PolylineSpec>();
+        public List<string> BoundaryHandles { get; set; } = new List<string>();
+        public List<Point2> SeedPoints { get; set; } = new List<Point2>();
+        public string Pattern { get; set; } = "SOLID";
+        public double Scale { get; set; } = 1;
+        public double AngleDeg { get; set; }
+
+        /// <summary>Keep the hatch linked to its boundary curves (handles only).</summary>
+        public bool Associative { get; set; }
+    }
+
     public sealed class LayerSpec
     {
         public string Name { get; set; } = "";
@@ -259,7 +279,17 @@ namespace CsdBridge.Core.Drawing
         public double? StartAngle { get; set; }
         public double? EndAngle { get; set; }
         public double[][]? Points { get; set; }
+
+        /// <summary>Polyline arc bulges, one per vertex (only when the polyline has arcs).</summary>
+        public double[]? Bulges { get; set; }
+
         public bool? Closed { get; set; }
+
+        /// <summary>Hatch pattern name.</summary>
+        public string? Pattern { get; set; }
+
+        /// <summary>Hatch area.</summary>
+        public double? Area { get; set; }
         public double[]? Position { get; set; }
         public string? Text { get; set; }
         public double? Height { get; set; }

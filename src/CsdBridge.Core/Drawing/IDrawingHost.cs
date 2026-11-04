@@ -34,6 +34,12 @@ namespace CsdBridge.Core.Drawing
 
         IReadOnlyList<CurvePoints> PointsOnCurves(IReadOnlyList<PointsRequest> requests);
 
+        /// <summary>
+        /// The exact geometry of curves (lines, arcs, circles, polylines with bulges) by handle,
+        /// with their layer and colour. Handles that aren't curves are left out.
+        /// </summary>
+        IReadOnlyDictionary<string, EntitySpec> GetCurves(IReadOnlyList<string> handles);
+
         /// <summary>Ask the user to click a point. Returns world coordinates.</summary>
         PickPointResult PickPoint(string prompt);
 

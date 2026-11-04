@@ -534,6 +534,12 @@ namespace CsdBridge.Core.Agent
                 case ToolCatalog.Intersect: return "finding intersections";
                 case ToolCatalog.Measure: return "measuring";
                 case ToolCatalog.PointsOnCurve: return "working out set-out points";
+                case ToolCatalog.Hatch: return $"hatching {Count(input, "hatches")} area(s)";
+                case ToolCatalog.TrimExtend: return $"trimming/extending ({Count(input, "operations")})";
+                case ToolCatalog.Fillet: return $"filleting ({Count(input, "fillets")})";
+                case ToolCatalog.JoinCurves: return "joining curves";
+                case ToolCatalog.OffsetByChainage: return $"drawing {Count(input, "lines")} road line(s) from the alignment";
+                case ToolCatalog.AnalyseOffsets: return "measuring offsets from the alignment";
                 default: return name;
             }
         }

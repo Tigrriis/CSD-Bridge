@@ -31,6 +31,11 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
   - `intersect` for where things meet, including when extended
   - `measure` for lengths, areas, closest points and distances
   - `points_on_curve` for set-out by divisions, spacing or distances
+  - `trim_extend`, `fillet` (e.g. kerb returns) and `join_curves` (closed outlines) for clean finished linework
+  - `hatch` by closed outline, by picking a point inside an area, or by explicit outline
+  - `offset_by_chainage` for road lines built exactly from an alignment (constant offsets keep true arcs,
+    tapers are straight), and `analyse_offsets` to read the offsets and widenings of existing lines
+    such as CSD's exported code strings, ignoring the chords between CSD's sample sections
 - It can **ask you to click a point or select objects** mid-request, which an external MCP
   client can't do naturally.
 - Objects you select *before* asking are passed in as context ("dimension these").
@@ -47,7 +52,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 74 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 91 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |

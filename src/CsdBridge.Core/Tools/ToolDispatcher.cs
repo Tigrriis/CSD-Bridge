@@ -29,7 +29,7 @@ namespace CsdBridge.Core.Tools
     /// the result. Validation happens here, before anything touches the drawing, so a bad
     /// batch is rejected as a whole and Claude gets every problem back in one message.
     /// </summary>
-    public sealed class ToolDispatcher
+    public sealed partial class ToolDispatcher
     {
         private const int MaxReportedErrors = 20;
 
@@ -143,7 +143,7 @@ namespace CsdBridge.Core.Tools
                     }
 
                     default:
-                        return Error($"Unknown tool '{toolName}'.", "unknown tool");
+                        return ExecuteEditing(toolName, input) ?? Error($"Unknown tool '{toolName}'.", "unknown tool");
                 }
             }
             catch (ToolInputException ex)
@@ -204,6 +204,7 @@ namespace CsdBridge.Core.Tools
                             q.Kinds.Add(EntityKind.AlignedDimension);
                             break;
                         case "block_insert": q.Kinds.Add(EntityKind.BlockInsert); break;
+                        case "hatch": q.Kinds.Add(EntityKind.Hatch); break;
                         case "other": q.IncludeOtherKinds = true; break;
                         default: throw new ToolInputException($"kinds: unknown kind '{k}'");
                     }
