@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text;
 
 namespace CsdBridge.Core.Agent
@@ -10,7 +11,7 @@ namespace CsdBridge.Core.Agent
     /// </summary>
     public static class SystemPrompt
     {
-        public static string Build(AgentOptions options)
+        public static string Build(AgentOptions options, IReadOnlyList<string>? extraSections = null)
         {
             var sb = new StringBuilder();
             sb.Append("You are a drafting assistant running inside ").Append(options.HostName)
@@ -44,8 +45,16 @@ namespace CsdBridge.Core.Agent
               .Append("- Text height is in drawing units: plotted height x drawing scale (2.5 mm text at 1:100 is 250 units in a mm drawing). ")
               .Append("If the scale is unknown, use the drawing's default text height and dimension style.\n\n");
 
+            if (extraSections != null)
+            {
+                foreach (string section in extraSections)
+                {
+                    sb.Append(section.Trim()).Append("\n\n");
+                }
+            }
+
             sb.Append("## Limits\n")
-              .Append("You can only use the tools provided. You cannot run CAD commands, scripts or LISP, open or save files, or plot. ")
+              .Append("You can only use the tools provided. You cannot run arbitrary CAD commands, scripts or LISP, open or save files, or plot. ")
               .Append("If asked for one of those, say so briefly and offer what you can do instead.\n");
 
             if (!string.IsNullOrWhiteSpace(options.OfficeStandards))

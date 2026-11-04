@@ -36,7 +36,10 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
 - Objects you select *before* asking are passed in as context ("dimension these").
 - Conversations are per drawing, so follow-ups work ("make it 300 wider").
 - The whole request is **one UNDO step**. Esc or Stop cancels.
-- Claude can only use these tools. It cannot run commands, LISP, scripts or open files.
+- **Civil Site Design.** Claude can drive CSD's dialogs from inside BricsCAD (see
+  [Civil Site Design](#civil-site-design) below), and design vertical profiles with exact
+  optimisation rather than guessing levels.
+- Claude can only use these tools. It cannot run arbitrary commands, LISP, scripts or open files.
 
 ## Status
 
@@ -44,7 +47,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 16 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 74 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -57,6 +60,8 @@ See [docs/architecture.md](docs/architecture.md) for the design, and "First thin
 src/CsdBridge.Core/        CAD-independent: Claude agent loop, tool schemas, input validation,
                            in-memory drawing + DXF preview (netstandard2.0 + net8.0)
 src/CsdBridge.BricsCAD/    The add-in: commands, chat panel, BricsCAD drawing host, settings
+  Csd/                     Civil Site Design tools: commands, dialogs, ground sampling
+src/CsdBridge.Core/Civil/  Vertical profile designer (exact optimisation) and checks
 tools/CsdBridge.Cli/       Try prompts without BricsCAD; writes a DXF preview
 tools/icons/               Generates the ribbon icons (Python + Pillow)
 tests/CsdBridge.Core.Tests Unit tests (no API key or BricsCAD needed)
@@ -166,6 +171,8 @@ with `-Remove`.
 | `AIKEY` | Set or remove the stored API key |
 | `AISTATUS` | Show model, key source, standards file, settings and log locations, usage |
 | `AIUIDUMP` | Diagnostic: after a countdown (default 10 s), saves the controls of BricsCAD's open dialogs (labels, values, buttons, keyboard shortcuts) to `%LOCALAPPDATA%\CsdBridge\uidumps\`. Read-only. Used to check whether other add-ins' dialogs, such as Civil Site Design's, can be automated. |
+| `AIFORMDUMP` | Diagnostic: like `AIUIDUMP`, but reads open dialogs from inside BricsCAD as WinForms controls, so it also gets internal control names, grid cell values and the grid component's type and version. Read-only; saves to the same folder. |
+| `AICSD` | Civil Site Design tools: **Read** (default: Claude can open and read CSD dialogs but not change them), **Edit** (Claude can also change values and press buttons), **Off**, or **List** (save the CSD commands found to a text file) |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, and small New chat,
@@ -187,6 +194,33 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 | `server_side_fallback` | `true` | If Claude declines a request on policy grounds, Anthropic retries it on a fallback model. Claude API only. |
 | `standards_file` | *(blank)* | Path to your office standards. Blank uses `office-standards.md` next to the DLL. |
 | `base_url` | *(blank)* | Optional internal gateway URL that holds the API key centrally |
+| `csd_mode` | `read` | Civil Site Design tools: `read`, `edit` or `off`. Also set with `AICSD`. |
+
+## Civil Site Design
+
+With CSD loaded, Claude can work in CSD's dialogs the way you would, but from inside BricsCAD:
+
+| Tool | What it does |
+|---|---|
+| `csd_commands` | Lists the commands your CSD installation defines (read from its .NET assemblies) and the ribbon buttons behind them (from CSD's menu file in `C:\ProgramData\CSS\ARD\Menu`). Claude uses real names, not guesses. |
+| `csd_run_command` | Runs a CSD command to open its dialog, and returns once the dialog is up. If the command asks you to pick something first, Claude tells you. |
+| `csd_list_dialogs`, `csd_read_dialog` | Lists the open CSD dialogs and reads their fields, grids (every cell), buttons and menus, plus CSD message boxes and file dialogs. |
+| `csd_set_values` | Types values into fields and grid cells the way you would (focus, type, commit), so CSD recalculates. It reads each one back. **Edit mode only.** |
+| `csd_press` | Presses buttons and menu items, including the Vertical Grading Editor's commands, and the buttons of CSD's message boxes. In read mode it refuses buttons that change the design (OK, Save, Delete, Adjust, Rebuild...). |
+| `csd_read_volumes` | Reads the VGE's cut/fill readout. |
+| `csd_help` | Built-in notes on CSD: dialogs and their controls, VGE and grading-grid workflow, design data, templates, volumes, ground levels. |
+| `sample_ground_profile` | Samples existing ground along a centreline from a BricsCAD TIN surface. CSD keeps its own surfaces, so make a BricsCAD copy with CSD's Surface Exchange first. |
+| `design_vertical_profile`, `evaluate_vertical_profile` | Exact vertical design. Priorities, in order: grades and IP spacing within limits, then as few IPs as possible, then least centreline cut/fill. VC lengths come from a K value. It also checks a design for grade, K, spacing and VC-overlap problems. |
+| `csd_write_vc_file` | Writes an IP table to a text file for the VGE's File > Import VC. |
+
+**Safety.** CSD changes are **not** in BricsCAD's UNDO. Claude starts in read mode, so it can look
+but not change anything; `AICSD` > Edit turns changes on. In edit mode Claude still reads values
+before changing them, reads them back afterwards, and asks before changes you didn't spell out.
+Work on a copy of the drawing until you trust it.
+
+A typical request: *"Open the VGE for MC01, sample the ground along the centreline on layer
+C-ALIGN, and propose a smoother vertical with fewer IPs: max 8 %, min 0.5 %, K 10, IPs at
+least 40 m apart, keep the level at the intersection at ch 52.581."*
 
 ## Effort
 
