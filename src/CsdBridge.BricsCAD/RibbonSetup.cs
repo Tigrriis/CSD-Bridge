@@ -12,7 +12,8 @@ namespace CsdBridge.BricsCAD
 {
     /// <summary>
     /// Adds a "CSD-Bridge" tab to the BricsCAD ribbon:
-    ///   Chat | Draft | History   (large)    New chat / Status / API key   (small)
+    ///   Claude panel: Chat | Draft | History (large), New chat / Status / API key (small)
+    ///   Sheets panel: Scale Bars (runs in the add-in, no Claude call)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
     ///
@@ -104,6 +105,10 @@ namespace CsdBridge.BricsCAD
 
                 var tab = new RibbonTab { Id = TabId, Name = "CSD-Bridge", Title = "CSD-Bridge" };
                 tab.Panels.Add(new RibbonPanel { Source = source });
+
+                var sheets = new RibbonPanelSource { Id = "CSDBRIDGE_SHEETS", Name = "Sheets", Title = "Sheets" };
+                sheets.Items.Add(Button("Scale Bars", "AISCALEBARS", "Add a scale bar to every layout for each viewport scale (no Claude call, no cost)", "scalebar", large: true));
+                tab.Panels.Add(new RibbonPanel { Source = sheets });
                 ribbon.Tabs.Add(tab);
                 if (activate)
                 {

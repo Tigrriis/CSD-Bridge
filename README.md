@@ -179,9 +179,10 @@ with `-Remove`.
 | `AIFORMDUMP` | Diagnostic: like `AIUIDUMP`, but reads open dialogs from inside BricsCAD as WinForms controls, so it also gets internal control names, grid cell values and the grid component's type and version. Read-only; saves to the same folder. |
 | `AICSD` | Civil Site Design tools: **Read** (default: Claude can open and read CSD dialogs but not change them), **Edit** (Claude can also change values and press buttons), **Off**, or **List** (save the CSD commands found to a text file) |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
+| `AISCALEBARS` | Add a scale bar block to every layout for each viewport scale on it. Runs in the add-in, so it doesn't call Claude or cost anything. See [Scale bars](#scale-bars). |
 
-The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, and small New chat,
-Status and API key buttons. It's added when the add-in loads. If your workspace hides the
+The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, small New chat,
+Status and API key buttons, and a Scale Bars button in the Sheets panel. It's added when the add-in loads. If your workspace hides the
 ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
 ## Settings
@@ -202,6 +203,7 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 | `csd_mode` | `read` | Civil Site Design tools: `read`, `edit` or `off`. Also set with `AICSD`. |
 | `road_drafting_file` | *(blank)* | Road drafting conventions for `draft_road`. Blank uses `road-drafting.json` next to the DLL. |
 | `cache_ttl` | `1h` | How long the prompt cache lives: `1h` suits sessions with pauses; `5m` is cheaper to write. |
+| `scale_bars` | *(not set)* | Optional: overrides where `AISCALEBARS` puts scale bars. Add only the keys you want to change: `block_name` (`Scale Bar {0}`), `x`, `y` (paper mm), `layer`, `scale`, `rotation` (degrees) and `stack_offset` (mm between bars; negative stacks downward). |
 | `clear_old_tool_results_after_tokens` | `60000` | Once a chat's input passes this size, the oldest tool results are dropped (the latest 6 are kept). `0` = never. |
 
 ## Civil Site Design
@@ -248,6 +250,19 @@ The rules live in `road-drafting.json` next to the add-in: which codes become wh
 colours and linetype scales. The pavement, centreline and layer styles come from the office's sample drawings. The
 kerb, shoulder, footpath and batter rules depend on each job's template codes, so check and edit them. Junctions
 between roads aren't trimmed: Claude tidies them with `trim_extend` and `fillet`.
+
+## Scale bars
+
+`AISCALEBARS` (ribbon: **Sheets > Scale Bars**) goes through every layout and reads the scale of each viewport. For
+each scale it inserts the matching block, such as `Scale Bar 750` for 1:750, at the office's standard point and layer.
+When a layout has more than one scale, the bars are stacked 40 mm apart, the most detailed scale first.
+
+- The blocks must already be loaded in the drawing. A missing one is listed on the command line and skipped.
+- Model units are taken as metres (the office standard). If `INSUNITS` is millimetres, the millimetre reading is tried
+  first, then metres.
+- Run it again after changing viewport scales. Layouts whose bars already match are left alone, so bars you moved by
+  hand stay put; other layouts have their old bars replaced. One UNDO reverts the whole run.
+- It doesn't call Claude, so it's instant and free.
 
 ## Saving work between chats
 

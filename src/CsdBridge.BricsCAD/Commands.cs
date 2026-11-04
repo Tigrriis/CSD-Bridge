@@ -19,6 +19,7 @@ namespace CsdBridge.BricsCAD
     /// AIUIDUMP   diagnostic: save the controls of open dialogs to a text file
     /// AIFORMDUMP diagnostic: save open dialogs' WinForms controls and grid cells (read from inside)
     /// AICSD      Civil Site Design tools: read only, edit, off, or list CSD's commands
+    /// AISCALEBARS add scale bar blocks to every layout from its viewport scales (no Claude call)
     /// AIRESET    start a new conversation for this drawing
     /// AIKEY      set or remove the Anthropic API key
     /// AISTATUS   show settings, key source and usage
@@ -202,6 +203,19 @@ namespace CsdBridge.BricsCAD
         {
             string result = RibbonSetup.AddTab(activate: true);
             CadApp.DocumentManager.MdiActiveDocument.Editor.WriteMessage("\nCSD-Bridge: " + result + "\n");
+        }
+
+        [CommandMethod(Group, "AISCALEBARS", CommandFlags.Modal)]
+        public void AiScaleBars()
+        {
+            Document doc = CadApp.DocumentManager.MdiActiveDocument;
+            if (AgentRunner.IsBusy)
+            {
+                doc.Editor.WriteMessage("\nA request is running. Press Esc first.\n");
+                return;
+            }
+
+            ScaleBarTool.Run(doc);
         }
 
         [CommandMethod(Group, "AIRESET", CommandFlags.Modal)]

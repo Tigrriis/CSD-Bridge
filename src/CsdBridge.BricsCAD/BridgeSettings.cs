@@ -71,6 +71,14 @@ namespace CsdBridge.BricsCAD
         [JsonPropertyName("road_drafting_file")]
         public string? RoadDraftingFile { get; set; }
 
+        /// <summary>
+        /// Overrides for where AISCALEBARS puts scale bars. Unset means the office defaults in
+        /// ScaleBarOptions; it isn't written to the template, so changes to those defaults reach everyone.
+        /// </summary>
+        [JsonPropertyName("scale_bars")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public CsdBridge.Core.Drawing.ScaleBarOptions? ScaleBars { get; set; }
+
         [JsonPropertyName("standards_file")]
         public string? StandardsFile { get; set; }
 

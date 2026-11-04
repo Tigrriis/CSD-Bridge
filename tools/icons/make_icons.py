@@ -111,6 +111,21 @@ def key():
     return img.rotate(35, resample=Image.BICUBIC, center=(128, 128)).resize((S, S))
 
 
+def scale_bar():
+    img, d = canvas()
+    # alternating segments, like a drawing's scale bar, with ticks above
+    x0, x1, y0, y1 = 20, 236, 110, 168
+    seg = (x1 - x0) / 4
+    for i in range(4):
+        a = x0 + i * seg
+        d.rectangle((a, y0, a + seg, y1), fill=BLUE if i % 2 == 0 else WHITE)
+    d.rectangle((x0, y0, x1, y1), outline=BLUE_DARK, width=OUTLINE)
+    for i in range(5):
+        x = x0 + i * seg
+        d.line([(x, y0 - (44 if i % 2 == 0 else 26)), (x, y0)], fill=BLUE_DARK, width=OUTLINE)
+    return img
+
+
 ICONS = {
     "chat": chat,
     "draft": draft,
@@ -118,6 +133,7 @@ ICONS = {
     "newchat": new_chat,
     "status": status,
     "key": key,
+    "scalebar": scale_bar,
 }
 
 
