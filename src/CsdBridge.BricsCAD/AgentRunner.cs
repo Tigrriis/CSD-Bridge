@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Anthropic;
 using Bricscad.ApplicationServices;
+using CsdBridge.BricsCAD.Csd;
+using CsdBridge.Core.Civil;
 using CsdBridge.Core.Agent;
 using CsdBridge.Core.Drawing;
 using CsdBridge.Core.History;
@@ -72,6 +74,29 @@ namespace CsdBridge.BricsCAD
             }
 
             NotifyEffortMode();
+        }
+
+        /// <summary>
+        /// Set the Civil Site Design tool mode (off / read / edit) and remember it. Read and
+        /// edit take effect at once; switching to or from off needs a new conversation,
+        /// because the tool list is fixed for a conversation. Returns true when it does.
+        /// </summary>
+        public static bool SetCsdMode(string mode)
+        {
+            string old = Settings.CsdMode ?? "read";
+            try
+            {
+                BridgeSettings onDisk = BridgeSettings.Load();
+                onDisk.CsdMode = mode;
+                onDisk.Save();
+            }
+            catch (Exception)
+            {
+                // Still applies for this session.
+            }
+
+            Settings.CsdMode = mode;
+            return string.Equals(old, "off", StringComparison.OrdinalIgnoreCase) != string.Equals(mode, "off", StringComparison.OrdinalIgnoreCase);
         }
 
         private static void NotifyEffortMode()
@@ -268,11 +293,18 @@ namespace CsdBridge.BricsCAD
                     : new AnthropicClient { ApiKey = key ?? "via-gateway", BaseUrl = settings.BaseUrl! };
             }
 
+            var extensions = new List<IToolExtension> { new ProfileTools() };
+            if (!string.Equals(settings.CsdMode, "off", StringComparison.OrdinalIgnoreCase))
+            {
+                extensions.Add(new CsdTools(doc, () => Settings.CsdMode));
+            }
+
             var agent = new DraftingAgent(
                 _client,
                 new ToolDispatcher(new BricsCadDrawingHost(doc)),
                 settings.ToAgentOptions(),
-                MainThreadPump.Instance);
+                MainThreadPump.Instance,
+                extensions);
             Agents[doc] = agent;
             return agent;
         }

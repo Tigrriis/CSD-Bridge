@@ -40,19 +40,48 @@ namespace CsdBridge.Core.Agent
         private readonly IMainThreadInvoker _invoker;
         private readonly string _systemPrompt;
         private readonly List<BetaToolUnion> _tools;
+        private readonly Dictionary<string, IToolExtension> _extensionTools = new Dictionary<string, IToolExtension>(StringComparer.Ordinal);
         private readonly List<BetaMessageParam> _messages = new List<BetaMessageParam>();
         private string _conversationEffort; // level currently in effect in the conversation
         private string _requestEffort;      // top-level effort sent with this run's requests
         private int _running;
 
-        public DraftingAgent(AnthropicClient client, ToolDispatcher dispatcher, AgentOptions options, IMainThreadInvoker? invoker = null)
+        /// <param name="extensions">Extra tool sets (profile design, Civil Site Design dialogs...). Fixed for the agent's lifetime.</param>
+        public DraftingAgent(
+            AnthropicClient client,
+            ToolDispatcher dispatcher,
+            AgentOptions options,
+            IMainThreadInvoker? invoker = null,
+            IReadOnlyList<IToolExtension>? extensions = null)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
             _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
             _options = options ?? throw new ArgumentNullException(nameof(options));
             _invoker = invoker ?? InlineInvoker.Instance;
-            _systemPrompt = SystemPrompt.Build(options);
-            _tools = ToolCatalog.All.Select(ToSdkTool).ToList();
+
+            var definitions = new List<ToolDefinition>(ToolCatalog.All);
+            var sections = new List<string>();
+            foreach (IToolExtension ext in extensions ?? Array.Empty<IToolExtension>())
+            {
+                foreach (ToolDefinition def in ext.Tools)
+                {
+                    if (definitions.Any(d => d.Name == def.Name))
+                    {
+                        throw new ArgumentException($"Tool '{def.Name}' is defined twice.", nameof(extensions));
+                    }
+
+                    definitions.Add(def);
+                    _extensionTools[def.Name] = ext;
+                }
+
+                if (!string.IsNullOrWhiteSpace(ext.PromptSection))
+                {
+                    sections.Add(ext.PromptSection!);
+                }
+            }
+
+            _systemPrompt = SystemPrompt.Build(options, sections);
+            _tools = definitions.Select(ToSdkTool).ToList();
             _conversationEffort = NormalizeEffort(options.Effort);
             _requestEffort = _conversationEffort;
         }
@@ -263,12 +292,25 @@ namespace CsdBridge.Core.Agent
         private async Task<ToolOutcome> RunToolAsync(BetaToolUseBlock toolUse, IProgress<AgentEvent>? progress)
         {
             JsonElement input = JsonSerializer.SerializeToElement(toolUse.Input);
-            progress?.Report(new AgentEvent(AgentEventKind.ToolStarted, DescribeToolCall(toolUse.Name, input), toolUse.Name));
+            _extensionTools.TryGetValue(toolUse.Name, out IToolExtension? ext);
+            string description = (ext != null ? ext.DescribeCall(toolUse.Name, input) : null) ?? DescribeToolCall(toolUse.Name, input);
+            progress?.Report(new AgentEvent(AgentEventKind.ToolStarted, description, toolUse.Name));
 
             ToolOutcome outcome;
             try
             {
-                outcome = await _invoker.InvokeAsync(() => _dispatcher.Execute(toolUse.Name, input)).ConfigureAwait(false);
+                if (ext == null)
+                {
+                    outcome = await _invoker.InvokeAsync(() => _dispatcher.Execute(toolUse.Name, input)).ConfigureAwait(false);
+                }
+                else if (ext.RunsOnMainThread(toolUse.Name))
+                {
+                    outcome = await _invoker.InvokeAsync(() => ext.Execute(toolUse.Name, input)).ConfigureAwait(false);
+                }
+                else
+                {
+                    outcome = await Task.Run(() => ext.Execute(toolUse.Name, input)).ConfigureAwait(false);
+                }
             }
             catch (Exception ex)
             {

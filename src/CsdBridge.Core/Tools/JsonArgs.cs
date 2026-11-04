@@ -19,7 +19,7 @@ namespace CsdBridge.Core.Tools
     /// Small helpers for reading tool input. Every failure names the exact JSON path
     /// (e.g. <c>entities[3].radius</c>) so Claude can fix the call on the next turn.
     /// </summary>
-    internal static class JsonArgs
+    public static class JsonArgs
     {
         public static string Path(string parent, string name) => string.IsNullOrEmpty(parent) ? name : parent + "." + name;
 

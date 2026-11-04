@@ -248,7 +248,12 @@ namespace CsdBridge.Core.Tests
 
         // ------------------------------------------------------------------ helpers
 
-        private static DraftingAgent NewAgent(FakeAnthropic http, InMemoryDrawingHost host, IMainThreadInvoker? invoker = null, AgentOptions? options = null)
+        private static DraftingAgent NewAgent(
+            FakeAnthropic http,
+            InMemoryDrawingHost host,
+            IMainThreadInvoker? invoker = null,
+            AgentOptions? options = null,
+            IReadOnlyList<IToolExtension>? extensions = null)
         {
             var client = new AnthropicClient
             {
@@ -256,7 +261,43 @@ namespace CsdBridge.Core.Tests
                 HttpClient = new HttpClient(http),
                 MaxRetries = 0,
             };
-            return new DraftingAgent(client, new ToolDispatcher(host), options ?? new AgentOptions(), invoker);
+            return new DraftingAgent(client, new ToolDispatcher(host), options ?? new AgentOptions(), invoker, extensions);
+        }
+
+        [Fact]
+        public async Task Extension_tools_are_offered_and_dispatched()
+        {
+            const string design = @"{""ground"":[[0,10],[100,14],[200,12]],""max_grade_pct"":8}";
+            var http = new FakeAnthropic(
+                Response("tool_use", ToolUse("toolu_1", CsdBridge.Core.Civil.ProfileTools.Design, design)),
+                Response("end_turn", @"{""type"":""text"",""text"":""Designed.""}"));
+
+            var invoker = new CountingInvoker();
+            var agent = NewAgent(http, new InMemoryDrawingHost(), invoker, extensions: new IToolExtension[] { new CsdBridge.Core.Civil.ProfileTools() });
+            AgentRunResult result = await agent.RunAsync("Design the vertical");
+
+            Assert.Equal(AgentRunStatus.Completed, result.Status);
+            JsonElement first = http.Bodies[0];
+            Assert.Equal(ToolCatalog.All.Count + 2, first.GetProperty("tools").GetArrayLength());
+            Assert.Contains("## Vertical design", first.GetProperty("system").GetRawText());
+
+            JsonElement toolResult = http.Bodies[1].GetProperty("messages")[2].GetProperty("content")[0];
+            Assert.False(toolResult.TryGetProperty("is_error", out JsonElement err) && err.GetBoolean(), ContentText(toolResult));
+            Assert.Contains("\"ips\"", ContentText(toolResult));
+
+            // Pure tools don't go through the CAD main thread.
+            Assert.Equal(0, invoker.Calls);
+        }
+
+        private sealed class CountingInvoker : IMainThreadInvoker
+        {
+            public int Calls;
+
+            public Task<T> InvokeAsync<T>(Func<T> work)
+            {
+                Interlocked.Increment(ref Calls);
+                return Task.FromResult(work());
+            }
         }
 
         private static string ToolUse(string id, string name, string inputJson) =>

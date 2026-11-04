@@ -25,6 +25,17 @@ namespace CsdBridge.BricsCAD
 
         public Task<T> InvokeAsync<T>(Func<T> work)
         {
+            // While a CSD command or a modal CSD dialog holds the main thread, queued work
+            // would wait until the dialog closes. Fail fast instead so Claude can carry on
+            // in the dialog (the csd_ tools don't need this queue).
+            if (Csd.CsdWindows.Busy is string busy)
+            {
+                var busyTcs = new TaskCompletionSource<T>();
+                busyTcs.SetException(new InvalidOperationException(
+                    $"BricsCAD's main thread is busy ({busy}). Drawing tools can't run until that dialog is closed or the command finishes; the csd_ tools still work."));
+                return busyTcs.Task;
+            }
+
             // RunContinuationsAsynchronously: the agent's continuation must not run inline
             // on the main thread when the work completes.
             var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);

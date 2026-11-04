@@ -55,6 +55,10 @@ namespace CsdBridge.BricsCAD
         /// Office standards file. Point this at a network share so the whole office uses
         /// one file. Empty means office-standards.md next to the add-in DLL.
         /// </summary>
+        /// <summary>Civil Site Design tools: "off", "read" (look but don't change; default) or "edit".</summary>
+        [JsonPropertyName("csd_mode")]
+        public string CsdMode { get; set; } = "read";
+
         [JsonPropertyName("standards_file")]
         public string? StandardsFile { get; set; }
 
