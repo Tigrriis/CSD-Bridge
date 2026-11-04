@@ -254,8 +254,8 @@ between roads aren't trimmed: Claude tidies them with `trim_extend` and `fillet`
 ## Scale bars
 
 `AISCALEBARS` (ribbon: **Sheets > Scale Bars**) goes through every layout and reads the scale of each viewport. For
-each scale it inserts the matching block, such as `Scale Bar 750` for 1:750, at the office's standard point and layer.
-When a layout has more than one scale, the bars are stacked 40 mm apart, the most detailed scale first.
+each scale it inserts the matching block, such as `Scale Bar 750` for 1:750, at the office's standard spot: (821, 68.5) on layer `AE GEN TBL - SCALE BAR`, scale 1, no rotation.
+When a layout has more than one scale, the bars are stacked upward 40 mm apart, the most detailed scale at the standard spot.
 
 - The blocks must already be loaded in the drawing. A missing one is listed on the command line and skipped.
 - Model units are taken as metres (the office standard). If `INSUNITS` is millimetres, the millimetre reading is tried

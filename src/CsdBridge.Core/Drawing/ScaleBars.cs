@@ -19,13 +19,13 @@ namespace CsdBridge.Core.Drawing
 
         /// <summary>Insertion point of the first scale bar on the layout.</summary>
         [JsonPropertyName("x")]
-        public double X { get; set; } = 0;
+        public double X { get; set; } = 821;
 
         [JsonPropertyName("y")]
-        public double Y { get; set; } = 0;
+        public double Y { get; set; } = 68.5;
 
         [JsonPropertyName("layer")]
-        public string Layer { get; set; } = "AE CIV ANO - ALL PLANS";
+        public string Layer { get; set; } = "AE GEN TBL - SCALE BAR";
 
         /// <summary>Block insert scale.</summary>
         [JsonPropertyName("scale")]
