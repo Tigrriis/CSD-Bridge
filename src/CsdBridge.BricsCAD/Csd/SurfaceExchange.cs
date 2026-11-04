@@ -87,7 +87,7 @@ namespace CsdBridge.BricsCAD.Csd
         {
             CsdCommand cmd = FindCommand(commandName);
             Action work = CsdCommands.Prepare(cmd, cmd.Method != null ? "direct" : "command_line");
-            LaunchResult r = CsdWindows.Launch($"CSD command {cmd.Name}", CsdWindows.PostToMain, work, 30000);
+            LaunchResult r = CsdWindows.Launch($"CSD command {cmd.Name}", CsdWindows.MainPoster(), work, 30000);
             if (r.Error != null)
             {
                 throw new CsdException($"{cmd.Name} failed: {r.Error.Message}");

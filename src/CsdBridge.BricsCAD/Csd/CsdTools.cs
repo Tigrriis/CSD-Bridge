@@ -333,7 +333,7 @@ namespace CsdBridge.BricsCAD.Csd
             }
 
             Action work = CsdCommands.Prepare(cmd, method);
-            LaunchResult r = CsdWindows.Launch($"CSD command {cmd.Name}", CsdWindows.PostToMain, work, wait * 1000);
+            LaunchResult r = CsdWindows.Launch($"CSD command {cmd.Name}", CsdWindows.MainPoster(), work, wait * 1000);
             var dialogs = CsdWindows.List();
             string status = r.Error != null ? "failed" : r.Opened.Count > 0 ? "dialog_open" : r.Finished ? "finished" : "running";
             var payload = new
