@@ -52,7 +52,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 91 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 98 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -200,6 +200,9 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 | `standards_file` | *(blank)* | Path to your office standards. Blank uses `office-standards.md` next to the DLL. |
 | `base_url` | *(blank)* | Optional internal gateway URL that holds the API key centrally |
 | `csd_mode` | `read` | Civil Site Design tools: `read`, `edit` or `off`. Also set with `AICSD`. |
+| `road_drafting_file` | *(blank)* | Road drafting conventions for `draft_road`. Blank uses `road-drafting.json` next to the DLL. |
+| `cache_ttl` | `1h` | How long the prompt cache lives: `1h` suits sessions with pauses; `5m` is cheaper to write. |
+| `clear_old_tool_results_after_tokens` | `60000` | Once a chat's input passes this size, the oldest tool results are dropped (the latest 6 are kept). `0` = never. |
 
 ## Civil Site Design
 
@@ -214,6 +217,7 @@ With CSD loaded, Claude can work in CSD's dialogs the way you would, but from in
 | `csd_press` | Presses buttons and menu items, including the Vertical Grading Editor's commands, and the buttons of CSD's message boxes. In read mode it refuses buttons that change the design (OK, Save, Delete, Adjust, Rebuild...). |
 | `csd_read_volumes` | Reads the VGE's cut/fill readout. |
 | `csd_help` | Built-in notes on CSD: dialogs and their controls, VGE and grading-grid workflow, design data, templates, volumes, ground levels. |
+| `csd_open_vge` | One step to the vertical design: opens the VGE (you pick the road), opens its grading grid, and returns the IP table and volumes. |
 | `sample_csd_ground` | Gets existing ground levels along a centreline from a CSD surface. CSD surfaces can't be read directly, so it makes a temporary BricsCAD copy through CSD's Surface Exchange, samples it, then removes the copy and its exchange item. Nothing is left in the drawing (or, in edit mode, it can hide the copy on a frozen layer for reuse). |
 | `sample_ground_profile` | Samples a BricsCAD TIN surface that is already in the drawing. |
 | `design_vertical_profile`, `evaluate_vertical_profile` | Exact vertical design. Priorities, in order: grades and IP spacing within limits, then as few IPs as possible, then least centreline cut/fill. VC lengths come from a K value. It also checks a design for grade, K, spacing and VC-overlap problems. |
@@ -227,6 +231,34 @@ Work on a copy of the drawing until you trust it.
 A typical request: *"Open the VGE for MC01, sample the ground along the centreline on layer
 C-ALIGN, and propose a smoother vertical with fewer IPs: max 8 %, min 0.5 %, K 10, IPs at
 least 40 m apart, keep the level at the intersection at ch 52.581."*
+
+## Drafting roads
+
+`draft_road` drafts a CSD road in plan to the office conventions in one step:
+- **Centreline:** the exact alignment, with true arcs. The alignment comes from CSD's Align-Lines/Arcs layers if they
+  cover the whole road. Otherwise it is rebuilt from the C.L. string: its vertices lie on the alignment, so the
+  straights, arcs and tangent points can be worked out exactly. On the C1 sample this matched the drafted centreline to
+  the millimetre.
+- **Road lines:** kerbs, batters and so on.
+- **Areas:** closed outlines between two codes (pavement LEB–REB, footpaths, shoulders), hatched SOLID on the AE CIV HTC
+  layers. Each outline is an exact offset of the alignment; CSD's strings only supply the offsets and widenings, so the
+  chords between CSD's sample sections never reach the drawing.
+
+The rules live in `road-drafting.json` next to the add-in: which codes become which lines and areas, layers, true
+colours and linetype scales. The pavement, centreline and layer styles come from the office's sample drawings. The
+kerb, shoulder, footpath and batter rules depend on each job's template codes, so check and edit them. Junctions
+between roads aren't trimmed: Claude tidies them with `trim_extend` and `fillet`.
+
+## Saving work between chats
+
+- **Drawing notes:** Claude saves short facts about each drawing (its roads, alignment handles, start chainages, surface
+  names, what's drafted) with `save_drawing_note`. They are kept in `%LOCALAPPDATA%\CsdBridge\notes` and given to Claude
+  at the start of each new chat on that drawing, so it doesn't work them out again.
+- **Office standards:** `office-standards.md` now holds the office's civil layer standard, hatch and drafting rules, and
+  CSD naming (NS = existing ground, BM = design). The common CSD commands are built into Claude's instructions, so it
+  doesn't have to look them up.
+- **Smaller replies from the drawing:** the drawing summary leaves out xref layers and folds CSD's many string layers into
+  one list of roads and their codes. Coordinates are rounded to the millimetre.
 
 ## Effort
 

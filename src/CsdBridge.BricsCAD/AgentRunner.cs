@@ -185,6 +185,12 @@ namespace CsdBridge.BricsCAD
             }
 
             string fullPrompt = WithSelectionContext(doc, prompt, preselected);
+            if (agent.MessageCount == 0 && NotesFor(doc).AsContext() is string notes)
+            {
+                // Notes go in the first user message (not the system prompt), so the system
+                // prompt stays the same for every drawing and its cache is shared.
+                fullPrompt = notes + "\n\n" + fullPrompt;
+            }
             EffortChoice effort = EffortPolicy.Choose(EffortMode, prompt, preselected?.Length ?? 0, Settings.EffortLevels());
             var cts = new CancellationTokenSource();
             _current = cts;
@@ -270,6 +276,10 @@ namespace CsdBridge.BricsCAD
             }
         }
 
+        /// <summary>Notes Claude has saved about this drawing (see DrawingNotes).</summary>
+        public static DrawingNotes NotesFor(Document doc) =>
+            new DrawingNotes(Path.Combine(Path.GetDirectoryName(BridgeSettings.LogFolder)!, "notes"), doc.Name);
+
         private static DraftingAgent? GetOrCreateAgent(Document doc, out string? error)
         {
             error = null;
@@ -293,7 +303,13 @@ namespace CsdBridge.BricsCAD
                     : new AnthropicClient { ApiKey = key ?? "via-gateway", BaseUrl = settings.BaseUrl! };
             }
 
-            var extensions = new List<IToolExtension> { new ProfileTools() };
+            RoadConventions? conventions = settings.LoadRoadConventions(out string? conventionsError);
+            var extensions = new List<IToolExtension>
+            {
+                new ProfileTools(),
+                new DrawingNotesTools(NotesFor(doc)),
+                new RoadDraftingTools(new BricsCadDrawingHost(doc), conventions, conventionsError),
+            };
             if (!string.Equals(settings.CsdMode, "off", StringComparison.OrdinalIgnoreCase))
             {
                 extensions.Add(new CsdTools(doc, () => Settings.CsdMode));

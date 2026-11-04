@@ -57,10 +57,14 @@ namespace CsdBridge.Core.Tools
             new ToolDefinition(
                 GetDrawingInfo,
                 "Read the active drawing's setup: drawing units, extents, current layer/text style/dimension style, " +
-                "default text height, and the names of existing layers (with colour, linetype, lineweight and state), " +
-                "linetypes, text styles, dimension styles and block definitions. Call this once at the start of a task " +
-                "before drawing so you use the drawing's real units, layers and blocks.",
-                "{\"type\":\"object\",\"properties\":{}}"),
+                "default text height, and the existing layers as rows [name, colour, linetype, lineweight mm, state], " +
+                "linetypes, text styles, dimension styles and block definitions. Xref layers are left out unless asked for. " +
+                "Civil Site Design's string layers (CSD-3D-<road>-<code>, CSD-2D-...) are summarised as csd_roads: each road " +
+                "with its codes. Call this once at the start of a task before drawing so you use the drawing's real units, " +
+                "layers and blocks; use layer_filter to look for particular layers.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"layer_filter\":{\"type\":\"string\",\"description\":\"Only layers whose name contains this (case-insensitive).\"}," +
+                "\"include_xref_layers\":{\"type\":\"boolean\"}}}"),
 
             new ToolDefinition(
                 ListEntities,
@@ -90,7 +94,9 @@ namespace CsdBridge.Core.Tools
                 "\"color\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":255,\"description\":\"AutoCAD Color Index (1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta, 7 white/black, 8 dark grey, 9 light grey).\"}," +
                 "\"linetype\":{\"type\":\"string\",\"description\":\"e.g. CONTINUOUS, HIDDEN, CENTER, DASHED, PHANTOM.\"}," +
                 "\"lineweight_mm\":{\"type\":\"number\",\"description\":\"Plotted lineweight in mm, e.g. 0.18, 0.25, 0.35, 0.5, 0.7.\"}," +
-                "\"description\":{\"type\":\"string\"}" +
+                "\"description\":{\"type\":\"string\"}," +
+                "\"rgb\":{\"type\":\"array\",\"items\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":255},\"minItems\":3,\"maxItems\":3,\"description\":\"True colour, instead of color.\"}," +
+                "\"plot\":{\"type\":\"boolean\",\"description\":\"false = non-plotting layer.\"}" +
                 "},\"required\":[\"name\"]}}" +
                 "},\"required\":[\"layers\"]}"),
 
@@ -112,14 +118,15 @@ namespace CsdBridge.Core.Tools
                 "- aligned_dimension: p1, p2, dim_line_point, optional text_override\n" +
                 "- block_insert: block_name (must exist - see get_drawing_info), position, optional scale, rotation, " +
                 "attributes (object of TAG: value, e.g. title block fields; other attributes keep their defaults)\n" +
-                "Every item may also set 'layer' (created if missing; omit for the current layer) and 'color' (ACI; " +
-                "omit for ByLayer, which is preferred). Omitted heights use the drawing's default text height / dimension " +
+                "Every item may also set 'layer' (created if missing; omit for the current layer), 'color' (ACI; " +
+                "omit for ByLayer, which is preferred) and 'linetype_scale'. Omitted heights use the drawing's default text height / dimension " +
                 "style. Returns one result per item, in order, with the new entity's handle.",
                 "{\"type\":\"object\",\"properties\":{" +
                 "\"entities\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":500,\"items\":{\"type\":\"object\",\"properties\":{" +
                 "\"kind\":{\"type\":\"string\",\"enum\":[\"line\",\"polyline\",\"circle\",\"arc\",\"text\",\"mtext\",\"linear_dimension\",\"aligned_dimension\",\"block_insert\"]}," +
                 "\"layer\":{\"type\":\"string\"}," +
                 "\"color\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":255}," +
+                "\"linetype_scale\":{\"type\":\"number\"}," +
                 "\"start\":" + Point + ",\"end\":" + Point + "," +
                 "\"points\":{\"type\":\"array\",\"items\":" + Point + ",\"minItems\":2}," +
                 "\"bulges\":{\"type\":\"array\",\"items\":{\"type\":\"number\"}}," +

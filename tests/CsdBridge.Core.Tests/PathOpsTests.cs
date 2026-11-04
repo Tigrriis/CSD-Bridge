@@ -183,5 +183,50 @@ namespace CsdBridge.Core.Tests
                 Near(r.Segments[i - 1].End, r.Segments[i].Start);
             }
         }
+
+        [Fact]
+        public void AlignmentFitRebuildsStraightsAndArcsFromChordedPoints()
+        {
+            // Straight, 30 m radius curve left, short straight, 20 m reverse curve right, straight,
+            // at map coordinates, sampled every 2.5 m: tangent points fall between samples.
+            var x0 = new Point2(530000, 5270000);
+            var segs = new List<Segment> { new LineSegment(x0, new Point2(x0.X + 41.3, x0.Y)) };
+            var a1 = new ArcSegment(new Point2(x0.X + 41.3, x0.Y + 30), 30, -Math.PI / 2, 0.9);
+            segs.Add(a1);
+            double h = -Math.PI / 2 + 0.9;
+            var dir = (Math.Cos(h + Math.PI / 2), Math.Sin(h + Math.PI / 2));
+            var p2 = new Point2(a1.End.X + dir.Item1 * 7.7, a1.End.Y + dir.Item2 * 7.7);
+            segs.Add(new LineSegment(a1.End, p2));
+            var c2 = new Point2(p2.X + dir.Item2 * 20, p2.Y - dir.Item1 * 20); // centre to the right
+            double s2 = Math.Atan2(p2.Y - c2.Y, p2.X - c2.X);
+            var a2 = new ArcSegment(c2, 20, s2, -0.7);
+            segs.Add(a2);
+            double h2 = s2 - 0.7 - Math.PI / 2;
+            segs.Add(new LineSegment(a2.End, new Point2(a2.End.X + Math.Cos(h2) * 33.3, a2.End.Y + Math.Sin(h2) * 33.3)));
+            var truth = new Path2(segs, false);
+
+            var pts = new List<Point2>();
+            for (double d = 0; d < truth.Length; d += 2.5)
+            {
+                pts.Add(truth.PointAt(d));
+            }
+
+            pts.Add(truth.End);
+            AlignmentFit.Result fit = AlignmentFit.Fit(pts);
+
+            Assert.Equal(2, fit.Arcs);
+            Assert.Equal(3, fit.Lines);
+            Assert.True(fit.MaxDeviation < 0.001, $"deviation {fit.MaxDeviation}");
+            Assert.Equal(truth.Length, fit.Path.Length, 3);
+            var arcs = fit.Path.Segments.OfType<ArcSegment>().ToList();
+            Assert.Equal(30, arcs[0].Radius, 3);
+            Assert.Equal(20, arcs[1].Radius, 3);
+            Assert.True(arcs[0].Sweep > 0 && arcs[1].Sweep < 0);
+            for (int i = 0; i <= 200; i++)
+            {
+                Point2 q = truth.PointAt(truth.Length * i / 200);
+                Assert.True(fit.Path.Closest(q).Distance < 0.002, $"off by {fit.Path.Closest(q).Distance} at {q}");
+            }
+        }
     }
 }

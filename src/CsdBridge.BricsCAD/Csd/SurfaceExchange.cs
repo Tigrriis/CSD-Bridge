@@ -113,6 +113,11 @@ namespace CsdBridge.BricsCAD.Csd
                     : throw new CsdException($"'{name}' is not a CSD command known to this installation (see csd_commands).");
             }
 
+            if (all.TryGetValue("ARDUV7AJEBBRICSCADSURFACEMANAGER", out CsdCommand? known))
+            {
+                return known;
+            }
+
             int Score(CsdCommand c)
             {
                 string n = c.Name;

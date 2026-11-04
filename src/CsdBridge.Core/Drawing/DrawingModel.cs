@@ -15,7 +15,7 @@ namespace CsdBridge.Core.Drawing
         public double X { get; }
         public double Y { get; }
 
-        public double[] ToArray(int decimals = 4) => new[] { Math.Round(X, decimals), Math.Round(Y, decimals) };
+        public double[] ToArray(int decimals = 3) => new[] { Math.Round(X, decimals), Math.Round(Y, decimals) };
 
         public bool Equals(Point2 other) => X.Equals(other.X) && Y.Equals(other.Y);
         public override bool Equals(object? obj) => obj is Point2 p && Equals(p);
@@ -58,6 +58,9 @@ namespace CsdBridge.Core.Drawing
 
         /// <summary>AutoCAD Color Index 1-255; null means ByLayer.</summary>
         public short? ColorIndex { get; set; }
+
+        /// <summary>Entity linetype scale; null keeps the default (1).</summary>
+        public double? LinetypeScale { get; set; }
     }
 
     public sealed class LineSpec : EntitySpec
@@ -174,6 +177,9 @@ namespace CsdBridge.Core.Drawing
 
         /// <summary>Keep the hatch linked to its boundary curves (handles only).</summary>
         public bool Associative { get; set; }
+
+        /// <summary>Put the hatch behind other objects (draw order), so it doesn't cover linework.</summary>
+        public bool SendToBack { get; set; } = true;
     }
 
     public sealed class LayerSpec
@@ -186,6 +192,12 @@ namespace CsdBridge.Core.Drawing
         public double? LineweightMm { get; set; }
 
         public string? Description { get; set; }
+
+        /// <summary>True colour (red, green, blue 0-255); takes precedence over ColorIndex.</summary>
+        public byte[]? Rgb { get; set; }
+
+        /// <summary>False makes the layer non-plotting.</summary>
+        public bool? Plot { get; set; }
     }
 
     public enum ModifyAction

@@ -27,6 +27,8 @@ namespace CsdBridge.Core.Agent
     {
         private const string FallbackBeta = "server-side-fallback-2026-07-01";
         private const string PerMessageEffortBeta = "mid-conversation-output-config-2026-07-01";
+        private const string ContextManagementBeta = "context-management-2025-06-27";
+        private const string LongCacheBeta = "extended-cache-ttl-2025-04-11";
 
         /// <summary>Models that accept a per-message effort change (an effort-only system message).</summary>
         private static readonly HashSet<string> PerMessageEffortModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -339,6 +341,17 @@ namespace CsdBridge.Core.Agent
                 betas.Add(PerMessageEffortBeta);
             }
 
+            if (_options.LongCache)
+            {
+                betas.Add(LongCacheBeta);
+            }
+
+            BetaContextManagementConfig? context = ContextManagement();
+            if (context != null)
+            {
+                betas.Add(ContextManagementBeta);
+            }
+
             if (_options.ServerSideFallback)
             {
                 return new MessageCreateParams
@@ -350,7 +363,8 @@ namespace CsdBridge.Core.Agent
                     Tools = _tools,
                     Thinking = new BetaThinkingConfigAdaptive(),
                     OutputConfig = effort,
-                    CacheControl = new BetaCacheControlEphemeral(),
+                    CacheControl = Cache(),
+                    ContextManagement = context,
                     Betas = [.. betas],
                     Fallbacks = new Default(), // serialises as "default"
                 };
@@ -365,7 +379,8 @@ namespace CsdBridge.Core.Agent
                 Tools = _tools,
                 Thinking = new BetaThinkingConfigAdaptive(),
                 OutputConfig = effort,
-                CacheControl = new BetaCacheControlEphemeral(),
+                CacheControl = Cache(),
+                ContextManagement = context,
                 Betas = betas.Count > 0 ? [.. betas] : null,
             };
         }
@@ -482,6 +497,28 @@ namespace CsdBridge.Core.Agent
                 Description = definition.Description,
                 InputSchema = new() { Properties = properties, Required = required },
             };
+        }
+
+        private BetaCacheControlEphemeral Cache() =>
+            _options.LongCache ? new BetaCacheControlEphemeral { Ttl = Ttl.Ttl1h } : new BetaCacheControlEphemeral();
+
+        /// <summary>Drop old tool results from long conversations (server side), keeping the latest few.</summary>
+        private BetaContextManagementConfig? ContextManagement()
+        {
+            if (_options.ClearToolResultsAfterTokens <= 0)
+            {
+                return null;
+            }
+
+            var clear = new BetaClearToolUses20250919Edit
+            {
+                Trigger = new BetaInputTokensTrigger(_options.ClearToolResultsAfterTokens),
+                Keep = new BetaToolUsesKeep(Math.Max(1, _options.KeepToolResults)),
+
+                // Clearing breaks the prompt cache from that point, so only do it when it frees a good amount.
+                ClearAtLeast = new BetaInputTokensClearAtLeast(Math.Max(5000, _options.ClearToolResultsAfterTokens / 3)),
+            };
+            return new BetaContextManagementConfig { Edits = new List<Edit> { clear } };
         }
 
         private static string ParseEffortName(string effort) => (effort ?? "").Trim().ToLowerInvariant();

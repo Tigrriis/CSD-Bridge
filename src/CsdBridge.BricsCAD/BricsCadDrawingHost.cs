@@ -22,7 +22,7 @@ namespace CsdBridge.BricsCAD
     /// </summary>
     internal sealed class BricsCadDrawingHost : IDrawingHost
     {
-        private const int MaxListedNames = 200;
+        private const int MaxListedNames = 5000;
         private const int MaxPolylinePoints = 500;
 
         private static readonly int[] ValidLineweights =
@@ -186,9 +186,18 @@ namespace CsdBridge.BricsCAD
                         notes.Add(created ? "created" : "updated");
                         ltr.UpgradeOpen();
 
-                        if (spec.ColorIndex != null)
+                        if (spec.Rgb != null && spec.Rgb.Length == 3)
+                        {
+                            ltr.Color = Color.FromRgb(spec.Rgb[0], spec.Rgb[1], spec.Rgb[2]);
+                        }
+                        else if (spec.ColorIndex != null)
                         {
                             ltr.Color = Color.FromColorIndex(ColorMethod.ByAci, spec.ColorIndex.Value);
+                        }
+
+                        if (spec.Plot != null)
+                        {
+                            ltr.IsPlottable = spec.Plot.Value;
                         }
 
                         if (spec.Linetype != null)
@@ -287,6 +296,11 @@ namespace CsdBridge.BricsCAD
             }
 
             ent.ColorIndex = spec.ColorIndex ?? 256; // 256 = ByLayer
+            if (spec.LinetypeScale is double ltScale && ltScale > 0)
+            {
+                ent.LinetypeScale = ltScale;
+            }
+
             ApplyTextDefaults(ent, spec);
 
             space.AppendEntity(ent);
@@ -1050,6 +1064,13 @@ namespace CsdBridge.BricsCAD
             }
 
             hatch.EvaluateHatch(true);
+            if (h.SendToBack)
+            {
+                var space = (BlockTableRecord)tr.GetObject(hatch.OwnerId, OpenMode.ForRead);
+                var order = (DrawOrderTable)tr.GetObject(space.DrawOrderTableId, OpenMode.ForWrite);
+                order.MoveToBottom(new ObjectIdCollection { hatch.ObjectId });
+            }
+
             double area = 0;
             try
             {
@@ -1506,7 +1527,7 @@ namespace CsdBridge.BricsCAD
 
         private static double Deg(double rad) => rad * 180.0 / Math.PI;
 
-        private static double Round(double v) => Math.Round(v, 4);
+        private static double Round(double v) => Math.Round(v, 3);
 
         private static double[] Arr(Point3d p) => new[] { Round(p.X), Round(p.Y) };
 

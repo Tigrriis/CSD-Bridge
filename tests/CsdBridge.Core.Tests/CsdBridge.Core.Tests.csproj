@@ -13,6 +13,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The shipped conventions, so the tests check they load and work. -->
+    <None Include="..\..\src\CsdBridge.BricsCAD\road-drafting.json" Link="road-drafting.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\CsdBridge.Core\CsdBridge.Core.csproj" />
   </ItemGroup>
 

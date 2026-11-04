@@ -1,0 +1,80 @@
+// CSD-Bridge road drafting conventions, used by the draft_road tool.
+//
+// Built from the office's exported drawings (2026-C51-PR02 and 2024-C20-PR06). Layer
+// styles, hatch layers and the pavement/centreline rules come straight from those
+// drawings. Kerb, shoulder, footpath and batter rules follow the same layer standard but
+// depend on each job's CSD template codes: check them against your templates and edit.
+//
+// Codes are CSD template codes. CSD writes each code's string to a layer named from
+// string_layers ({road} = the road's name, e.g. CL-01; {code} = e.g. LEB). Offsets are
+// read from the strings; the shapes come from the exact alignment on alignment_layers.
+//
+// To use your own copy, set "road_drafting_file" in %APPDATA%\CsdBridge\settings.json.
+// Changes apply to new chats (AIRESET or New chat).
+{
+  "string_layers": [ "CSD-2D-{road}-{code}", "CSD-3D-{road}-{code}" ],
+  "alignment_layers": [ "Align-Lines", "Align-Arcs" ],
+  "centreline_code": "C.L.",
+  "offset_tolerance": 0.01,
+  "offset_rounding": 0.001,
+  "gap_tolerance": 0.5,
+
+  "centreline": { "layer": "AE CIV PLN - ROAD CENTRELINE NEW", "linetype_scale": 0.5 },
+
+  "lines": [
+    { "name": "kerb", "codes": [ "KERB_LEFT", "KERB_RIGHT" ], "layer": "AE CIV PLN - KERB NEW" },
+    { "name": "batter", "codes": [ "BATTER_LEFT", "BATTER_RIGHT" ], "layer": "AE CIV PLN - BATTER LINE" }
+  ],
+
+  "areas": [
+    {
+      "name": "pavement",
+      "between": [ "LEB", "REB" ],
+      "outline_layer": "AE CIV PLN - ROAD PAVEMENT EDGE NEW",
+      "linetype_scale": 0.5,
+      "hatch": { "layer": "AE CIV HTC - ASPHALT TYPE 1", "pattern": "SOLID" }
+    },
+    {
+      "name": "footpath left",
+      "between": [ "LEB", "FOOTPATH_LEFT" ],
+      "outline_layer": "AE CIV PLN - FOOTPATH EDGE NEW",
+      "linetype_scale": 0.5,
+      "hatch": { "layer": "AE CIV HTC - GRAVEL NEW", "pattern": "SOLID" }
+    },
+    {
+      "name": "footpath right",
+      "between": [ "REB", "FOOTPATH_RIGHT" ],
+      "outline_layer": "AE CIV PLN - FOOTPATH EDGE NEW",
+      "linetype_scale": 0.5,
+      "hatch": { "layer": "AE CIV HTC - GRAVEL NEW", "pattern": "SOLID" }
+    },
+    {
+      "name": "shoulder left",
+      "between": [ "LEB", "LSH" ],
+      "outline_layer": "AE CIV PLN - ROAD SHOULDER NEW",
+      "hatch": { "layer": "AE CIV HTC - GRAVEL NEW", "pattern": "SOLID" },
+      "unless_codes": [ "FOOTPATH_LEFT" ]
+    },
+    {
+      "name": "shoulder right",
+      "between": [ "REB", "RSH" ],
+      "outline_layer": "AE CIV PLN - ROAD SHOULDER NEW",
+      "hatch": { "layer": "AE CIV HTC - GRAVEL NEW", "pattern": "SOLID" },
+      "unless_codes": [ "FOOTPATH_RIGHT" ]
+    }
+  ],
+
+  // Used only when a layer doesn't exist in the drawing yet; existing layers are never changed.
+  "layers": {
+    "AE CIV PLN - ROAD CENTRELINE NEW": { "color": 6, "linetype": "CENTERX2", "lineweight": 0.5 },
+    "AE CIV PLN - ROAD PAVEMENT EDGE NEW": { "color": 6, "linetype": "Continuous", "lineweight": 0.5 },
+    "AE CIV PLN - ROAD SHOULDER NEW": { "color": 2, "linetype": "Continuous", "lineweight": 0.5 },
+    "AE CIV PLN - FOOTPATH EDGE NEW": { "color": 6, "linetype": "Continuous", "lineweight": 0.5 },
+    "AE CIV PLN - KERB NEW": { "color": 2, "linetype": "Continuous", "lineweight": 0.35 },
+    "AE CIV PLN - BATTER LINE": { "color": 2, "linetype": "Continuous", "lineweight": 0.35 },
+    "AE CIV HTC - ASPHALT TYPE 1": { "color": 151, "rgb": [ 181, 199, 255 ], "lineweight": 0.18 },
+    "AE CIV HTC - CONCRETE NEW": { "color": 254, "rgb": [ 214, 214, 214 ], "lineweight": 0.18 },
+    "AE CIV HTC - GRAVEL NEW": { "color": 254, "rgb": [ 250, 238, 213 ], "lineweight": 0.18 },
+    "AE CIV HTC - RETAINING WALL": { "color": 250, "rgb": [ 51, 51, 51 ], "lineweight": 0.18 }
+  }
+}

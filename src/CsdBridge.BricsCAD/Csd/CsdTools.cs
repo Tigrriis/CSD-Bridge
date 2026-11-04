@@ -33,6 +33,7 @@ namespace CsdBridge.BricsCAD.Csd
         public const string SampleGround = "sample_ground_profile";
         public const string SampleCsdGround = "sample_csd_ground";
         public const string WriteVcFile = "csd_write_vc_file";
+        public const string OpenVge = "csd_open_vge";
 
         private readonly Document _doc;
         private readonly Func<string> _mode;
@@ -52,6 +53,16 @@ namespace CsdBridge.BricsCAD.Csd
                 "Vertical Grading Editor and grading grid, design data, templates, volumes, getting ground levels, and how this office " +
                 "wants vertical design done. Call with no topic for the list of topics. Read the relevant topic before working in a CSD dialog.",
                 "{\"type\":\"object\",\"properties\":{\"topic\":{\"type\":\"string\"}}}"),
+
+            new ToolDefinition(OpenVge,
+                "One step to the vertical design: opens the Vertical Grading Editor (ARDUV7NPROADVGE, which asks the user to pick the " +
+                "road) unless one is already open, opens its grading grid, and returns the IP table and the volumes readout. If the " +
+                "command is waiting for the user to pick a road, it says so: ask them to pick it, then call this again. 'road' picks " +
+                "between several open VGE windows by title.",
+                "{\"type\":\"object\",\"properties\":{\"road\":{\"type\":\"string\"}," +
+                "\"command\":{\"type\":\"string\",\"description\":\"Default ARDUV7NPROADVGE.\"}," +
+                "\"open_grid\":{\"type\":\"boolean\",\"description\":\"Default true.\"}," +
+                "\"wait_seconds\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":120}}}"),
 
             new ToolDefinition(ListCommands,
                 "List the commands this Civil Site Design installation defines (read from its .NET assemblies) and the ribbon/menu buttons " +
@@ -159,7 +170,10 @@ namespace CsdBridge.BricsCAD.Csd
             "Civil Site Design (CSD) is loaded in BricsCAD for road and grading design. You can drive it with the csd_ tools: find " +
             "commands with csd_commands, open dialogs with csd_run_command, then csd_list_dialogs, csd_read_dialog, csd_set_values, " +
             "csd_press and csd_read_volumes. Before working in a CSD dialog, read the matching csd_help topic (start with \"overview\"; " +
-            "\"vertical_method\" for vertical design). Rules:\n" +
+            "\"vertical_method\" for vertical design). Everyday commands in this install: ARDUV7NPROADVGE (Vertical Grading Editor; " +
+            "csd_open_vge wraps it), ARDUV7NPCREATEEDITROAD (create/edit road), ARDUV7ALIGNMENTCREATE (alignment from a polyline), " +
+            "ARDUV7SELECTROADANDEDITDESIGN (design data), ARDUV7EDITTEMPLATE (templates), ARDUV7EDITDEFAULTS (drawing settings). " +
+            "Surfaces: NS = existing ground, BM = design. Rules:\n" +
             "- Read before you change: read the dialog first, keep the original values, and read it back after changing it.\n" +
             "- CSD changes are not in BricsCAD's UNDO. Before a change the user didn't ask for in so many words, say what you'll change and wait for their go-ahead. " +
             "Don't press OK/Save/Delete or close dialogs unless the user asked.\n" +
@@ -186,6 +200,7 @@ namespace CsdBridge.BricsCAD.Csd
                 case SampleGround: return "sampling the ground along the centreline";
                 case SampleCsdGround: return $"getting ground levels from {Arg("csd_surface")}";
                 case WriteVcFile: return "writing a VC file";
+                case OpenVge: return "opening the vertical design";
                 default: return null;
             }
         }
@@ -212,6 +227,7 @@ namespace CsdBridge.BricsCAD.Csd
                     case SampleGround: return DoSampleGround(input);
                     case SampleCsdGround: return DoSampleCsdGround(input);
                     case WriteVcFile: return DoWriteVcFile(input);
+                    case OpenVge: return DoOpenVge(input);
                     default: return Fail($"Unknown tool '{toolName}'.");
                 }
             }
@@ -316,6 +332,11 @@ namespace CsdBridge.BricsCAD.Csd
             if (!CsdCommands.All.TryGetValue(name, out CsdCommand? cmd))
             {
                 return Fail($"'{name}' is not a Civil Site Design command known to this installation. Find the name with csd_commands.");
+            }
+
+            if (CsdSafety.IsInternalCommand(cmd.Name))
+            {
+                return Fail($"{cmd.Name} looks like one of CSD's internal test or debugging commands, so CSD-Bridge won't run it.");
             }
 
             if (!CanEdit)
@@ -553,6 +574,77 @@ namespace CsdBridge.BricsCAD.Csd
             {
                 Summary = $"pressed {description}: {status.Replace('_', ' ')}",
             };
+        }
+
+        private ToolOutcome DoOpenVge(JsonElement input)
+        {
+            string? road = JsonArgs.OptionalString(input, "road", "");
+            string commandName = (JsonArgs.OptionalString(input, "command", "") ?? "ARDUV7NPROADVGE").Trim().ToUpperInvariant();
+            bool openGrid = JsonArgs.OptionalBool(input, "open_grid", "", true);
+            int wait = JsonArgs.OptionalInt(input, "wait_seconds", "", 1, 120) ?? 30;
+            var steps = new List<string>();
+
+            OpenDialog? FindVge() => CsdWindows.List()
+                .Where(o => o.Name == "frmPopUp" && (road == null || o.Title.IndexOf(road, StringComparison.OrdinalIgnoreCase) >= 0))
+                .FirstOrDefault();
+
+            OpenDialog? vge = FindVge();
+            if (vge == null)
+            {
+                if (!CsdCommands.All.TryGetValue(commandName, out CsdCommand? cmd))
+                {
+                    return Fail($"{commandName} isn't a CSD command in this installation (see csd_commands).");
+                }
+
+                LaunchResult r = CsdWindows.Launch($"CSD command {cmd.Name}", CsdWindows.MainPoster(), CsdCommands.Prepare(cmd, cmd.Method != null ? "direct" : "command_line"), wait * 1000);
+                if (r.Error != null)
+                {
+                    return Fail($"{cmd.Name} failed: {r.Error.Message}");
+                }
+
+                vge = FindVge();
+                if (vge == null)
+                {
+                    var waiting = new
+                    {
+                        status = r.Finished ? "finished_without_vge" : "waiting_for_user",
+                        note = r.Finished
+                            ? $"{cmd.Name} finished without opening a Vertical Grading Editor{(road != null ? $" for '{road}'" : "")}."
+                            : $"{cmd.Name} is waiting at BricsCAD's command line, probably for the user to pick the road. Ask them to pick it, then call csd_open_vge again.",
+                        dialogs = CsdWindows.List().Select(DialogJson).ToList(),
+                    };
+                    return Json(waiting, waiting.status.Replace('_', ' '));
+                }
+
+                steps.Add($"opened the VGE with {cmd.Name}");
+            }
+
+            OpenDialog? grid = CsdWindows.List().FirstOrDefault(o => o.Name == "frmVGEGrid");
+            if (grid == null && openGrid)
+            {
+                System.Windows.Forms.Form form = vge.Form!;
+                LaunchResult g = CsdWindows.Launch(
+                    "opening the grading grid",
+                    a => form.BeginInvoke(a),
+                    () => CsdDialogs.PrepareWinFormsPress(form, "cmdVGEByGrid", null, allowHidden: true, out _)(),
+                    15000);
+                grid = g.Opened.FirstOrDefault(o => o.Name == "frmVGEGrid") ?? CsdWindows.List().FirstOrDefault(o => o.Name == "frmVGEGrid");
+                steps.Add(grid != null ? "opened the grading grid" : "couldn't open the grading grid" + (g.Error != null ? ": " + g.Error.Message : ""));
+            }
+
+            object? ips = grid != null ? CsdDialogs.Read(grid, includeHidden: false, onlyGrid: "flexVC", maxRows: 300) : null;
+            object? volumes = null;
+            try
+            {
+                volumes = CsdDialogs.ReadVolumes(vge);
+            }
+            catch (CsdException ex)
+            {
+                volumes = ex.Message;
+            }
+
+            var payload = new { vge = new { id = vge.Id, title = vge.Title }, steps = steps.Count > 0 ? steps : null, grading_grid = ips, volumes };
+            return Json(payload, $"vertical design for {vge.Title}");
         }
 
         private ToolOutcome DoSampleGround(JsonElement input)

@@ -46,6 +46,25 @@ namespace CsdBridge.Core.Tests
         }
 
         [Fact]
+        public void DrawingInfoFoldsCsdLayersAndHidesXrefs()
+        {
+            var (host, d) = New();
+            foreach (string layer in new[] { "CSD-3D-CL-01-C.L.", "CSD-3D-CL-01-LEB", "CSD-3D-CL-01-LDR-1", "CSD-3D-GR-Lemur FP 01-C.L.", "SURVEY|KERB", "AE CIV PLN - KERB NEW" })
+            {
+                host.EnsureLayers(new[] { new LayerSpec { Name = layer } });
+            }
+
+            JsonElement r = Run(d, ToolCatalog.GetDrawingInfo, "{}");
+            Assert.Equal("C.L., LDR-1, LEB", r.GetProperty("csd_roads").GetProperty("3D CL-01").GetString());
+            Assert.Equal("C.L.", r.GetProperty("csd_roads").GetProperty("3D GR-Lemur FP 01").GetString());
+            Assert.Equal(1, r.GetProperty("xref_layers_hidden").GetInt32());
+            var names = r.GetProperty("layers").EnumerateArray().Select(l => l[0].GetString()).ToList();
+            Assert.Contains("AE CIV PLN - KERB NEW", names);
+            Assert.DoesNotContain("SURVEY|KERB", names);
+            Assert.DoesNotContain("CSD-3D-CL-01-LEB", names);
+        }
+
+        [Fact]
         public void HatchBySeedPointNeedsBricsCad()
         {
             var (_, d) = New();

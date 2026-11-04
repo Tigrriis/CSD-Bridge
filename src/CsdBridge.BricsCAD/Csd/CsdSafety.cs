@@ -28,6 +28,10 @@ namespace CsdBridge.BricsCAD.Csd
 
         public static bool IsChanging(string text) => Tokens(text).Any(ChangingWords.Contains);
 
+        /// <summary>CSD's own test/debug commands (ARDUTEST, ARDUCRASH, ARDUV7MAKEANERROR...): never run.</summary>
+        public static bool IsInternalCommand(string name) =>
+            new[] { "TEST", "CRASH", "MAKEANERROR", "DEBUG", "TRYTHIS", "SEEIFTHISWORKS", "GOO" }.Any(w => name.ToUpperInvariant().Contains(w));
+
         /// <summary>
         /// The word that makes a command look like it changes things, or null. Command names are
         /// often all capitals run together (ARDUV7REBUILDMODELS), so they are searched as text too.
