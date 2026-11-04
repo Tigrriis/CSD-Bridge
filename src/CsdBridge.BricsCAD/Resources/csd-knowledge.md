@@ -64,13 +64,15 @@ If a change didn't take, try commit "enter" (types Enter like a user) instead of
 - Rebuild Models rebuilds models with the Dynamic flag; the Compute Design Models thread rebuilds all of them. Update All Road Objects is needed when Plan Drafting is Manual.
 
 ## ground: Existing ground along the centreline
-- CSD keeps its own surfaces (Create/Edit Surface); they are not BricsCAD TIN surfaces. sample_ground_profile reads BricsCAD TIN surfaces, so first make a BricsCAD copy with CSD's Surface Exchange (Surfaces tab > BricsCAD Surfaces), or use a BricsCAD TIN the user already has.
-- On BricsCAD V26, Surface Exchange needs CSD's hotfix for bricsCADSurfaceStyles.dat if it errors.
-- The centreline to sample is the road's alignment polyline in the drawing (ask the user to select it if it isn't obvious). Check that its direction and start chainage match CSD's (the grading grid's first Distance).
-- Other routes: the VGE long section shows the surface; the grid tool "add IPs to match surface levels" (cmdDrape) changes the design, so only use it on a copy.
+- Use sample_csd_ground with the CSD surface name (the natural/existing surface is usually named NS..., e.g. "NS Stage 1"; ask the user if it isn't clear). It makes a temporary BricsCAD copy with CSD's Surface Exchange, samples it, and removes the copy and its exchange item afterwards, so nothing is left in the drawing. This office doesn't use BricsCAD surfaces otherwise.
+- If the name is wrong, the error lists the CSD surfaces in the drawing.
+- The centreline to sample is the road's alignment polyline in the drawing (ask the user to select it if it isn't obvious). Check that its direction and start chainage match CSD's (the grading grid's first Distance); use reverse and start_chainage if not.
+- The ground_id it returns stays valid for the rest of the session, so sample once and reuse it.
+- Surface Exchange is the AJEBfrmBricsCADSurfaceExchange dialog (grid dgvSurfaceList; buttons btnAddExchange, btnRefresh = Build/Update, btnRemoveItem, btnClose; Add Item dialog AJEBfrmAddBricsCADExchange with cboSource and txtSurfaceName). On BricsCAD V26 it needs CSD's hotfix for bricsCADSurfaceStyles.dat if it errors.
+- sample_ground_profile reads a BricsCAD TIN surface that is already in the drawing.
 
 ## vertical_method: How this office wants vertical design done
-1. Read the current design (grading grid) and the design limits (Active Drawing Settings, or ask). Sample the ground along the centreline.
+1. Read the current design (grading grid) and the design limits (Active Drawing Settings, or ask). Get the ground along the centreline with sample_csd_ground.
 2. Check the current design with evaluate_vertical_profile.
 3. Design with design_vertical_profile, in this priority: even grades within the limits; as few IPs and grade changes as possible (raise min_improvement or lower max_added_ips if it adds too many); only then minimise centreline cut/fill. Keep intersections, tie-ins and any levels the user gives as fixed_ips.
 4. Show the user the proposed IP table and the before/after centreline cut/fill. Apply it only when they agree (or asked you to go ahead).

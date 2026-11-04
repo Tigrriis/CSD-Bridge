@@ -120,6 +120,68 @@ namespace CsdBridge.BricsCAD.Csd
             }
         }
 
+        /// <summary>Layer the hidden temporary surfaces go on: off, frozen and not plotted.</summary>
+        public const string HiddenLayer = "CSDBRIDGE-HIDDEN";
+
+        /// <summary>Erase the BricsCAD TIN surface with this name. Returns false if there is none.</summary>
+        public static bool EraseSurface(Document doc, string name)
+        {
+            Database db = doc.Database;
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                Entity? surface = FindSurfaces(db, tr).FirstOrDefault(e => string.Equals(SurfaceName(e), name, StringComparison.OrdinalIgnoreCase));
+                if (surface == null)
+                {
+                    return false;
+                }
+
+                surface.UpgradeOpen();
+                surface.Erase();
+                tr.Commit();
+                return true;
+            }
+        }
+
+        /// <summary>Move the surface to a layer that is off, frozen and not plotted.</summary>
+        public static bool HideSurface(Document doc, string name)
+        {
+            Database db = doc.Database;
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                Entity? surface = FindSurfaces(db, tr).FirstOrDefault(e => string.Equals(SurfaceName(e), name, StringComparison.OrdinalIgnoreCase));
+                if (surface == null)
+                {
+                    return false;
+                }
+
+                var layers = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
+                LayerTableRecord layer;
+                if (layers.Has(HiddenLayer))
+                {
+                    layer = (LayerTableRecord)tr.GetObject(layers[HiddenLayer], OpenMode.ForWrite);
+                }
+                else
+                {
+                    layers.UpgradeOpen();
+                    layer = new LayerTableRecord { Name = HiddenLayer, Description = "CSD-Bridge temporary objects" };
+                    layers.Add(layer);
+                    tr.AddNewlyCreatedDBObject(layer, true);
+                }
+
+                layer.IsPlottable = false;
+                layer.IsOff = true;
+                if (db.Clayer != layer.ObjectId)
+                {
+                    layer.IsFrozen = true;
+                }
+
+                surface.UpgradeOpen();
+                surface.Layer = HiddenLayer;
+                tr.Commit();
+                return true;
+            }
+        }
+
         private static Curve OpenCurve(Database db, Transaction tr, string handle)
         {
             if (!long.TryParse(handle, System.Globalization.NumberStyles.HexNumber, null, out long h))
