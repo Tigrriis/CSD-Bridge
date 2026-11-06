@@ -304,6 +304,76 @@ namespace CsdBridge.Core.Tests
         }
 
         [Fact]
+        public async Task Each_request_is_priced_at_its_model_with_cache_writes_by_lifetime()
+        {
+            const string usage =
+                @"{""input_tokens"":1000,""output_tokens"":2000,""cache_read_input_tokens"":50000,""cache_creation_input_tokens"":10000," +
+                @"""cache_creation"":{""ephemeral_1h_input_tokens"":8000,""ephemeral_5m_input_tokens"":2000}}";
+            var http = new FakeAnthropic(ResponseFrom(ModelCatalog.Sonnet, "end_turn", usage, @"{""type"":""text"",""text"":""a""}"));
+            var agent = NewAgent(http, new InMemoryDrawingHost(), options: new AgentOptions { Model = ModelCatalog.Sonnet });
+
+            AgentRunResult result = await agent.RunAsync("draw a slab");
+
+            // 1000 x $2 + 2000 x $10 + 50000 x $0.10 + 8000 x $4 + 2000 x $2.50, per million tokens.
+            Assert.Equal(0.064m, result.Usage.CostUsd);
+            Assert.Equal(0, result.Usage.UnpricedRequests);
+            Assert.EndsWith(", about US$0.064", result.Usage.ToString());
+            Assert.Equal(0.064m, agent.ConversationUsage.CostUsd);
+        }
+
+        [Fact]
+        public async Task A_fallback_answer_is_priced_at_the_model_that_gave_it()
+        {
+            const string usage = @"{""input_tokens"":1000000,""output_tokens"":0,""cache_read_input_tokens"":0,""cache_creation_input_tokens"":0}";
+            var http = new FakeAnthropic(ResponseFrom("claude-opus-5", "end_turn", usage, @"{""type"":""text"",""text"":""a""}"));
+            var agent = NewAgent(http, new InMemoryDrawingHost());
+
+            AgentRunResult result = await agent.RunAsync("draw a slab");
+
+            Assert.Equal(5m, result.Usage.CostUsd); // Opus 5 input price, not Opus 5.5's $4
+        }
+
+        [Fact]
+        public async Task An_unknown_model_shows_no_cost()
+        {
+            var http = new FakeAnthropic(ResponseFrom("claude-future-9", "end_turn", @"{""input_tokens"":10,""output_tokens"":10}", @"{""type"":""text"",""text"":""a""}"));
+            var agent = NewAgent(http, new InMemoryDrawingHost(), options: new AgentOptions { Model = "claude-future-9" });
+
+            AgentRunResult result = await agent.RunAsync("draw a slab");
+
+            Assert.Equal(1, result.Usage.UnpricedRequests);
+            Assert.Null(result.Usage.DescribeCost());
+            Assert.DoesNotContain("US$", result.Usage.ToString());
+        }
+
+        [Fact]
+        public void Haiku_prompts_over_100k_tokens_pay_the_higher_prices()
+        {
+            // 90k prompt: 50,000 x $0.10 + 40,000 x $0.01 + 1,000 x $0.50
+            Assert.Equal(0.0059m, ModelPricing.Cost(ModelCatalog.Haiku, 50_000, 40_000, 0, 0, 1_000));
+
+            // Exactly 100k is still the lower price; cache reads count towards the length.
+            Assert.Equal(0.006m, ModelPricing.Cost(ModelCatalog.Haiku, 50_000, 50_000, 0, 0, 1_000));
+
+            // 110k prompt: 50,000 x $0.50 + 60,000 x $0.05 + 1,000 x $2.50
+            Assert.Equal(0.0305m, ModelPricing.Cost(ModelCatalog.Haiku, 50_000, 60_000, 0, 0, 1_000));
+
+            // Other models have one price at any length.
+            Assert.Equal(4m, ModelPricing.Cost(ModelCatalog.Opus, 1_000_000, 0, 0, 0, 0));
+            Assert.Null(ModelPricing.Cost("claude-future-9", 1, 1, 1, 1, 1));
+        }
+
+        [Fact]
+        public void Costs_are_written_for_people()
+        {
+            Assert.Equal("US$1.23", ModelPricing.Format(1.2345m));
+            Assert.Equal("US$0.12", ModelPricing.Format(0.1234m));
+            Assert.Equal("US$0.064", ModelPricing.Format(0.064m));
+            Assert.Equal("US$0.001", ModelPricing.Format(0.00128m));
+            Assert.Equal("under US$0.001", ModelPricing.Format(0.0003m));
+        }
+
+        [Fact]
         public void Model_catalog_finds_models_by_id_or_name()
         {
             Assert.Equal(ModelCatalog.Sonnet, ModelCatalog.Find("sonnet")?.Id);
@@ -389,6 +459,11 @@ namespace CsdBridge.Core.Tests
                 ""stop_details"":{(stopReason == "refusal" ? @"{""type"":""refusal"",""category"":null,""explanation"":null}" : "null")},
                 ""container"":null,""context_management"":null,
                 ""usage"":{{""input_tokens"":120,""output_tokens"":40,""cache_read_input_tokens"":0,""cache_creation_input_tokens"":0}}}}";
+
+        private static string ResponseFrom(string model, string stopReason, string usageJson, params string[] blocks) =>
+            $@"{{""id"":""msg_{Guid.NewGuid():N}"",""type"":""message"",""role"":""assistant"",""model"":""{model}"",
+                ""content"":[{string.Join(",", blocks)}],""stop_reason"":""{stopReason}"",""stop_sequence"":null,
+                ""stop_details"":null,""container"":null,""context_management"":null,""usage"":{usageJson}}}";
 
         private static string ContentText(JsonElement toolResult)
         {

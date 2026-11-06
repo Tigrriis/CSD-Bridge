@@ -572,15 +572,48 @@ namespace CsdBridge.Core.Agent
         /// <summary>The raw wire value ("end_turn", "tool_use", "max_tokens", "refusal", ...).</summary>
         private static string StopReasonOf(BetaMessage response) => response.StopReason?.Raw() ?? "";
 
-        private static void AddUsage(UsageTotals totals, BetaMessage response)
+        private void AddUsage(UsageTotals totals, BetaMessage response)
         {
             totals.Requests++;
-            if (response.Usage is { } u)
+            if (!(response.Usage is { } u))
             {
-                totals.InputTokens += u.InputTokens;
-                totals.OutputTokens += u.OutputTokens;
-                totals.CacheReadTokens += u.CacheReadInputTokens ?? 0;
-                totals.CacheWriteTokens += u.CacheCreationInputTokens ?? 0;
+                totals.UnpricedRequests++;
+                return;
+            }
+
+            long cacheRead = u.CacheReadInputTokens ?? 0;
+            long cacheWrite = u.CacheCreationInputTokens ?? 0;
+            totals.InputTokens += u.InputTokens;
+            totals.OutputTokens += u.OutputTokens;
+            totals.CacheReadTokens += cacheRead;
+            totals.CacheWriteTokens += cacheWrite;
+
+            // Cache writes are priced by lifetime. Without the API's breakdown, they are at
+            // the lifetime this agent asks for.
+            long write1h = u.CacheCreation?.Ephemeral1hInputTokens ?? 0;
+            long write5m = u.CacheCreation?.Ephemeral5mInputTokens ?? 0;
+            long unsplit = Math.Max(0, cacheWrite - write1h - write5m);
+            if (_options.LongCache)
+            {
+                write1h += unsplit;
+            }
+            else
+            {
+                write5m += unsplit;
+            }
+
+            // Priced at the model that answered (a refusal fallback can answer on another one)
+            // when its price is known, else at the model asked.
+            string answered = response.Model.Raw();
+            string pricedAs = ModelPricing.IsPriced(answered) ? answered : Model;
+            decimal? cost = ModelPricing.Cost(pricedAs, u.InputTokens, cacheRead, write5m, write1h, u.OutputTokens);
+            if (cost.HasValue)
+            {
+                totals.CostUsd += cost.Value;
+            }
+            else
+            {
+                totals.UnpricedRequests++;
             }
         }
 

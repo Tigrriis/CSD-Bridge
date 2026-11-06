@@ -46,6 +46,13 @@ namespace CsdBridge.Core.History
         public long OutputTokens { get; set; }
         public long CacheReadTokens { get; set; }
         public long CacheWriteTokens { get; set; }
+
+        /// <summary>Estimated cost in US dollars; null for older records and models with no known price.</summary>
+        public decimal? CostUsd { get; set; }
+
+        /// <summary>Requests in this run that couldn't be priced (left out of <see cref="CostUsd"/>).</summary>
+        public int? UnpricedRequests { get; set; }
+
         public List<RunStep> Steps { get; set; } = new List<RunStep>();
 
         [JsonIgnore]
@@ -81,6 +88,9 @@ namespace CsdBridge.Core.History
             OutputTokens = result.Usage.OutputTokens;
             CacheReadTokens = result.Usage.CacheReadTokens;
             CacheWriteTokens = result.Usage.CacheWriteTokens;
+            bool priced = result.Usage.UnpricedRequests < result.Usage.Requests;
+            CostUsd = priced ? Math.Round(result.Usage.CostUsd, 6) : (decimal?)null;
+            UnpricedRequests = result.Usage.UnpricedRequests > 0 ? result.Usage.UnpricedRequests : (int?)null;
         }
 
         public void Fail(string error)
@@ -97,6 +107,8 @@ namespace CsdBridge.Core.History
             OutputTokens = OutputTokens,
             CacheReadTokens = CacheReadTokens,
             CacheWriteTokens = CacheWriteTokens,
+            CostUsd = CostUsd ?? 0m,
+            UnpricedRequests = CostUsd == null ? Requests : UnpricedRequests ?? 0,
         }.ToString();
 
         /// <summary>Case-insensitive search across the request, replies, steps and drawing name.</summary>

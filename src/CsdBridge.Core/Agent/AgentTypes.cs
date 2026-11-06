@@ -128,6 +128,12 @@ namespace CsdBridge.Core.Agent
         public long CacheWriteTokens { get; set; }
         public int Requests { get; set; }
 
+        /// <summary>Estimated cost in US dollars of the requests that could be priced (see ModelPricing).</summary>
+        public decimal CostUsd { get; set; }
+
+        /// <summary>Requests to a model with no known price; their cost isn't in <see cref="CostUsd"/>.</summary>
+        public int UnpricedRequests { get; set; }
+
         public void Add(UsageTotals other)
         {
             InputTokens += other.InputTokens;
@@ -135,11 +141,26 @@ namespace CsdBridge.Core.Agent
             CacheReadTokens += other.CacheReadTokens;
             CacheWriteTokens += other.CacheWriteTokens;
             Requests += other.Requests;
+            CostUsd += other.CostUsd;
+            UnpricedRequests += other.UnpricedRequests;
+        }
+
+        /// <summary>"about US$0.12", with a note when some requests couldn't be priced; null when none could.</summary>
+        public string? DescribeCost()
+        {
+            if (Requests == 0 || UnpricedRequests >= Requests)
+            {
+                return null;
+            }
+
+            string cost = "about " + ModelPricing.Format(CostUsd);
+            return UnpricedRequests == 0 ? cost : $"{cost} + {UnpricedRequests} request(s) at unknown prices";
         }
 
         public override string ToString() =>
             $"{Requests} request(s), {K(InputTokens + CacheReadTokens + CacheWriteTokens)} in " +
-            $"({K(CacheReadTokens)} cached), {K(OutputTokens)} out";
+            $"({K(CacheReadTokens)} cached), {K(OutputTokens)} out" +
+            (DescribeCost() is string cost ? ", " + cost : "");
 
         private static string K(long n) =>
             n >= 1000 ? (n / 1000.0).ToString("0.#", CultureInfo.InvariantCulture) + "k" : n.ToString(CultureInfo.InvariantCulture);

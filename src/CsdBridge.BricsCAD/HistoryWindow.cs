@@ -392,8 +392,10 @@ namespace CsdBridge.BricsCAD
             DateTime today = DateTime.Now.Date;
             var todays = _records.Where(r => r.StartedAt.ToLocalTime().Date == today).ToList();
             long tokens = todays.Sum(r => r.InputTokens + r.CacheReadTokens + r.CacheWriteTokens + r.OutputTokens);
+            decimal cost = todays.Sum(r => r.CostUsd ?? 0m);
+            string costText = todays.Any(r => r.CostUsd != null) ? $", about {ModelPricing.Format(cost)}" : "";
             string shown = _list.Items.Count == _records.Count ? $"{_records.Count} request(s)" : $"{_list.Items.Count} of {_records.Count} request(s)";
-            _summary.Text = $"{shown}  -  today: {todays.Count} request(s), {tokens:N0} tokens  -  {AgentRunner.History.Folder}";
+            _summary.Text = $"{shown}  -  today: {todays.Count} request(s), {tokens:N0} tokens{costText}  -  {AgentRunner.History.Folder}";
         }
 
         // ------------------------------------------------------------------ actions

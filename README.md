@@ -52,7 +52,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 124 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 129 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -328,8 +328,17 @@ point `standards_file` at it.
 
 Each request is several API calls, one per round of tool use. The ~4,800-token system prompt
 and tool definitions are prompt-cached, so repeat calls mostly pay the cheap cache-read rate.
-The command line and panel show token usage after every request. The history window
-(`AIHISTORY`) shows each request's usage and today's total. Every request is saved to
+The command line and panel show token usage after every request, with an estimated cost in
+US dollars ("about US$0.12"). The history window (`AIHISTORY`) shows each request's usage and
+cost, and today's totals.
+
+The estimate uses the Claude API's list prices for each model, kept in
+`src/CsdBridge.Core/Agent/ModelPricing.cs` (checked November 2026; compare them with
+claude.com/pricing now and then). Cache reads and writes are priced at their own rates, and
+Haiku 5.5's higher price for prompts over 100,000 tokens is applied per request. It doesn't
+know about gateway pricing (`base_url`), US-only inference or account discounts, so treat it
+as a guide and your Anthropic Console bill as the real figure. Models not in the table show
+tokens only. Every request is saved to
 `%LOCALAPPDATA%\CsdBridge\logs\` as one line of JSON in a file per day (`yyyy-MM-dd.jsonl`).
 Use those numbers rather than estimates when deciding on effort level or model.
 
