@@ -126,10 +126,24 @@ def scale_bar():
     return img
 
 
+def routines():
+    img, d = canvas()
+    # a page of numbered steps...
+    d.rounded_rectangle((26, 16, 186, 238), radius=22, fill=WHITE, outline=BLUE_DARK, width=OUTLINE)
+    for y, end in ((66, 160), (114, 160), (162, 118)):
+        d.ellipse((50, y - 13, 76, y + 13), fill=BLUE)
+        d.line([(92, y), (end, y)], fill=GREY, width=14)
+    # ...and a run button
+    d.ellipse((132, 132, 246, 246), fill=GREEN, outline=GREEN_DARK, width=OUTLINE)
+    d.polygon([(174, 160), (174, 218), (222, 189)], fill=WHITE)
+    return img
+
+
 ICONS = {
     "chat": chat,
     "draft": draft,
     "history": history,
+    "routines": routines,
     "newchat": new_chat,
     "status": status,
     "key": key,

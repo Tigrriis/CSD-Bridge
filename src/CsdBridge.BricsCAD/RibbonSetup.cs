@@ -12,7 +12,7 @@ namespace CsdBridge.BricsCAD
 {
     /// <summary>
     /// Adds a "CSD-Bridge" tab to the BricsCAD ribbon:
-    ///   Claude panel: Chat | Draft | History (large), New chat / Status / API key (small)
+    ///   Claude panel: Chat | Draft | Routines | History (large), New chat / Status / API key (small)
     ///   Sheets panel: Scale Bars (runs in the add-in, no Claude call)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
@@ -93,6 +93,7 @@ namespace CsdBridge.BricsCAD
                 var source = new RibbonPanelSource { Id = "CSDBRIDGE_PANEL", Name = "Claude", Title = "Claude" };
                 source.Items.Add(Button("Chat", "AIPANEL", "Open the Claude chat panel", "chat", large: true));
                 source.Items.Add(Button("Draft", "AIDRAFT", "Ask Claude to draw or change something (command line)", "draft", large: true));
+                source.Items.Add(Button("Routines", "AIROUTINES", "Saved routines: run, create, edit and share standard procedures", "routines", large: true));
                 source.Items.Add(Button("History", "AIHISTORY", "Every request to Claude and what it did", "history", large: true));
 
                 var stack = new RibbonRowPanel();
@@ -258,6 +259,9 @@ namespace CsdBridge.BricsCAD
                             return;
                         case "AIHISTORY":
                             HistoryWindow.ShowWindow();
+                            return;
+                        case "AIROUTINES":
+                            Routines.RoutinesWindow.ShowWindow();
                             return;
                         case string command:
                             Document? doc = CadApp.DocumentManager.MdiActiveDocument;

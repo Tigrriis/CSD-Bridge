@@ -61,6 +61,8 @@ namespace CsdBridge.BricsCAD
         private readonly Button _new;
         private readonly Button _history;
         private readonly ComboBox _model;
+        private readonly Button _routines;
+        private readonly ToolStripMenuItem _saveRoutine;
         private readonly ComboBox _effort;
         private readonly Label _status;
         private bool _updatingEffort;
@@ -91,6 +93,18 @@ namespace CsdBridge.BricsCAD
             _new.Click += (s, e) => NewChat();
             _history.Click += (s, e) => HistoryWindow.ShowWindow();
 
+            // Routines: save the job done in this chat as a routine, or open the list.
+            _routines = new Button { Text = "Routines \u25BE", AutoSize = true };
+            var routinesMenu = new ContextMenuStrip();
+            _saveRoutine = new ToolStripMenuItem("Save this chat as a routine...", null, (s, e) => SaveAsRoutine())
+            {
+                ToolTipText = "Claude writes up what you did in this chat as a routine; you check it in the editor before it's saved",
+            };
+            routinesMenu.Items.Add(_saveRoutine);
+            routinesMenu.Items.Add(new ToolStripMenuItem("Open routines...", null, (s, e) => Routines.RoutinesWindow.ShowWindow()));
+            routinesMenu.Opening += (s, e) => _saveRoutine.Enabled = !AgentRunner.IsBusy;
+            _routines.Click += (s, e) => routinesMenu.Show(_routines, new Point(0, _routines.Height));
+
             _model = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Margin = new Padding(3, 4, 12, 3) };
             _model.Items.AddRange(ModelCatalog.Choices.Cast<object>().ToArray());
             ShowModel(AgentRunner.Model);
@@ -117,7 +131,7 @@ namespace CsdBridge.BricsCAD
             choices.Controls.AddRange(new Control[] { modelLabel, _model, effortLabel, _effort });
 
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, AutoSize = true };
-            buttons.Controls.AddRange(new Control[] { _send, _stop, _new, _history });
+            buttons.Controls.AddRange(new Control[] { _send, _stop, _new, _history, _routines });
 
             // Grows to fit its text (see FitStatus), so the whole result and token use can be read.
             _status = new Label
@@ -188,6 +202,15 @@ namespace CsdBridge.BricsCAD
             _input.Text = text;
             _input.SelectionStart = _input.TextLength;
             _input.Focus();
+        }
+
+        private void SaveAsRoutine()
+        {
+            string? problem = AgentRunner.QueueSaveChatAsRoutine();
+            if (problem != null)
+            {
+                AppendError(problem);
+            }
         }
 
         private void NewChat()

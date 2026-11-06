@@ -14,6 +14,7 @@ namespace CsdBridge.BricsCAD
     /// AIDRAFT    ask Claude to draw or change something (command line)
     /// AIPANEL    open the chat panel
     /// AIHISTORY  open the history of requests to Claude
+    /// AIROUTINES open the routines: saved procedures to run, create, edit, rename or delete
     /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
     /// AIEFFORT   choose how hard Claude works: Auto, Quick, Normal or Thorough
     /// AIMODEL    choose the Claude model: Opus, Sonnet or Haiku
@@ -46,20 +47,20 @@ namespace CsdBridge.BricsCAD
                 return;
             }
 
-            AgentRunner.Run(doc, res.StringResult, preselected);
+            AgentRunner.Run(doc, new RunRequest(res.StringResult), preselected);
         }
 
         [CommandMethod(Group, QueuedRunCommand, CommandFlags.Modal | CommandFlags.UsePickSet)]
         public void QueuedRun()
         {
-            string? prompt = AgentRunner.TakePendingPrompt();
-            if (prompt == null)
+            RunRequest? request = AgentRunner.TakePendingRequest();
+            if (request == null)
             {
                 return;
             }
 
             Document doc = CadApp.DocumentManager.MdiActiveDocument;
-            AgentRunner.Run(doc, prompt, Preselection(doc.Editor));
+            AgentRunner.Run(doc, request, Preselection(doc.Editor));
         }
 
         [CommandMethod(Group, "AIPANEL", CommandFlags.Modal)]
@@ -231,6 +232,9 @@ namespace CsdBridge.BricsCAD
         [CommandMethod(Group, "AIHISTORY", CommandFlags.Modal)]
         public void AiHistory() => HistoryWindow.ShowWindow();
 
+        [CommandMethod(Group, "AIROUTINES", CommandFlags.Modal)]
+        public void AiRoutines() => Routines.RoutinesWindow.ShowWindow();
+
         [CommandMethod(Group, "AIRIBBON", CommandFlags.Modal)]
         public void AiRibbon()
         {
@@ -303,6 +307,9 @@ namespace CsdBridge.BricsCAD
             ed.WriteMessage($"\n  Effort:     {AgentRunner.EffortMode} (Quick = {levels.Quick}, Normal = {levels.Normal}, Thorough = {levels.Thorough})");
             ed.WriteMessage($"\n  API key:    {keySource}");
             ed.WriteMessage($"\n  Standards:  {standards}{(File.Exists(standards) ? "" : " (not found)")}");
+            string? office = s.ResolvedOfficeRoutinesFolder();
+            ed.WriteMessage($"\n  Routines:   {BridgeSettings.PersonalRoutinesFolder}");
+            ed.WriteMessage($"\n  Office routines: {(office == null ? "none (set office_routines_folder)" : office + (Directory.Exists(office) ? "" : " (not found)"))}");
             ed.WriteMessage($"\n  CSD tools:  {Describe((s.CsdMode ?? "read").ToLowerInvariant())} (change with AICSD)");
             ed.WriteMessage($"\n  Settings:   {BridgeSettings.SettingsPath}");
             ed.WriteMessage($"\n  Logs:       {BridgeSettings.LogFolder}");

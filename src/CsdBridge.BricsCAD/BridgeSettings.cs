@@ -23,6 +23,9 @@ namespace CsdBridge.BricsCAD
 
         private static string KeyPath => Path.Combine(Folder, "apikey.bin");
 
+        /// <summary>The user's own routines.</summary>
+        public static string PersonalRoutinesFolder => Path.Combine(Folder, "routines");
+
         public static string LogFolder { get; } =
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CsdBridge", "logs");
 
@@ -83,6 +86,13 @@ namespace CsdBridge.BricsCAD
         [JsonPropertyName("standards_file")]
         public string? StandardsFile { get; set; }
 
+        /// <summary>
+        /// The office's shared routines folder, e.g. on a network drive, listed next to each
+        /// user's own routines. Empty means none.
+        /// </summary>
+        [JsonPropertyName("office_routines_folder")]
+        public string? OfficeRoutinesFolder { get; set; }
+
         /// <summary>Optional API base URL, e.g. an internal gateway that holds the key.</summary>
         [JsonPropertyName("base_url")]
         public string? BaseUrl { get; set; }
@@ -141,6 +151,10 @@ namespace CsdBridge.BricsCAD
             string dir = Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".";
             return Path.Combine(dir, "office-standards.md");
         }
+
+        /// <summary>The office routines folder with environment variables expanded, or null when none is set.</summary>
+        public string? ResolvedOfficeRoutinesFolder() =>
+            string.IsNullOrWhiteSpace(OfficeRoutinesFolder) ? null : Environment.ExpandEnvironmentVariables(OfficeRoutinesFolder!.Trim());
 
         public string ResolvedRoadDraftingPath()
         {

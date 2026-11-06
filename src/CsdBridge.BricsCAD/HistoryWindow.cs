@@ -8,6 +8,7 @@ using System.Linq;
 using System.Windows.Forms;
 using CsdBridge.Core.Agent;
 using CsdBridge.Core.History;
+using CsdBridge.Core.Routines;
 using CadApp = Bricscad.ApplicationServices.Application;
 
 namespace CsdBridge.BricsCAD
@@ -267,7 +268,7 @@ namespace CsdBridge.BricsCAD
         {
             var item = new ListViewItem(When(r.StartedAt)) { Tag = r.Id };
             item.SubItems.Add(r.Drawing ?? "");
-            item.SubItems.Add(FirstLine(r.Prompt));
+            item.SubItems.Add(r.Routine != null ? "Routine: " + r.Routine : FirstLine(r.Prompt));
             item.SubItems.Add(ResultText(r));
             item.ForeColor = r.IsRunning ? Color.RoyalBlue
                 : r.Status == nameof(AgentRunStatus.Completed) ? SystemColors.WindowText
@@ -306,6 +307,11 @@ namespace CsdBridge.BricsCAD
             if (r.SelectedCount > 0)
             {
                 Append($"{r.SelectedCount} object(s) were selected", SystemColors.GrayText);
+            }
+
+            if (r.Routine != null)
+            {
+                Append($"Routine: {r.Routine}", SystemColors.GrayText);
             }
 
             Append("");
@@ -407,9 +413,35 @@ namespace CsdBridge.BricsCAD
                 return;
             }
 
-            if (!AgentRunner.QueueRun(_shown.Prompt))
+            var request = new RunRequest(_shown.Prompt);
+            if (_shown.Routine != null)
+            {
+                // Same prompt and values as before; the routine's own effort if it still exists.
+                request.Routine = _shown.Routine;
+                request.Display = $"Routine: {_shown.Routine} (again, same values)";
+                Routine? routine = TryFindRoutine(_shown.Routine);
+                request.EffortText = routine?.Instructions;
+                if (routine?.Effort is EffortMode tier)
+                {
+                    request.Effort = EffortPolicy.Fixed(tier, AgentRunner.Settings.EffortLevels(), "set by the routine");
+                }
+            }
+
+            if (!AgentRunner.QueueRun(request))
             {
                 MessageBox.Show(this, "Open a drawing first, or wait for the current request to finish.", Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        private static Routine? TryFindRoutine(string name)
+        {
+            try
+            {
+                return Routines.RoutineUi.CreateLibrary().Find(name);
+            }
+            catch (Exception)
+            {
+                return null; // e.g. the office folder is offline; run with the usual effort
             }
         }
 

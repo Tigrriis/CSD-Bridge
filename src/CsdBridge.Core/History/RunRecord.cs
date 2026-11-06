@@ -25,6 +25,9 @@ namespace CsdBridge.Core.History
         public string? DrawingPath { get; set; }
         public string Prompt { get; set; } = "";
 
+        /// <summary>The routine this request ran, or null for a typed request.</summary>
+        public string? Routine { get; set; }
+
         /// <summary>Objects selected when the request was made.</summary>
         public int SelectedCount { get; set; }
 
@@ -121,7 +124,7 @@ namespace CsdBridge.Core.History
 
             string q = query!.Trim();
             bool Has(string? s) => s != null && s.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0;
-            return Has(Prompt) || Has(FinalText) || Has(Drawing) || Has(Error) || Has(Status)
+            return Has(Prompt) || Has(Routine) || Has(FinalText) || Has(Drawing) || Has(Error) || Has(Status)
                 || Steps.Any(s => Has(s.Text) || Has(s.Tool));
         }
     }
