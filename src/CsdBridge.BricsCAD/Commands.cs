@@ -16,6 +16,7 @@ namespace CsdBridge.BricsCAD
     /// AIHISTORY  open the history of requests to Claude
     /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
     /// AIEFFORT   choose how hard Claude works: Auto, Quick, Normal or Thorough
+    /// AIMODEL    choose the Claude model: Opus, Sonnet or Haiku
     /// AIUIDUMP   diagnostic: save the controls of open dialogs to a text file
     /// AIFORMDUMP diagnostic: save open dialogs' WinForms controls and grid cells (read from inside)
     /// AICSD      Civil Site Design tools: read only, edit, off, or list CSD's commands
@@ -87,6 +88,38 @@ namespace CsdBridge.BricsCAD
                 ? "\nCSD-Bridge: effort is Auto: Quick for simple edits and questions, Thorough for big multi-step jobs, Normal otherwise.\n"
                 : $"\nCSD-Bridge: effort is {mode} for every request until you change it.\n");
         }
+
+        [CommandMethod(Group, "AIMODEL", CommandFlags.Modal)]
+        public void AiModel()
+        {
+            Editor ed = CadApp.DocumentManager.MdiActiveDocument.Editor;
+            var options = new PromptKeywordOptions($"\nClaude model (now {ModelCatalog.Label(AgentRunner.Model)})");
+            foreach (ModelChoice c in ModelCatalog.Choices)
+            {
+                options.Keywords.Add(Keyword(c));
+            }
+
+            if (ModelCatalog.Find(AgentRunner.Model) is ModelChoice current)
+            {
+                options.Keywords.Default = Keyword(current);
+            }
+
+            options.AllowNone = true;
+
+            PromptResult res = ed.GetKeywords(options);
+            if (res.Status != PromptStatus.OK || !(ModelCatalog.Find(res.StringResult) is ModelChoice choice))
+            {
+                return;
+            }
+
+            AgentRunner.SetModel(choice.Id);
+            ed.WriteMessage(
+                $"\nCSD-Bridge: {choice.Label} ({choice.Description}) from the next request." +
+                "\nConversations carry on with it; AIRESET starts a clean one.\n");
+        }
+
+        /// <summary>"Opus", "Sonnet", "Haiku": the first word of the model's name.</summary>
+        private static string Keyword(ModelChoice c) => c.Label.Split(' ')[0];
 
         [CommandMethod(Group, "AIUIDUMP", CommandFlags.Modal)]
         public void AiUiDump()
@@ -264,7 +297,9 @@ namespace CsdBridge.BricsCAD
 
             ed.WriteMessage("\nCSD-Bridge status");
             EffortLevels levels = s.EffortLevels();
-            ed.WriteMessage($"\n  Model:      {s.Model} (max {s.MaxTurns} turns, fallback {(s.ServerSideFallback ? "on" : "off")})");
+            string model = AgentRunner.Model;
+            string fallback = !s.ServerSideFallback ? "off" : ModelCatalog.SupportsServerSideFallback(model) ? "on" : "none for this model";
+            ed.WriteMessage($"\n  Model:      {ModelCatalog.Label(model)} [{model}] (change with AIMODEL or the chat panel; max {s.MaxTurns} turns, fallback {fallback})");
             ed.WriteMessage($"\n  Effort:     {AgentRunner.EffortMode} (Quick = {levels.Quick}, Normal = {levels.Normal}, Thorough = {levels.Thorough})");
             ed.WriteMessage($"\n  API key:    {keySource}");
             ed.WriteMessage($"\n  Standards:  {standards}{(File.Exists(standards) ? "" : " (not found)")}");
@@ -273,7 +308,7 @@ namespace CsdBridge.BricsCAD
             ed.WriteMessage($"\n  Logs:       {BridgeSettings.LogFolder}");
             if (AgentRunner.Peek(doc) is { } agent)
             {
-                ed.WriteMessage($"\n  This drawing: {agent.MessageCount} messages, {agent.ConversationUsage}");
+                ed.WriteMessage($"\n  This drawing: {agent.MessageCount} messages, last on {ModelCatalog.Label(agent.Model)}, {agent.ConversationUsage}");
             }
 
             ed.WriteMessage("\n  Edit settings.json, then run AIRESET to apply changes.\n");

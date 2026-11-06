@@ -111,7 +111,12 @@ Twelve tools:
 
 ## Model settings and conversation rules
 
-- **Model:** `claude-opus-5-5`, with `thinking: adaptive`.
+- **Model:** `claude-opus-5-5` by default, with `thinking: adaptive`. The user can switch to
+  `claude-sonnet-5-5` or `claude-haiku-5-5` (chat panel or `AIMODEL`; list in
+  `src/CsdBridge.Core/Agent/ModelCatalog.cs`). A switch keeps the conversation as it is: the
+  API drops thinking blocks the new model can't read (unbilled), and the new model's cache
+  starts cold. The one exception is a model without per-message effort taking over a
+  conversation that has effort-only system messages; that starts a new conversation instead.
 - **Effort per request:** Auto picks Quick (`low`), Normal (`high`) or Thorough (`xhigh`)
   from the request wording, or the user fixes one mode.
   - **How it's sent:** the top-level effort stays at the Normal level. A change is an
@@ -126,7 +131,7 @@ Twelve tools:
   is on by default. If a request is declined on policy grounds, Anthropic re-runs it on its
   recommended fallback model. That is unlikely for drafting, but it costs nothing otherwise.
   Turn it off with `server_side_fallback: false`. It is Claude API only, not Bedrock, Vertex AI
-  or Foundry.
+  or Foundry. Haiku 5.5 has no server-side fallback, so `fallbacks` isn't sent for it.
 - **Append-only history.** The system prompt, office standards and tool list are fixed for a
   conversation's lifetime. Assistant turns, including thinking blocks and their signatures,
   are echoed back exactly. Anything that varies per request, such as the selection, goes into

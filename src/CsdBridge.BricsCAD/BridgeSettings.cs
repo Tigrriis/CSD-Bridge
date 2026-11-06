@@ -26,8 +26,9 @@ namespace CsdBridge.BricsCAD
         public static string LogFolder { get; } =
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CsdBridge", "logs");
 
+        /// <summary>claude-opus-5-5 (default), claude-sonnet-5-5 or claude-haiku-5-5. The chat panel and AIMODEL set it.</summary>
         [JsonPropertyName("model")]
-        public string Model { get; set; } = "claude-opus-5-5";
+        public string Model { get; set; } = ModelCatalog.Opus;
 
         /// <summary>Effort level for Normal requests: low | medium | high | xhigh | max.</summary>
         [JsonPropertyName("effort")]

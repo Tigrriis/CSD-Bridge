@@ -241,6 +241,80 @@ namespace CsdBridge.Core.Tests
         }
 
         [Fact]
+        public async Task Haiku_requests_do_not_ask_for_a_server_side_fallback()
+        {
+            var http = new FakeAnthropic(Response("end_turn", @"{""type"":""text"",""text"":""a""}"));
+            var agent = NewAgent(http, new InMemoryDrawingHost(), options: new AgentOptions { Model = ModelCatalog.Haiku });
+
+            await agent.RunAsync("move it");
+
+            JsonElement body = http.Bodies[0];
+            Assert.Equal("claude-haiku-5-5", body.GetProperty("model").GetString());
+            Assert.False(body.TryGetProperty("fallbacks", out _));
+            Assert.DoesNotContain("server-side-fallback", http.BetaHeaders[0]);
+            Assert.Equal("adaptive", body.GetProperty("thinking").GetProperty("type").GetString());
+        }
+
+        [Fact]
+        public async Task Switching_model_carries_the_conversation_on_unchanged()
+        {
+            var http = new FakeAnthropic(
+                Response("end_turn", @"{""type"":""thinking"",""thinking"":"""",""signature"":""sig-opus""}", @"{""type"":""text"",""text"":""a""}"),
+                Response("end_turn", @"{""type"":""text"",""text"":""b""}"));
+            var agent = NewAgent(http, new InMemoryDrawingHost());
+
+            await agent.RunAsync("draw a slab", null, default, "low");
+            Assert.True(agent.CanSwitchTo(ModelCatalog.Sonnet));
+            agent.SwitchModel(ModelCatalog.Sonnet);
+            await agent.RunAsync("make it wider");
+
+            Assert.Equal(ModelCatalog.Sonnet, agent.Model);
+            Assert.Equal("claude-opus-5-5", http.Bodies[0].GetProperty("model").GetString());
+            Assert.Equal("claude-sonnet-5-5", http.Bodies[1].GetProperty("model").GetString());
+
+            // The earlier turns, thinking block included, are sent to the new model byte for byte.
+            JsonElement m0 = http.Bodies[0].GetProperty("messages");
+            JsonElement m1 = http.Bodies[1].GetProperty("messages");
+            for (int i = 0; i < m0.GetArrayLength(); i++)
+            {
+                Assert.Equal(m0[i].GetRawText(), m1[i].GetRawText());
+            }
+
+            Assert.Equal("sig-opus", m1[2].GetProperty("content")[0].GetProperty("signature").GetString());
+        }
+
+        [Fact]
+        public async Task A_model_without_per_message_effort_cannot_take_over_a_conversation_that_used_it()
+        {
+            var http = new FakeAnthropic(
+                Response("end_turn", @"{""type"":""text"",""text"":""a""}"),
+                Response("end_turn", @"{""type"":""text"",""text"":""b""}"));
+            var agent = NewAgent(http, new InMemoryDrawingHost());
+
+            await agent.RunAsync("draw a slab");
+            Assert.True(agent.CanSwitchTo("claude-opus-4-8")); // no effort messages yet
+
+            await agent.RunAsync("move it", null, default, "low");
+            Assert.False(agent.CanSwitchTo("claude-opus-4-8"));
+            Assert.True(agent.CanSwitchTo(ModelCatalog.Haiku));
+            Assert.Throws<InvalidOperationException>(() => agent.SwitchModel("claude-opus-4-8"));
+
+            agent.Reset();
+            Assert.True(agent.CanSwitchTo("claude-opus-4-8"));
+        }
+
+        [Fact]
+        public void Model_catalog_finds_models_by_id_or_name()
+        {
+            Assert.Equal(ModelCatalog.Sonnet, ModelCatalog.Find("sonnet")?.Id);
+            Assert.Equal(ModelCatalog.Haiku, ModelCatalog.Find("Haiku 5.5")?.Id);
+            Assert.Equal(ModelCatalog.Opus, ModelCatalog.Find("claude-opus-5-5")?.Id);
+            Assert.Null(ModelCatalog.Find("claude-opus-4-8"));
+            Assert.Equal("Sonnet 5.5", ModelCatalog.Label("claude-sonnet-5-5"));
+            Assert.Equal("claude-opus-4-8", ModelCatalog.Label("claude-opus-4-8"));
+        }
+
+        [Fact]
         public async Task Refused_request_rolls_back_its_effort_change_too()
         {
             var http = new FakeAnthropic(Response("refusal"));

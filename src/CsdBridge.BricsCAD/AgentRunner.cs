@@ -29,12 +29,16 @@ namespace CsdBridge.BricsCAD
         private static CancellationTokenSource? _current;
         private static string? _pendingPrompt;
         private static EffortMode? _effortMode;
+        private static string? _model;
 
         /// <summary>Raised with true when a request starts and false when it ends.</summary>
         public static event Action<bool>? BusyChanged;
 
         /// <summary>Raised when the effort mode changes (chat panel, AIEFFORT or settings reload).</summary>
         public static event Action<EffortMode>? EffortModeChanged;
+
+        /// <summary>Raised when the model changes (chat panel, AIMODEL or settings reload).</summary>
+        public static event Action<string>? ModelChanged;
 
         /// <summary>Raised when a request starts, after each step, and when it finishes.</summary>
         public static event Action<RunRecord>? RunUpdated;
@@ -52,6 +56,41 @@ namespace CsdBridge.BricsCAD
         /// <summary>Auto, Quick, Normal or Thorough; from settings.json until changed.</summary>
         public static EffortMode EffortMode =>
             _effortMode ??= EffortPolicy.TryParseMode(Settings.EffortModeName, out EffortMode m) ? m : EffortMode.Auto;
+
+        /// <summary>The model for requests (an API id); from settings.json until changed.</summary>
+        public static string Model =>
+            _model ??= string.IsNullOrWhiteSpace(Settings.Model) ? ModelCatalog.Opus : Settings.Model.Trim();
+
+        /// <summary>
+        /// Change the model and remember it in settings.json. It applies from the next request,
+        /// and a drawing's conversation carries on with the new model.
+        /// </summary>
+        public static void SetModel(string model)
+        {
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                return;
+            }
+
+            _model = model.Trim();
+            try
+            {
+                // Re-read the file so manual edits made since loading aren't overwritten.
+                BridgeSettings onDisk = BridgeSettings.Load();
+                onDisk.Model = _model;
+                onDisk.Save();
+                if (_settings != null)
+                {
+                    _settings.Model = _model;
+                }
+            }
+            catch (Exception)
+            {
+                // Still applies for this session.
+            }
+
+            NotifyModel();
+        }
 
         /// <summary>Change the effort mode and remember it in settings.json.</summary>
         public static void SetEffortMode(EffortMode mode)
@@ -99,6 +138,18 @@ namespace CsdBridge.BricsCAD
             return string.Equals(old, "off", StringComparison.OrdinalIgnoreCase) != string.Equals(mode, "off", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static void NotifyModel()
+        {
+            try
+            {
+                ModelChanged?.Invoke(Model);
+            }
+            catch (Exception)
+            {
+                // UI listeners must not break anything.
+            }
+        }
+
         private static void NotifyEffortMode()
         {
             try
@@ -132,7 +183,9 @@ namespace CsdBridge.BricsCAD
             _settings = null;
             _client = null;
             _effortMode = null;
+            _model = null;
             NotifyEffortMode();
+            NotifyModel();
         }
 
         public static DraftingAgent? Peek(Document doc) => Agents.TryGetValue(doc, out DraftingAgent? a) ? a : null;
@@ -178,6 +231,12 @@ namespace CsdBridge.BricsCAD
             }
 
             DraftingAgent? agent = GetOrCreateAgent(doc, out string? error);
+            string? switchNotice = null;
+            if (agent != null && !string.Equals(agent.Model, Model, StringComparison.OrdinalIgnoreCase))
+            {
+                agent = SwitchModel(doc, agent, out switchNotice, out error);
+            }
+
             if (agent == null)
             {
                 output.Error(error ?? "Could not start Claude.");
@@ -201,12 +260,18 @@ namespace CsdBridge.BricsCAD
                 DrawingPath = doc.Name,
                 Prompt = prompt,
                 SelectedCount = preselected?.Length ?? 0,
-                Model = Settings.Model,
+                Model = agent.Model,
                 Effort = effort.Effort,
                 EffortChoice = effort.Describe(),
             };
             CurrentRun = record;
-            output.Started(prompt, effort);
+            string modelLabel = ModelCatalog.Label(agent.Model);
+            output.Started(prompt, modelLabel, effort);
+            if (switchNotice != null)
+            {
+                output.Notice(switchNotice);
+            }
+
             Notify(record);
 
             try
@@ -233,7 +298,7 @@ namespace CsdBridge.BricsCAD
                 });
 
                 AgentRunResult result = task.GetAwaiter().GetResult();
-                output.Finished(result, effort);
+                output.Finished(result, modelLabel, effort);
                 record.Complete(result);
             }
             catch (Exception ex)
@@ -280,6 +345,27 @@ namespace CsdBridge.BricsCAD
         public static DrawingNotes NotesFor(Document doc) =>
             new DrawingNotes(Path.Combine(Path.GetDirectoryName(BridgeSettings.LogFolder)!, "notes"), doc.Name);
 
+        /// <summary>
+        /// Move the drawing's conversation to the current model. It carries on where it can;
+        /// otherwise (a model that can't read the conversation's effort changes) a new one starts.
+        /// </summary>
+        private static DraftingAgent? SwitchModel(Document doc, DraftingAgent agent, out string? notice, out string? error)
+        {
+            string from = ModelCatalog.Label(agent.Model);
+            string to = ModelCatalog.Label(Model);
+            error = null;
+            if (agent.CanSwitchTo(Model))
+            {
+                agent.SwitchModel(Model);
+                notice = agent.MessageCount > 0 ? $"Switched from {from} to {to}; the conversation carries on." : null;
+                return agent;
+            }
+
+            Forget(doc);
+            notice = $"Started a new conversation: {to} can't continue the {from} one.";
+            return GetOrCreateAgent(doc, out error);
+        }
+
         private static DraftingAgent? GetOrCreateAgent(Document doc, out string? error)
         {
             error = null;
@@ -315,10 +401,12 @@ namespace CsdBridge.BricsCAD
                 extensions.Add(new CsdTools(doc, () => Settings.CsdMode));
             }
 
+            AgentOptions options = settings.ToAgentOptions();
+            options.Model = Model;
             var agent = new DraftingAgent(
                 _client,
                 new ToolDispatcher(new BricsCadDrawingHost(doc)),
-                settings.ToAgentOptions(),
+                options,
                 MainThreadPump.Instance,
                 extensions);
             Agents[doc] = agent;
@@ -371,11 +459,11 @@ namespace CsdBridge.BricsCAD
                 _doc = doc;
             }
 
-            public void Started(string prompt, EffortChoice effort)
+            public void Started(string prompt, string model, EffortChoice effort)
             {
-                Write($"\nCSD-Bridge: working, {effort.Describe()} effort... (Esc to cancel)");
+                Write($"\nCSD-Bridge: working, {model}, {effort.Describe()} effort... (Esc to cancel)");
                 ChatPalette.Control?.AppendUser(prompt);
-                ChatPalette.Control?.AppendTool($"{effort.Describe()} effort");
+                ChatPalette.Control?.AppendTool($"{model}, {effort.Describe()} effort");
                 ChatPalette.Control?.SetStatus("Working... (Esc or Stop to cancel)");
             }
 
@@ -407,7 +495,7 @@ namespace CsdBridge.BricsCAD
                 ChatPalette.Control?.AppendTool(text);
             }
 
-            public void Finished(AgentRunResult r, EffortChoice effort)
+            public void Finished(AgentRunResult r, string model, EffortChoice effort)
             {
                 string status = r.Status == AgentRunStatus.Completed ? "Done" : r.Status.ToString();
                 if (r.Status == AgentRunStatus.Refused)
@@ -421,7 +509,7 @@ namespace CsdBridge.BricsCAD
                     Error(r.Error);
                 }
 
-                string summary = $"{status} - {effort.Tier} effort, {r.ToolCalls} tool call(s), {r.Usage}. Use U to undo.";
+                string summary = $"{status} - {model}, {effort.Tier} effort, {r.ToolCalls} tool call(s), {r.Usage}. Use U to undo.";
                 Write("\nCSD-Bridge: " + summary + "\n");
                 ChatPalette.Control?.SetStatus(summary);
             }

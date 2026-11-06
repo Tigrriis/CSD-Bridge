@@ -52,7 +52,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 98 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 124 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -172,6 +172,7 @@ with `-Remove`.
 | `AIPANEL` | Open the chat panel (Enter sends, Shift+Enter for a new line, Stop cancels) |
 | `AIHISTORY` | Open the history window: every request and what Claude did |
 | `AIEFFORT` | Choose how hard Claude works: Auto, Quick, Normal or Thorough (also the Effort box in the chat panel) |
+| `AIMODEL` | Choose the model: Opus, Sonnet or Haiku (also the Model box in the chat panel) |
 | `AIRESET` | New conversation for this drawing; reloads settings |
 | `AIKEY` | Set or remove the stored API key |
 | `AISTATUS` | Show model, key source, standards file, settings and log locations, usage |
@@ -191,7 +192,7 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
 | Key | Default | Notes |
 |---|---|---|
-| `model` | `claude-opus-5-5` | Any Claude model ID |
+| `model` | `claude-opus-5-5` | `claude-opus-5-5`, `claude-sonnet-5-5` or `claude-haiku-5-5`; also set from the chat panel's Model box or `AIMODEL`. Any other Claude model ID works too and is added to the panel's list. |
 | `effort_mode` | `auto` | `auto` / `quick` / `normal` / `thorough`. Also set from the chat panel's Effort box or `AIEFFORT`. |
 | `effort_quick` | `low` | Effort level for Quick requests (`low` / `medium` / `high` / `xhigh` / `max`). |
 | `effort` | `high` | Effort level for Normal requests. |
@@ -295,6 +296,26 @@ carry on.
 The chosen effort shows on the command line when a request starts, and in the History window.
 Auto uses simple word rules (`src/CsdBridge.Core/Agent/EffortPolicy.cs`), so it costs nothing
 and is easy to tune. To try the rules without BricsCAD, use `--effort auto` in the CLI harness.
+
+## Model
+
+The chat panel's **Model** box (or `AIMODEL`) picks which Claude model answers:
+
+| Model | Notes |
+|---|---|
+| **Opus 5.5** (default) | Most capable; slowest and most expensive |
+| **Sonnet 5.5** | Faster and cheaper |
+| **Haiku 5.5** | Fastest and cheapest. Has no server-side refusal fallback, so a declined request stays declined. |
+
+A change applies from your next message and is remembered in `settings.json`. The drawing's
+conversation carries on with the new model. Two things to know when comparing models:
+
+- The new model doesn't see the previous model's thinking (the API drops it, at no charge),
+  only the visible conversation. For a fair comparison, press **New chat** first.
+- The prompt cache is per model, so the first request after a switch pays to cache the
+  conversation again. Compare token use from the second request on.
+
+The model shows when each request starts, in the summary line after it, and in the History window.
 
 ## Office standards
 
