@@ -39,6 +39,22 @@ namespace CsdBridge.Core.Tests
             Assert.Empty(ScaleBars.Candidates(customScale, millimetreDrawing: false));
         }
 
+        [Theory]
+        [InlineData("SCALES: HORIZONTAL 1:50 VERTICAL 1:20", new[] { 50, 20 })]
+        [InlineData("SCALE 1:100", new[] { 100 })]
+        [InlineData("Scale 1 : 2,000", new[] { 2000 })]
+        [InlineData("HORIZONTAL SCALE 1:500  VERTICAL SCALE 1:100", new[] { 500, 100 })]
+        [InlineData("SCALE 1:500 @ A1 (1:1000 @ A3)", new[] { 500 })]
+        [InlineData("BATTER 1:4", new int[0])]
+        [InlineData("CL-01 CH 0.000 to CH 25.000", new int[0])]
+        [InlineData("DETAIL A - NOT TO SCALE 1:4", new int[0])]
+        [InlineData("SCALE: N.T.S.", new int[0])]
+        [InlineData("SCALE BAR", new int[0])]
+        public void Scales_are_read_from_section_titles(string text, int[] expected)
+        {
+            Assert.Equal(expected, ScaleBars.ScalesInText(text));
+        }
+
         [Fact]
         public void Block_names_round_trip()
         {

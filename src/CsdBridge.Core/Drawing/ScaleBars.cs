@@ -97,6 +97,53 @@ namespace CsdBridge.Core.Drawing
             return result;
         }
 
+        /// <summary>
+        /// The scales stated in a line of drawing text, such as a section title's
+        /// "SCALES: HORIZONTAL 1:50 VERTICAL 1:20" (50 and 20). Only text that mentions a scale
+        /// counts, so batter slopes ("1:4") and other ratios are ignored, as is "NOT TO SCALE".
+        /// When ratios are tagged with sheet sizes ("1:500 @ A1, 1:1000 @ A3"), only the
+        /// largest sheet's are kept.
+        /// </summary>
+        public static IReadOnlyList<int> ScalesInText(string? text)
+        {
+            var result = new List<int>();
+            if (string.IsNullOrEmpty(text)
+                || text!.IndexOf("SCALE", StringComparison.OrdinalIgnoreCase) < 0
+                || NotToScale.IsMatch(text))
+            {
+                return result;
+            }
+
+            var found = new List<(int Scale, int? Sheet)>();
+            foreach (Match m in Ratio.Matches(text))
+            {
+                if (int.TryParse(m.Groups[1].Value.Replace(",", ""), NumberStyles.None, CultureInfo.InvariantCulture, out int n) && n > 0)
+                {
+                    found.Add((n, m.Groups[2].Success ? int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture) : (int?)null));
+                }
+            }
+
+            int? biggestSheet = found.Where(f => f.Sheet.HasValue).Select(f => f.Sheet).Min();
+            foreach (var (scale, sheet) in found)
+            {
+                if ((biggestSheet == null || sheet == null || sheet == biggestSheet) && !result.Contains(scale))
+                {
+                    result.Add(scale);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>"1:500", "1 : 2,000", optionally followed by a sheet size ("@ A1").</summary>
+        private static readonly Regex Ratio = new Regex(
+            @"\b1\s*:\s*(\d{1,3}(?:,\d{3})+|\d+)(?!\d|\.\d)(?:\s*@\s*A(\d))?",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        private static readonly Regex NotToScale = new Regex(
+            @"NOT\s+TO\s+SCALE|\bN\.?T\.?S\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
         /// <summary>The block name for 1:<paramref name="scale"/>.</summary>
         public static string BlockName(ScaleBarOptions options, int scale) =>
             string.Format(CultureInfo.InvariantCulture, options.BlockName, scale);

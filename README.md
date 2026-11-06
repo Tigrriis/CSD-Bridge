@@ -257,6 +257,10 @@ between roads aren't trimmed: Claude tidies them with `trim_extend` and `fillet`
 each scale it inserts the matching block, such as `Scale Bar 750` for 1:750, at the office's standard spot: (821, 68.5) on layer `AE GEN TBL - SCALE BAR`, scale 1, no rotation.
 When a layout has more than one scale, the bars are stacked upward 40 mm apart, the most detailed scale at the standard spot.
 
+- **Section sheets** (layouts with no viewports, just xref'd sections) take their scales from the scale text in their
+  xrefs, such as `SCALES: HORIZONTAL 1:50 VERTICAL 1:20`, which gives bars for 1:20 and 1:50. Only text that mentions a
+  scale counts, so batter slopes like 1:4 are ignored, and so is anything marked NOT TO SCALE. Only text that lands on the
+  sheet counts, in case one xref holds several sheets. Text on frozen or off layers is skipped.
 - The blocks must already be loaded in the drawing. A missing one is listed on the command line and skipped.
 - Model units are taken as metres (the office standard). If `INSUNITS` is millimetres, the millimetre reading is tried
   first, then metres.
