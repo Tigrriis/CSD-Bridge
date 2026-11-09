@@ -55,6 +55,15 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Manoeuvring (and, for B99, circulation) clearance added on the outside of the turn (m).</summary>
         public double ClearanceOutside { get; set; } = 0.3;
 
+        /// <summary>Minimum ground clearance under the body between the axles (m); AS/NZS 2890.1 B5: 120 mm, fully loaded.</summary>
+        public double GroundClearance { get; set; } = 0.12;
+
+        /// <summary>Angle of the underside ahead of the front axle, degrees above the chassis line (B5: 10 degrees).</summary>
+        public double ApproachAngleDeg { get; set; } = 10;
+
+        /// <summary>Angle of the underside behind the rear axle, degrees above the chassis line (B5: 10 degrees).</summary>
+        public double DepartureAngleDeg { get; set; } = 10;
+
         /// <summary>Length of a drawn wheel (tyre footprint), for the vehicle outline.</summary>
         public double WheelLength { get; set; } = 0.65;
 
@@ -135,6 +144,20 @@ namespace CsdBridge.Core.Vehicles
 
         public static IReadOnlyList<DesignVehicle> Standard => new[] { B99, B85 };
 
+        /// <summary>
+        /// The ground clearance template of AS/NZS 2890.1 Figure C1 in the chassis frame: X along
+        /// the vehicle from the rear axle, Z up from the line through the wheel contact points.
+        /// Rear extremity, rear axle, front axle, front extremity; the underside is straight between
+        /// the axles and rises at the departure/approach angles over the overhangs.
+        /// </summary>
+        public (double X, double Z)[] UndersideTemplate(double? groundClearance = null)
+        {
+            double h = groundClearance ?? GroundClearance;
+            double rear = h + RearOverhang * Math.Tan(DepartureAngleDeg * Math.PI / 180);
+            double front = h + FrontOverhang * Math.Tan(ApproachAngleDeg * Math.PI / 180);
+            return new[] { (-RearOverhang, rear), (0.0, h), (Wheelbase, h), (Wheelbase + FrontOverhang, front) };
+        }
+
         /// <summary>Problems with the dimensions, or an empty list.</summary>
         public List<string> Validate()
         {
@@ -175,6 +198,11 @@ namespace CsdBridge.Core.Vehicles
             if (MinTurnRadius <= Wheelbase)
             {
                 problems.Add("min_turn_radius must be larger than the wheelbase");
+            }
+
+            if (GroundClearance < 0 || ApproachAngleDeg < 0 || ApproachAngleDeg >= 90 || DepartureAngleDeg < 0 || DepartureAngleDeg >= 90)
+            {
+                problems.Add("ground_clearance must be 0 or more and the approach/departure angles between 0 and 90 degrees");
             }
 
             return problems;

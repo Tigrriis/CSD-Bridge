@@ -94,6 +94,118 @@ namespace CsdBridge.Core.Vehicles
             };
         }
 
+        /// <summary>One leg of a drive: how the vehicle gets from a pose to a destination.</summary>
+        public sealed class DriveLeg
+        {
+            public TurnPathRequest Request { get; set; } = null!;
+            public bool Reverse { get; set; }
+
+            /// <summary>Turned left (as the driver sees it) on the arc.</summary>
+            public bool Left { get; set; }
+
+            /// <summary>Angle turned on the arc, degrees.</summary>
+            public double ArcDeg { get; set; }
+
+            public double StraightLength { get; set; }
+
+            public double Length => Request.Path.Length;
+        }
+
+        /// <summary>
+        /// The leg that takes the vehicle from <paramref name="start"/> to <paramref name="target"/>
+        /// the way a car can: a turn at the given radius (never tighter than the vehicle can steer)
+        /// until it points at the destination, then straight to it. Forwards when the destination is
+        /// ahead of the rear axle, in reverse when it is behind, unless <paramref name="reverse"/> says.
+        /// Forwards the front axle centre arrives at the destination; in reverse the rear axle centre.
+        /// A destination inside one turning circle is reached by turning the other way, round as far
+        /// as it takes. Null when the destination is too close to move to.
+        /// </summary>
+        public static DriveLeg? DriveTo(DesignVehicle v, VehiclePose start, Point2 target, double? outerWheelRadius = null, bool? reverse = null)
+        {
+            double radius = outerWheelRadius ?? v.MinTurnRadius;
+            if (radius < v.MinTurnRadius - 1e-9)
+            {
+                throw new ArgumentException($"The turn radius can't be less than the {v.Name}'s minimum of {v.MinTurnRadius:0.#} m.");
+            }
+
+            double c = Math.Cos(start.Heading), s = Math.Sin(start.Heading);
+            double ahead = (target.X - start.RearAxle.X) * c + (target.Y - start.RearAxle.Y) * s;
+            bool back = reverse ?? ahead < v.Wheelbase / 2;
+
+            // The point that drives to the destination, its turning radius, and the direction of travel.
+            VehiclePoint reference = back ? v.RearAxleCentre : v.FrontAxleCentre;
+            double refRadius = v.RadiusOfPoint(radius, reference, left: true);
+            Point2 p0 = start.ToWorld(reference);
+            double travel = back ? start.Heading + Math.PI : start.Heading;
+            double ux = Math.Cos(travel), uy = Math.Sin(travel);
+            double nx = -uy, ny = ux;
+
+            if (Math.Sqrt((target.X - p0.X) * (target.X - p0.X) + (target.Y - p0.Y) * (target.Y - p0.Y)) < 0.05)
+            {
+                return null;
+            }
+
+            DriveLeg? best = null;
+            foreach (double side in new[] { 1.0, -1.0 })
+            {
+                // Turning circle on this side of the direction of travel.
+                var centre = new Point2(p0.X + nx * refRadius * side, p0.Y + ny * refRadius * side);
+                double dx = target.X - centre.X, dy = target.Y - centre.Y;
+                double d = Math.Sqrt(dx * dx + dy * dy);
+                if (d < refRadius + 1e-9)
+                {
+                    continue; // inside this circle: go round the other way
+                }
+
+                double phi = Math.Atan2(dy, dx);
+                double beta = Math.Acos(Math.Min(1, refRadius / d));
+                double startAngle = Math.Atan2(p0.Y - centre.Y, p0.X - centre.X);
+                double exitAngle = side > 0 ? phi - beta : phi + beta;
+                double sweep = side > 0 ? Angles.Normalize(exitAngle - startAngle) : -Angles.Normalize(startAngle - exitAngle);
+                double straight = Math.Sqrt(Math.Max(0, d * d - refRadius * refRadius));
+
+                var segments = new List<Segment>();
+                if (Math.Abs(sweep) > 1e-6)
+                {
+                    segments.Add(new ArcSegment(centre, refRadius, startAngle, sweep));
+                }
+
+                Point2 exit = segments.Count > 0 ? segments[0].End : p0;
+                if (straight > 1e-6)
+                {
+                    segments.Add(new LineSegment(exit, target));
+                }
+
+                if (segments.Count == 0)
+                {
+                    continue;
+                }
+
+                var leg = new DriveLeg
+                {
+                    Request = new TurnPathRequest
+                    {
+                        Vehicle = v,
+                        Path = new Path2(segments, false),
+                        Reference = reference,
+                        Reverse = back,
+                        InitialHeading = start.Heading,
+                    },
+                    Reverse = back,
+                    // In reverse the driver's left is the right of the direction of travel.
+                    Left = back ? side < 0 : side > 0,
+                    ArcDeg = Math.Abs(sweep) * 180 / Math.PI,
+                    StraightLength = straight,
+                };
+                if (best == null || leg.Length < best.Length)
+                {
+                    best = leg;
+                }
+            }
+
+            return best;
+        }
+
         /// <summary>
         /// A path through points with a tangent arc at each corner. Corners that don't have room
         /// for the radius get a smaller one (reported in <paramref name="warnings"/>).

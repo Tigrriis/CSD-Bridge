@@ -39,6 +39,15 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Height of the label text in drawing units. Null: the drawing's default text height.</summary>
         public double? TextHeight { get; set; } = 0.3;
 
+        /// <summary>Ground clearance check: distance the template is moved along a section each step (m).</summary>
+        public double ClearanceStep { get; set; } = 0.05;
+
+        /// <summary>Ground clearance check on a surface: distance between checked positions along the path (m).</summary>
+        public double ClearancePoseInterval { get; set; } = 0.1;
+
+        /// <summary>Default vertical exaggeration of long section plots.</summary>
+        public double SectionVerticalExaggeration { get; set; } = 1;
+
         public TurnPathDrawOptions Draw { get; set; } = new TurnPathDrawOptions();
 
         public TurnPathLayers Layers { get; set; } = new TurnPathLayers();
@@ -76,6 +85,8 @@ namespace CsdBridge.Core.Vehicles
             c.LayerStyles[c.Layers.Labels] = new LayerStyle { Color = 4, Lineweight = 0.18, Description = "Design vehicle labels" };
             c.LayerStyles[c.Layers.Hatch] = new LayerStyle { Color = 254, Rgb = new[] { 255, 220, 220 }, Lineweight = 0.13, Plot = true, Description = "Design vehicle swept area" };
             c.LayerStyles[c.Layers.Block] = new LayerStyle { Color = 7, Lineweight = 0.25, Description = "Design vehicle turning path blocks" };
+            c.LayerStyles[c.Layers.ClearanceCheck] = new LayerStyle { Color = 4, Lineweight = 0.25, Description = "Design vehicle ground clearance check (AS/NZS 2890.1 Appendix C)" };
+            c.LayerStyles[c.Layers.ClearanceFail] = new LayerStyle { Color = 1, Lineweight = 0.5, Description = "Design vehicle ground clearance check: where it grounds" };
             return c;
         }
 
@@ -207,6 +218,12 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Layer of the block reference when the result is made into a block.</summary>
         public string Block { get; set; } = "AE CIV PLN - VEHICLE BLOCK";
 
+        /// <summary>Ground clearance templates, markers and section plots.</summary>
+        public string ClearanceCheck { get; set; } = "AE CIV PLN - VEHICLE GROUND CLEARANCE";
+
+        /// <summary>Where the vehicle grounds.</summary>
+        public string ClearanceFail { get; set; } = "AE CIV PLN - VEHICLE GROUND CLEARANCE FAIL";
+
         public TurnPathLayers Clone() => (TurnPathLayers)MemberwiseClone();
 
         /// <summary>A copy with "{vehicle}" filled in and blanks replaced by the defaults.</summary>
@@ -227,6 +244,8 @@ namespace CsdBridge.Core.Vehicles
                 Labels = Fill(Labels, defaults.Labels),
                 Hatch = Fill(Hatch, defaults.Hatch),
                 Block = Fill(Block, defaults.Block),
+                ClearanceCheck = Fill(ClearanceCheck, defaults.ClearanceCheck),
+                ClearanceFail = Fill(ClearanceFail, defaults.ClearanceFail),
             };
         }
 
@@ -242,6 +261,8 @@ namespace CsdBridge.Core.Vehicles
             yield return new KeyValuePair<string, string>("labels", Labels);
             yield return new KeyValuePair<string, string>("hatch", Hatch);
             yield return new KeyValuePair<string, string>("block", Block);
+            yield return new KeyValuePair<string, string>("clearance_check", ClearanceCheck);
+            yield return new KeyValuePair<string, string>("clearance_fail", ClearanceFail);
         }
 
         /// <summary>Sets a layer by its part name; false if the name is unknown.</summary>
@@ -258,6 +279,8 @@ namespace CsdBridge.Core.Vehicles
                 case "labels": Labels = layer; return true;
                 case "hatch": Hatch = layer; return true;
                 case "block": Block = layer; return true;
+                case "clearance_check": ClearanceCheck = layer; return true;
+                case "clearance_fail": ClearanceFail = layer; return true;
                 default: return false;
             }
         }

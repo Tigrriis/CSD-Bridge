@@ -456,6 +456,7 @@ namespace CsdBridge.BricsCAD
                 new RoadDraftingTools(new BricsCadDrawingHost(doc), conventions, conventionsError),
                 new RoutineTools(name => RoutineUi.CreateLibrary().Find(name), draft => Interlocked.Exchange(ref _draft, draft)),
                 new TurnPathTools(new BricsCadDrawingHost(doc), turnPaths, turnPathsError),
+                new GroundClearanceTools(new BricsCadDrawingHost(doc), turnPaths, turnPathsError),
             };
             if (!string.Equals(settings.CsdMode, "off", StringComparison.OrdinalIgnoreCase))
             {

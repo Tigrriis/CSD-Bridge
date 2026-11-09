@@ -15,7 +15,8 @@ namespace CsdBridge.BricsCAD
     /// AIPANEL    open the chat panel
     /// AIHISTORY  open the history of requests to Claude
     /// AIROUTINES open the routines: saved procedures to run, create, edit, rename or delete
-    /// AITURN     draw an AS/NZS 2890.1 B85/B99 vehicle swept path (turning template or along a path)
+    /// AITURN     draw an AS/NZS 2890.1 B85/B99 vehicle swept path (turning template, along a path, or driven)
+    /// AICLEARANCE check a design vehicle's ground clearance (Appendix C) on a long section or a surface
     /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
     /// AIEFFORT   choose how hard Claude works: Auto, Quick, Normal or Thorough
     /// AIMODEL    choose the Claude model: Opus, Sonnet or Haiku
@@ -237,6 +238,9 @@ namespace CsdBridge.BricsCAD
         public void AiRoutines() => Routines.RoutinesWindow.ShowWindow();
         [CommandMethod(Group, "AITURN", CommandFlags.Modal)]
         public void AiTurn() => TurnPathCommand.Run(CadApp.DocumentManager.MdiActiveDocument);
+
+        [CommandMethod(Group, "AICLEARANCE", CommandFlags.Modal)]
+        public void AiClearance() => GroundClearanceCommand.Run(CadApp.DocumentManager.MdiActiveDocument);
 
         [CommandMethod(Group, "AIRIBBON", CommandFlags.Modal)]
         public void AiRibbon()

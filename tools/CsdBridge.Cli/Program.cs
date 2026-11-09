@@ -191,6 +191,7 @@ catch (Exception ex)
 }
 
 extensions.Add(new TurnPathTools(host, turnPaths, turnPathsError));
+extensions.Add(new GroundClearanceTools(host, turnPaths, turnPathsError));
 var agent = new DraftingAgent(client, new ToolDispatcher(host), options, null, extensions);
 
 using var cts = new CancellationTokenSource();

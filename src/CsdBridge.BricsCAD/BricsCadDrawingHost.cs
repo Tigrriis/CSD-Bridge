@@ -20,7 +20,7 @@ namespace CsdBridge.BricsCAD
     /// BricsCAD's main thread, inside the AIDRAFT command (see <see cref="AgentRunner"/>),
     /// so the whole AI request is one UNDO step.
     /// </summary>
-    internal sealed class BricsCadDrawingHost : IDrawingHost, IBlockMaker
+    internal sealed class BricsCadDrawingHost : IDrawingHost, IBlockMaker, CsdBridge.Core.Vehicles.IGroundSurfaceProvider
     {
         private const int MaxListedNames = 5000;
         private const int MaxPolylinePoints = 500;
@@ -1452,6 +1452,18 @@ namespace CsdBridge.BricsCAD
             {
                 ((Entity)tr.GetObject(id, OpenMode.ForWrite)).TransformBy(matrix);
             }
+        }
+
+        // ============================================================== surfaces
+
+        public IReadOnlyList<string> SurfaceNames() => Csd.GroundSampler.SurfaceNames(_doc);
+
+        public Func<IReadOnlyList<Point2>, IReadOnlyList<double?>> Sampler(string? surfaceName, out string resolvedName)
+        {
+            // Check the surface exists now, so a bad name fails before any work is done.
+            Csd.GroundSampler.SampleMany(_doc, surfaceName, Array.Empty<Point2>(), out resolvedName);
+            string name = resolvedName;
+            return points => Csd.GroundSampler.SampleMany(_doc, name, points, out _);
         }
 
         // ================================================================ blocks

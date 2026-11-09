@@ -15,11 +15,28 @@ namespace CsdBridge.BricsCAD
     /// <summary>
     /// AITURN: draw an AS/NZS 2890.1 B85/B99 swept path. The dialog collects the options, then
     /// the command prompts for the geometry (start point and direction, a curve to follow, or
-    /// points), simulates the vehicle and draws the result through the same drawing host as
-    /// Claude's tools, so it lands on the configured layers and is one UNDO step.
+    /// destinations to drive to), simulates the vehicle and draws the result through the same
+    /// drawing host as Claude's tools, so it lands on the configured layers and is one UNDO step.
     /// </summary>
     internal static class TurnPathCommand
     {
+        /// <summary>One manoeuvre to draw: a template, a followed curve, or one leg of a drive.</summary>
+        private sealed class Leg
+        {
+            public Leg(TurnPathRequest request, string label, bool first)
+            {
+                Request = request;
+                Label = label;
+                First = first;
+            }
+
+            public TurnPathRequest Request { get; }
+            public string Label { get; }
+
+            /// <summary>The first manoeuvre gets the start vehicle and the label.</summary>
+            public bool First { get; }
+        }
+
         public static void Run(Document doc)
         {
             Editor ed = doc.Editor;
@@ -49,13 +66,13 @@ namespace CsdBridge.BricsCAD
             try
             {
                 var warnings = new List<string>();
-                List<(TurnPathRequest Request, string Label)>? runs = BuildRequests(ed, choice, warnings);
-                if (runs == null || runs.Count == 0)
+                List<Leg>? legs = BuildLegs(ed, choice, warnings);
+                if (legs == null || legs.Count == 0)
                 {
                     return;
                 }
 
-                Draw(doc, choice, runs, warnings);
+                Draw(doc, choice, legs, warnings);
             }
             catch (ArgumentException ex)
             {
@@ -68,80 +85,32 @@ namespace CsdBridge.BricsCAD
         }
 
         /// <summary>Prompts for the geometry the chosen manoeuvre needs. Null when the user cancels.</summary>
-        private static List<(TurnPathRequest, string)>? BuildRequests(Editor ed, TurnPathChoice c, List<string> warnings)
+        private static List<Leg>? BuildLegs(Editor ed, TurnPathChoice c, List<string> warnings)
         {
             DesignVehicle v = c.Vehicle;
-            var runs = new List<(TurnPathRequest, string)>();
+            var preview = new PreviewBuilder();
             switch (c.Mode)
             {
                 case TurnPathChoice.ManoeuvreMode.Template:
                 {
-                    PromptPointResult start = ed.GetPoint(new PromptPointOptions("\nStart point (centre of the rear axle of the parked vehicle): "));
-                    if (start.Status != PromptStatus.OK)
+                    if (!PickStartAndHeading(ed, v, "\nStart point (centre of the rear axle of the parked vehicle): ", out Point2 s, out double heading,
+                        (at, cursor) => preview.Specs(TurnPathBuilder.Template(TemplateFor(c, at, Math.Atan2(cursor.Y - at.Y, cursor.X - at.X), c.TurnAngles.Max())))))
                     {
                         return null;
                     }
 
-                    Point2 s = Wcs(ed, start.Value);
-                    Point3d startWcs = start.Value.TransformBy(ed.CurrentUserCoordinateSystem);
-                    // Preview the (largest) template as the direction swings with the cursor.
-                    double previewAngle = c.TurnAngles.Max();
-                    var jig = new TurnPathJig("\nDirection of travel (pick a point ahead of the vehicle): ", startWcs, null, cursor =>
-                    {
-                        if (Distance(s, cursor) < 1e-6)
-                        {
-                            return null;
-                        }
-
-                        return TurnPathBuilder.Template(new TurnTemplate
-                        {
-                            Vehicle = v,
-                            Start = s,
-                            Heading = Math.Atan2(cursor.Y - s.Y, cursor.X - s.X),
-                            Radius = c.Radius,
-                            TurnAngleDeg = previewAngle,
-                            Left = c.Left,
-                            LeadIn = c.LeadIn,
-                            LeadOut = c.LeadOut,
-                            Reference = c.Reference,
-                        });
-                    });
-                    PromptResult ahead = ed.Drag(jig);
-                    if (ahead.Status != PromptStatus.OK)
-                    {
-                        return null;
-                    }
-
-                    Point2 a = jig.Point2;
-                    if (Distance(s, a) < 1e-6)
-                    {
-                        throw new ArgumentException("The direction point must be away from the start point.");
-                    }
-
-                    double heading = Math.Atan2(a.Y - s.Y, a.X - s.X);
                     if (c.Radius < v.MinTurnRadius - 1e-9)
                     {
                         warnings.Add($"A {c.Radius:0.##} m radius is below the {v.Name}'s minimum of {v.MinTurnRadius:0.#} m (AS/NZS 2890.1 B3.1).");
                     }
 
+                    var legs = new List<Leg>();
                     foreach (double angle in c.TurnAngles)
                     {
-                        TurnPathRequest req = TurnPathBuilder.Template(new TurnTemplate
-                        {
-                            Vehicle = v,
-                            Start = s,
-                            Heading = heading,
-                            Radius = c.Radius,
-                            TurnAngleDeg = angle,
-                            Left = c.Left,
-                            LeadIn = c.LeadIn,
-                            LeadOut = c.LeadOut,
-                            Reference = c.Reference,
-                        });
-                        runs.Add((req, $"{v.Name} R{c.Radius:0.#} m"));
+                        legs.Add(new Leg(TurnPathBuilder.Template(TemplateFor(c, s, heading, angle)), $"{v.Name} R{c.Radius:0.#} m", first: true));
                     }
 
-                    break;
+                    return legs;
                 }
 
                 case TurnPathChoice.ManoeuvreMode.Follow:
@@ -164,81 +133,160 @@ namespace CsdBridge.BricsCAD
                     }
 
                     Path2 path = TurnPathBuilder.FromCurve(curves.Values.First(), Wcs(ed, res.PickedPoint));
-                    runs.Add((new TurnPathRequest { Vehicle = v, Path = path, Reference = v.Resolve(c.Reference, leftTurn: true), Reverse = c.Reverse }, v.Name));
-                    break;
+                    var req = new TurnPathRequest { Vehicle = v, Path = path, Reference = v.Resolve(c.Reference, leftTurn: true), Reverse = c.Reverse };
+                    return new List<Leg> { new Leg(req, v.Name, first: true) };
                 }
 
-                case TurnPathChoice.ManoeuvreMode.Points:
-                {
-                    VehiclePoint reference = v.Resolve(c.Reference, leftTurn: true);
-                    string what = c.Reference == ReferencePoint.RearAxle ? "rear axle centre" : c.Reference == ReferencePoint.FrontAxle ? "front axle centre" : "outer front wheel";
-                    var pts = new List<Point2>();
-                    PromptPointResult first = ed.GetPoint(new PromptPointOptions($"\nFirst point of the path (the {what} follows it): "));
-                    if (first.Status != PromptStatus.OK)
-                    {
-                        return null;
-                    }
+                case TurnPathChoice.ManoeuvreMode.Drive:
+                    return Drive(ed, c, preview, warnings);
 
-                    pts.Add(Wcs(ed, first.Value));
-                    Point3d last = first.Value.TransformBy(ed.CurrentUserCoordinateSystem);
-                    while (true)
-                    {
-                        // Preview the manoeuvre through the points so far plus the cursor.
-                        List<Point2> fixedPoints = pts;
-                        var jig = new TurnPathJig("\nNext point or [Undo] (Enter to finish): ", last, new[] { "Undo" }, cursor =>
-                        {
-                            if (Distance(fixedPoints[fixedPoints.Count - 1], cursor) < 0.05)
-                            {
-                                return null;
-                            }
-
-                            var trial = new List<Point2>(fixedPoints) { cursor };
-                            Path2 path = TurnPathBuilder.FromPoints(trial, c.Radius);
-                            return new TurnPathRequest { Vehicle = v, Path = path, Reference = reference, Reverse = c.Reverse };
-                        });
-                        PromptResult next = ed.Drag(jig);
-                        if (next.Status == PromptStatus.None)
-                        {
-                            break;
-                        }
-
-                        if (next.Status == PromptStatus.Keyword)
-                        {
-                            if (pts.Count > 1)
-                            {
-                                pts.RemoveAt(pts.Count - 1);
-                            }
-
-                            Point2 back = pts[pts.Count - 1];
-                            last = new Point3d(back.X, back.Y, 0);
-                            continue;
-                        }
-
-                        if (next.Status != PromptStatus.OK)
-                        {
-                            return null;
-                        }
-
-                        pts.Add(jig.Point2);
-                        last = jig.Point;
-                    }
-
-                    if (pts.Count < 2)
-                    {
-                        ed.WriteMessage("\nCSD-Bridge: at least two points are needed.\n");
-                        return null;
-                    }
-
-                    Path2 path = TurnPathBuilder.FromPoints(pts, c.Radius, warnings);
-                    runs.Add((new TurnPathRequest { Vehicle = v, Path = path, Reference = reference, Reverse = c.Reverse }, v.Name));
-                    break;
-                }
+                default:
+                    return null;
             }
-
-            return runs;
         }
 
-        private static void Draw(Document doc, TurnPathChoice c, List<(TurnPathRequest Request, string Label)> runs, List<string> warnings)
+        private static TurnTemplate TemplateFor(TurnPathChoice c, Point2 start, double heading, double angle) => new TurnTemplate
+        {
+            Vehicle = c.Vehicle,
+            Start = start,
+            Heading = heading,
+            Radius = c.Radius,
+            TurnAngleDeg = angle,
+            Left = c.Left,
+            LeadIn = c.LeadIn,
+            LeadOut = c.LeadOut,
+            Reference = c.Reference,
+        };
+
+        /// <summary>
+        /// Drive mode: each click is where the vehicle goes next. It turns at the chosen radius until
+        /// it points at the destination, then goes straight to it; forwards when the destination is
+        /// ahead, in reverse when it is behind. Every leg keeps its own swept path, so a three-point
+        /// turn is three legs. U takes the last leg back; Enter finishes.
+        /// </summary>
+        private static List<Leg>? Drive(Editor ed, TurnPathChoice c, PreviewBuilder preview, List<string> warnings)
+        {
+            DesignVehicle v = c.Vehicle;
+            if (!PickStartAndHeading(ed, v, "\nStart point (centre of the rear axle of the vehicle): ", out Point2 start, out double heading,
+                (at, cursor) => PreviewBuilder.Vehicle(v, new VehiclePose(at, Math.Atan2(cursor.Y - at.Y, cursor.X - at.X)))))
+            {
+                return null;
+            }
+
+            var pose = new VehiclePose(start, heading);
+            var legs = new List<(Leg Leg, VehiclePose End, List<EntitySpec> Graphics)>();
+            while (true)
+            {
+                VehiclePose from = pose;
+                var fixedGraphics = legs.SelectMany(l => l.Graphics).ToList();
+                if (legs.Count == 0)
+                {
+                    fixedGraphics.AddRange(PreviewBuilder.Vehicle(v, from));
+                }
+
+                var jig = new TurnPathJig(
+                    legs.Count == 0 ? "\nWhere the vehicle drives to (click ahead to go forward, behind to reverse): " : "\nNext destination or [Undo] (Enter to finish): ",
+                    new Point3d(from.RearAxle.X, from.RearAxle.Y, 0),
+                    legs.Count == 0 ? null : new[] { "Undo" },
+                    cursor =>
+                    {
+                        TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(v, from, cursor, c.Radius);
+                        return leg == null ? null : preview.Specs(leg.Request, startVehicle: false);
+                    },
+                    fixedGraphics);
+                PromptResult res = ed.Drag(jig);
+                if (res.Status == PromptStatus.None)
+                {
+                    break;
+                }
+
+                if (res.Status == PromptStatus.Keyword)
+                {
+                    if (legs.Count > 0)
+                    {
+                        legs.RemoveAt(legs.Count - 1);
+                        pose = legs.Count > 0 ? legs[legs.Count - 1].End : new VehiclePose(start, heading);
+                    }
+
+                    continue;
+                }
+
+                if (res.Status != PromptStatus.OK)
+                {
+                    return null;
+                }
+
+                TurnPathBuilder.DriveLeg? chosen = TurnPathBuilder.DriveTo(v, from, jig.Point2, c.Radius);
+                if (chosen == null)
+                {
+                    ed.WriteMessage("\nToo close to the vehicle to drive to; click further away.");
+                    continue;
+                }
+
+                // Simulate now so the next leg starts from the real end pose, and keep its graphics on screen.
+                TurnPathResult result = TurnPathSimulator.Simulate(CopyFor(chosen.Request, c));
+                pose = result.Poses[result.Poses.Count - 1];
+                string what = $"{(chosen.Reverse ? "reverse" : "forward")}, {(chosen.ArcDeg > 0.5 ? $"turn {(chosen.Left ? "left" : "right")} {chosen.ArcDeg:0}° then " : "")}{chosen.StraightLength:0.0} m straight";
+                ed.WriteMessage($"\n  Leg {legs.Count + 1}: {what}.");
+                legs.Add((new Leg(chosen.Request, v.Name, first: legs.Count == 0), pose, preview.Specs(CopyFor(chosen.Request, c), startVehicle: false)));
+            }
+
+            if (legs.Count == 0)
+            {
+                ed.WriteMessage("\nCSD-Bridge: no destinations were clicked, so nothing was drawn.\n");
+                return null;
+            }
+
+            return legs.Select(l => l.Leg).ToList();
+        }
+
+        /// <summary>A copy of a request with the conventions' step and the chosen clearances, so the original stays as built.</summary>
+        private static TurnPathRequest CopyFor(TurnPathRequest r, TurnPathChoice c) => new TurnPathRequest
+        {
+            Vehicle = r.Vehicle,
+            Path = r.Path,
+            Reference = r.Reference,
+            Reverse = r.Reverse,
+            InitialHeading = r.InitialHeading,
+            Step = c.Conventions.Step,
+            Tolerance = c.Conventions.Tolerance,
+            ClearanceInside = c.ClearanceInside,
+            ClearanceOutside = c.ClearanceOutside,
+        };
+
+        /// <summary>Start point, then the direction of travel from a second point, with a live preview.</summary>
+        private static bool PickStartAndHeading(Editor ed, DesignVehicle v, string startPrompt, out Point2 start, out double heading, Func<Point2, Point2, List<EntitySpec>?> previewAt)
+        {
+            start = default;
+            heading = 0;
+            PromptPointResult first = ed.GetPoint(new PromptPointOptions(startPrompt));
+            if (first.Status != PromptStatus.OK)
+            {
+                return false;
+            }
+
+            Point2 s = Wcs(ed, first.Value);
+            Point3d startWcs = first.Value.TransformBy(ed.CurrentUserCoordinateSystem);
+            var jig = new TurnPathJig("\nDirection of travel (pick a point ahead of the vehicle): ", startWcs, null,
+                cursor => Distance(s, cursor) < 1e-6 ? null : previewAt(s, cursor));
+            PromptResult ahead = ed.Drag(jig);
+            if (ahead.Status != PromptStatus.OK)
+            {
+                return false;
+            }
+
+            Point2 a = jig.Point2;
+            if (Distance(s, a) < 1e-6)
+            {
+                throw new ArgumentException("The direction point must be away from the start point.");
+            }
+
+            start = s;
+            heading = Math.Atan2(a.Y - s.Y, a.X - s.X);
+            return true;
+        }
+
+        private static void Draw(Document doc, TurnPathChoice c, List<Leg> legs, List<string> warnings)
         {
             Editor ed = doc.Editor;
             var host = new BricsCadDrawingHost(doc);
@@ -246,29 +294,30 @@ namespace CsdBridge.BricsCAD
             var drafted = new List<DraftedEntity>();
             var summary = new List<string>();
             Point2? blockBase = null;
-            foreach (var (req, label) in runs)
+            int n = 0;
+            foreach (Leg leg in legs)
             {
-                req.Step = conv.Step;
-                req.Tolerance = conv.Tolerance;
-                req.ClearanceInside = c.ClearanceInside;
-                req.ClearanceOutside = c.ClearanceOutside;
-                TurnPathResult result = TurnPathSimulator.Simulate(req);
-                warnings.AddRange(result.Warnings);
+                n++;
+                TurnPathResult result = TurnPathSimulator.Simulate(CopyFor(leg.Request, c));
+                warnings.AddRange(result.Warnings.Select(w => legs.Count > 1 ? $"Leg {n}: {w}" : w));
                 blockBase ??= result.Poses[0].RearAxle;
 
                 var style = new TurnPathStyle
                 {
                     Layers = c.Style.Layers,
-                    Draw = c.Style.Draw,
+                    Draw = c.Style.Draw.Clone(),
                     OutlineInterval = c.Style.OutlineInterval,
                     TextHeight = c.Style.TextHeight,
                     Hatch = c.Style.Hatch,
-                    Label = label,
+                    Label = leg.Label,
+                    SkipStartVehicle = !leg.First,
                 };
+                style.Draw.Labels = c.Style.Draw.Labels && leg.First;
                 drafted.AddRange(TurnPathDrafter.Draw(result, style));
 
                 string tightest = double.IsInfinity(result.TightestRadius) ? "straight" : $"tightest turn R {result.TightestRadius:0.00} m at the outer front wheel";
-                summary.Add($"{label}: path {result.PathLength:0.0} m, net turn {result.NetTurnDeg:0} deg, {tightest} (minimum {c.Vehicle.MinTurnRadius:0.0} m)" +
+                string name = legs.Count > 1 && c.Mode == TurnPathChoice.ManoeuvreMode.Drive ? $"Leg {n} ({(result.Reverse ? "reverse" : "forward")})" : leg.Label;
+                summary.Add($"{name}: path {result.PathLength:0.0} m, net turn {result.NetTurnDeg:0} deg, {tightest} (minimum {c.Vehicle.MinTurnRadius:0.0} m)" +
                             $", clearances {result.ClearanceLeft * 1000:0} mm left / {result.ClearanceRight * 1000:0} mm right");
             }
 
@@ -322,7 +371,6 @@ namespace CsdBridge.BricsCAD
             }
 
             ed.WriteMessage(blockNote);
-
             foreach (string w in warnings.Distinct())
             {
                 ed.WriteMessage("\n  Warning: " + w);
@@ -339,7 +387,7 @@ namespace CsdBridge.BricsCAD
         private static double Distance(Point2 a, Point2 b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
 
         /// <summary>Prompt results are in the current UCS; the simulator works in world coordinates.</summary>
-        private static Point2 Wcs(Editor ed, Point3d ucs)
+        internal static Point2 Wcs(Editor ed, Point3d ucs)
         {
             Point3d w = ucs.TransformBy(ed.CurrentUserCoordinateSystem);
             return new Point2(w.X, w.Y);
