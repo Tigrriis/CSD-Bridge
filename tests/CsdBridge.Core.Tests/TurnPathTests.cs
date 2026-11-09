@@ -475,6 +475,79 @@ namespace CsdBridge.Core.Tests
         }
 
         [Fact]
+        public void DriveToTurnsAtTheRadiusThenGoesStraight()
+        {
+            DesignVehicle v = DesignVehicle.B99;
+            var start = new VehiclePose(new Point2(0, 0), 0); // facing east, rear axle at the origin
+            TurnPathBuilder.DriveLeg leg = TurnPathBuilder.DriveTo(v, start, new Point2(20, 12))!;
+            Assert.False(leg.Reverse);
+            Assert.True(leg.Left);
+            Assert.Equal(2, leg.Request.Path.Segments.Count);
+            var arc = Assert.IsType<ArcSegment>(leg.Request.Path.Segments[0]);
+            var line = Assert.IsType<LineSegment>(leg.Request.Path.Segments[1]);
+            // The front axle centre starts the path and arrives at the destination.
+            Assert.Equal(0, Dist(leg.Request.Path.Start, new Point2(v.Wheelbase, 0)), 1e-9);
+            Assert.Equal(0, Dist(leg.Request.Path.End, new Point2(20, 12)), 1e-9);
+            Assert.Equal(v.RadiusOfPoint(v.MinTurnRadius, v.FrontAxleCentre, true), arc.Radius, 9);
+            // The straight is tangent to the arc: same direction at the join.
+            Assert.Equal(arc.TangentAt(arc.Length), Math.Atan2(line.Q.Y - line.P.Y, line.Q.X - line.P.X), 6);
+
+            // Driving it, the vehicle ends at the destination with the wheels never past full lock.
+            TurnPathResult r = TurnPathSimulator.Simulate(leg.Request);
+            Assert.True(r.WithinMinimumRadius);
+            Assert.Equal(0, Dist(r.Poses[r.Poses.Count - 1].ToWorld(v.FrontAxleCentre), new Point2(20, 12)), 0.03);
+        }
+
+        [Fact]
+        public void DriveToReversesForPointsBehindAndGoesRoundForPointsInsideTheCircle()
+        {
+            DesignVehicle v = DesignVehicle.B99;
+            var start = new VehiclePose(new Point2(0, 0), Math.PI / 2); // facing north
+
+            TurnPathBuilder.DriveLeg back = TurnPathBuilder.DriveTo(v, start, new Point2(2, -8))!;
+            Assert.True(back.Reverse);
+            Assert.Equal(0, Dist(back.Request.Path.Start, new Point2(0, 0)), 1e-9); // the rear axle drives in reverse
+            Assert.Equal(0, Dist(back.Request.Path.End, new Point2(2, -8)), 1e-9);
+            TurnPathResult rb = TurnPathSimulator.Simulate(back.Request);
+            Assert.True(rb.Reverse);
+            Assert.Equal(0, Dist(rb.Poses[rb.Poses.Count - 1].RearAxle, new Point2(2, -8)), 0.03);
+
+            // A point just to the left, inside the left turning circle: the car turns right, most of the way round.
+            TurnPathBuilder.DriveLeg around = TurnPathBuilder.DriveTo(v, start, new Point2(-2, v.Wheelbase + 1))!;
+            Assert.False(around.Left);
+            Assert.True(around.ArcDeg > 180);
+
+            // Too close to move: nothing. Too tight a radius: refused.
+            Assert.Null(TurnPathBuilder.DriveTo(v, start, new Point2(0, v.Wheelbase)));
+            Assert.Throws<ArgumentException>(() => TurnPathBuilder.DriveTo(v, start, new Point2(10, 10), 4));
+            // A forced direction is honoured.
+            Assert.True(TurnPathBuilder.DriveTo(v, start, new Point2(10, 10), reverse: true)!.Reverse);
+        }
+
+        [Fact]
+        public void ThreePointTurnLegsChainFromEachOthersEndPose()
+        {
+            DesignVehicle v = DesignVehicle.B99;
+            var pose = new VehiclePose(new Point2(0, 0), 0);
+            var targets = new[] { new Point2(8, 4), new Point2(4, 2), new Point2(0, 6) };
+            var results = new List<TurnPathResult>();
+            foreach (Point2 t in targets)
+            {
+                TurnPathBuilder.DriveLeg leg = TurnPathBuilder.DriveTo(v, pose, t)!;
+                TurnPathResult r = TurnPathSimulator.Simulate(leg.Request);
+                Assert.True(r.WithinMinimumRadius);
+                results.Add(r);
+                pose = r.Poses[r.Poses.Count - 1];
+            }
+
+            Assert.False(results[0].Reverse);
+            Assert.True(results[1].Reverse);
+            // Each leg keeps its own swept path; the middle one starts where the first ended.
+            Assert.Equal(0, Dist(results[1].Poses[0].RearAxle, results[0].Poses[results[0].Poses.Count - 1].RearAxle), 1e-9);
+            Assert.All(results, r => Assert.True(r.LeftBody.Count > 3 && r.RightBody.Count > 3));
+        }
+
+        [Fact]
         public void CurveIsRunFromTheEndNearestThePick()
         {
             var spec = new LineSpec { Start = new Point2(0, 0), End = new Point2(20, 0) };
@@ -639,6 +712,24 @@ namespace CsdBridge.Core.Tests
         }
 
         [Fact]
+        public void ToolPointsModeDrivesLegByLeg()
+        {
+            var host = new InMemoryDrawingHost("Meters");
+            var tools = new TurnPathTools(host, Conventions());
+            // Start at the origin facing east; forward to (10,6), reverse to (6,4), forward to (12,12).
+            using JsonDocument doc = Run(tools, "{\"mode\":\"points\",\"points\":[[0,0],[10,6],[6,4],[12,12]],\"heading_deg\":0}", out _);
+            JsonElement legs = doc.RootElement.GetProperty("legs");
+            Assert.Equal(3, legs.GetArrayLength());
+            Assert.Contains("forward", legs[0].GetString());
+            Assert.Contains("reverse", legs[1].GetString());
+            Assert.True(doc.RootElement.GetProperty("within_minimum_radius").GetBoolean());
+            // Three legs: three end vehicles plus the start vehicle (7 entities each), one label.
+            Assert.Equal(4 * 7, doc.RootElement.GetProperty("drawn").GetProperty("vehicle").GetArrayLength());
+            Assert.Equal(1, doc.RootElement.GetProperty("drawn").GetProperty("labels").GetArrayLength());
+            Assert.True(doc.RootElement.GetProperty("drawn").GetProperty("swept_path").GetArrayLength() >= 6); // two lines per leg, long ones split
+        }
+
+        [Fact]
         public void ToolRejectsBadInput()
         {
             var tools = new TurnPathTools(new InMemoryDrawingHost("Meters"), Conventions());
@@ -648,6 +739,7 @@ namespace CsdBridge.Core.Tests
                 "{\"mode\":\"template\",\"start\":[0,0],\"heading_deg\":0,\"vehicle\":\"TRUCK\"}",
                 "{\"mode\":\"follow\",\"handle\":\"ZZZ\"}",
                 "{\"mode\":\"points\",\"points\":[[0,0]]}",
+                "{\"mode\":\"points\",\"points\":[[0,0],[10,0]],\"radius\":3}",
                 "{\"mode\":\"template\",\"start\":[0,0],\"heading_deg\":0,\"layers\":{\"kerb\":\"X\"}}",
                 "{\"mode\":\"sideways\"}",
             })

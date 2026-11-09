@@ -15,7 +15,7 @@ namespace CsdBridge.BricsCAD
         {
             Template,
             Follow,
-            Points,
+            Drive,
         }
 
         public DesignVehicle Vehicle { get; set; } = DesignVehicle.B99;
@@ -116,7 +116,7 @@ namespace CsdBridge.BricsCAD
             TableLayoutPanel manoeuvre = Table(3);
             _modeTemplate = new RadioButton { Text = "Standard turn template: pick the start point and direction", AutoSize = true, Checked = true };
             _modeFollow = new RadioButton { Text = "Follow a line, arc or polyline you select", AutoSize = true };
-            _modePoints = new RadioButton { Text = "Drive through points you click (corners get arcs)", AutoSize = true };
+            _modePoints = new RadioButton { Text = "Drive: click where it goes next (turns at the radius; behind = reverse; each leg kept)", AutoSize = true };
             foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints })
             {
                 rb.Margin = new Padding(3, 2, 3, 2);
@@ -452,12 +452,14 @@ namespace CsdBridge.BricsCAD
         {
             bool template = _modeTemplate.Checked, points = _modePoints.Checked;
             _radius.Enabled = template || points;
-            _radiusLabel.Text = points ? "Corner radius (m)" : "Turn radius (m)";
+            _radiusLabel.Text = "Turn radius (m)";
             _angles.Enabled = template;
             _left.Enabled = _right.Enabled = template;
             _leadIn.Enabled = _leadOut.Enabled = template;
-            _reverse.Enabled = !template;
-            if (template)
+            // Drive mode decides forward/reverse and the reference point from where you click.
+            _reverse.Enabled = !template && !points;
+            _reference.Enabled = !points;
+            if (template || points)
             {
                 _reverse.Checked = false;
             }
@@ -484,7 +486,7 @@ namespace CsdBridge.BricsCAD
             var c = new TurnPathChoice
             {
                 Vehicle = vehicle,
-                Mode = _modeTemplate.Checked ? TurnPathChoice.ManoeuvreMode.Template : _modeFollow.Checked ? TurnPathChoice.ManoeuvreMode.Follow : TurnPathChoice.ManoeuvreMode.Points,
+                Mode = _modeTemplate.Checked ? TurnPathChoice.ManoeuvreMode.Template : _modeFollow.Checked ? TurnPathChoice.ManoeuvreMode.Follow : TurnPathChoice.ManoeuvreMode.Drive,
                 Left = _left.Checked,
                 Reverse = _reverse.Checked,
                 Reference = _reference.SelectedIndex == 2 ? ReferencePoint.RearAxle : _reference.SelectedIndex == 1 ? ReferencePoint.FrontAxle : ReferencePoint.OuterFrontWheel,
@@ -496,6 +498,12 @@ namespace CsdBridge.BricsCAD
                 if (!TryNum(_radius.Text, out double radius) || radius <= 0)
                 {
                     problem = "Enter a radius in metres.";
+                    return false;
+                }
+
+                if (c.Mode == TurnPathChoice.ManoeuvreMode.Drive && radius < vehicle.MinTurnRadius - 1e-9)
+                {
+                    problem = $"The {vehicle.Name} can't turn tighter than {Num(vehicle.MinTurnRadius)} m (outer front wheel, AS/NZS 2890.1 B3.1).";
                     return false;
                 }
 

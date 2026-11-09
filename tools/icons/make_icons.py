@@ -156,6 +156,25 @@ def turn_path():
     return img
 
 
+def clearance():
+    """A car in side view clearing a hump in the ground."""
+    img, d = canvas()
+    GROUND = (120, 90, 60, 255)
+    # ground with a hump
+    d.polygon([(8, 236), (8, 200), (70, 200), (128, 150), (186, 200), (248, 200), (248, 236)], fill=GROUND)
+    # chassis line and body
+    d.rounded_rectangle((30, 90, 226, 152), radius=20, fill=BLUE, outline=BLUE_DARK, width=OUTLINE)
+    d.rounded_rectangle((78, 50, 190, 100), radius=18, fill=BLUE, outline=BLUE_DARK, width=OUTLINE)
+    d.rectangle((78, 90, 190, 100), fill=BLUE)
+    # wheels on the ground either side of the hump
+    for cx in (62, 194):
+        d.ellipse((cx - 26, 148, cx + 26, 200), fill=GREY, outline=BLUE_DARK, width=OUTLINE)
+    # the clearance under the body at the crest, in red
+    d.line([(128, 152), (128, 150)], fill=(205, 55, 45, 255), width=6)
+    d.polygon([(110, 170), (146, 170), (128, 152)], fill=(205, 55, 45, 255))
+    return img
+
+
 ICONS = {
     "chat": chat,
     "draft": draft,
@@ -166,6 +185,7 @@ ICONS = {
     "key": key,
     "scalebar": scale_bar,
     "turnpath": turn_path,
+    "clearance": clearance,
 }
 
 

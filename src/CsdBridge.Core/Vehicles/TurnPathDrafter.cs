@@ -24,6 +24,9 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Label text at the start position; null = the vehicle name.</summary>
         public string? Label { get; set; }
 
+        /// <summary>Leave out the vehicle at the start (it is the end of the previous leg).</summary>
+        public bool SkipStartVehicle { get; set; }
+
         public static TurnPathStyle From(TurnPathConventions c) => new TurnPathStyle
         {
             Layers = c.Layers.Clone(),
@@ -115,7 +118,11 @@ namespace CsdBridge.Core.Vehicles
             if (draw.Vehicle)
             {
                 VehiclePose start = r.Poses[0], end = r.Poses[r.Poses.Count - 1];
-                AddVehicle(list, "vehicle", v, start, layers.Vehicle, wheels: true);
+                if (!style.SkipStartVehicle)
+                {
+                    AddVehicle(list, "vehicle", v, start, layers.Vehicle, wheels: true);
+                }
+
                 AddVehicle(list, "vehicle", v, end, layers.Vehicle, wheels: true);
             }
 
@@ -197,6 +204,14 @@ namespace CsdBridge.Core.Vehicles
                     break;
                 }
             }
+        }
+
+        /// <summary>The vehicle outline (and wheels and axles) at a pose, as entities on a layer.</summary>
+        public static List<EntitySpec> VehicleOutline(DesignVehicle v, VehiclePose pose, string layer, bool wheels)
+        {
+            var list = new List<DraftedEntity>();
+            AddVehicle(list, "vehicle", v, pose, layer, wheels);
+            return list.Select(d => d.Spec).ToList();
         }
 
         private static void AddVehicle(List<DraftedEntity> list, string group, DesignVehicle v, VehiclePose pose, string layer, bool wheels)

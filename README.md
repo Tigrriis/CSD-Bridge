@@ -62,7 +62,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 179 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 198 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -189,7 +189,8 @@ with `-Remove`.
 | `AIPANEL` | Open the chat panel (Enter sends, Shift+Enter for a new line, Stop cancels) |
 | `AIROUTINES` | Open the Routines window: run, create, edit, rename, duplicate or delete routines |
 | `AIHISTORY` | Open the history window: every request and what Claude did |
-| `AITURN` | Draw an AS/NZS 2890.1 B85 or B99 vehicle swept path: a turning template, a vehicle driven along a selected line/polyline, or through clicked points. Opens a dialog for the vehicle, radius, clearances, what to draw and the layers. |
+| `AITURN` | Draw an AS/NZS 2890.1 B85 or B99 vehicle swept path: a turning template, a vehicle driven along a selected line/polyline, or driven click by click (forward and reverse legs). Opens a dialog for the vehicle, radius, clearances, what to draw and the layers. |
+| `AICLEARANCE` | Check a B85 or B99 car's ground clearance (AS/NZS 2890.1 Appendix C): slide the template along a plotted long section, or drive along a path and check each side of the car against a BricsCAD TIN surface, with wheel path long sections plotted. |
 | `AIEFFORT` | Choose how hard Claude works: Auto, Quick, Normal or Thorough (also the Effort box in the chat panel) |
 | `AIMODEL` | Choose the model: Opus, Sonnet or Haiku (also the Model box in the chat panel) |
 | `AIRESET` | New conversation for this drawing; reloads settings |
@@ -202,8 +203,8 @@ with `-Remove`.
 | `AISCALEBARS` | Add a scale bar block to every layout for each viewport scale on it. Runs in the add-in, so it doesn't call Claude or cost anything. See [Scale bars](#scale-bars). |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft, Routines and History buttons, small New chat,
-Status and API key buttons, a Scale Bars button in the Sheets panel, and a **Turn path** button (`AITURN`) in the
-Vehicles panel. It's added when the add-in loads. If your workspace hides the
+Status and API key buttons, a Scale Bars button in the Sheets panel, and **Turn path** (`AITURN`) and
+**Clearance** (`AICLEARANCE`) buttons in the Vehicles panel. It's added when the add-in loads. If your workspace hides the
 ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
 ## Settings
@@ -379,10 +380,10 @@ vehicles. `AITURN` (ribbon: **Vehicles > Turn path**) opens a dialog, then promp
 |---|---|---|
 | **Standard turn template** | Start point (centre of the rear axle of the parked car) and the direction of travel | A single turn at the nominated radius, measured at the outer front wheel as in Paragraph B3.1 (default the vehicle's minimum: B99 6.3 m, B85 5.8 m), through the turn angle(s) you enter (`90`, or `30,60,90,120,150,180` for a fan like Figures B3 to B6), left or right, with straight travel before and after. |
 | **Follow a line, arc or polyline** | The curve, near the end the vehicle starts from | Drives the vehicle along it, forwards (the front axle centre follows the line, the rear axle tracks in behind) or in reverse (the rear axle follows the line). Use it to check a driveway, ramp or aisle you have already drawn. |
-| **Through points** | Two or more points | Builds a path with tangent corner arcs of the corner radius you enter and drives the vehicle along it. Corners without room for the radius get a smaller one, and the command says so. Type `U` to take back the last point. |
+| **Drive** | The start point and direction, then where the vehicle goes next, click by click | Each click is a destination. The car turns at the turn radius (never tighter than the vehicle can steer) until it points at the destination, then drives straight to it; a click ahead goes forward, a click behind reverses. Every leg keeps its own swept path, so a three-point turn is three clicks. Type `U` to take back the last leg, Enter to finish. |
 
-While you pick the direction of a template, or the next point of a path, the swept path, clearances,
-driven path and end vehicle are previewed live under the cursor (at a coarser step than the final result).
+While you pick the direction, or the next destination, the swept path, clearances, driven path and vehicle
+are previewed live under the cursor (at a coarser step than the final result), with the earlier legs kept on screen.
 
 What is drawn, each part on its own configurable layer:
 
@@ -424,6 +425,29 @@ when a layer doesn't exist yet. The dialog can change all of it per run; **Save 
 **In chat.** Claude has the same simulator as `draw_turn_path`: *"check a B99 can get into the
 driveway on the kerb return I just drew"* or *"add B85 turning templates at 5.8 m for each aisle
 end"*. It can also run it as a dry run and report the tightest radius without drawing.
+
+### Ground clearance (Appendix C)
+
+`AICLEARANCE` (ribbon: **Vehicles > Clearance**) checks that the car's underside clears a grade change: a
+ramp, hump, dip or gutter. The template is Figure C1: 120 mm clearance under the body between the axles,
+and an underside rising at the 10° approach and departure angles over the overhangs (Paragraph B5). It is
+placed with both wheels on the ground and slid along in small steps; it must never fall below the ground.
+
+- **2D, on a plotted long section**: select the plotted profile polyline and give its vertical exaggeration
+  (and horizontal scale if the plot isn't 1 drawing unit per metre). The template is run both ways along the
+  section, since the two overhangs differ. The template is drawn at its worst position in each direction, the
+  ground it touches is marked, and a label gives the smallest gap (or how far it grounds).
+- **3D, on a surface**: select the line or polyline the vehicle drives (forwards or in reverse). At every
+  position the surface is sampled along each side of the car, from the rear extremity through both wheels to
+  the front extremity, and the template is placed on that side's wheels. Grounding spots are ringed on the plan,
+  and each wheel path can be plotted as a long section with the template at its worst position. It reads
+  BricsCAD TIN surfaces; for a CSD surface make a BricsCAD copy with Surface Exchange first.
+- The clearance and angles are editable per run (Appendix C, Note: lower the underside for a lesser clearance),
+  and saved with the other defaults. Layers: templates and plots, where it grounds, labels.
+
+In chat, `check_ground_clearance` does the same from a plotted section, a `ground_id` from
+`sample_ground_profile`/`sample_csd_ground` (so CSD surfaces work along any line, wheel paths included), or a
+path on a BricsCAD surface.
 
 ## Saving work between chats
 

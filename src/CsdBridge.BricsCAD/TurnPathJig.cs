@@ -14,38 +14,31 @@ namespace CsdBridge.BricsCAD
     /// <summary>
     /// Live preview while the user picks a point for AITURN: as the cursor moves, the manoeuvre
     /// that point would give is simulated (at a coarser step than the final result) and its
-    /// swept path, clearance lines, driven path and end vehicle are drawn as temporary graphics.
-    /// Points acquired by a jig are in world coordinates.
+    /// swept path, clearance lines, driven path and end vehicle are drawn as temporary graphics,
+    /// along with anything already decided (earlier legs of a drive). Points acquired by a jig
+    /// are in world coordinates.
     /// </summary>
     internal sealed class TurnPathJig : DrawJig
     {
-        private const short SweptColour = 1;       // red
-        private const short ClearanceColour = 8;   // grey
-        private const short VehicleColour = 4;     // cyan
-        private const short PathColour = 3;        // green
-
-        private readonly Func<Point2, TurnPathRequest?> _build;
+        private readonly Func<Point2, List<EntitySpec>?> _preview;
+        private readonly IReadOnlyList<EntitySpec> _fixed;
         private readonly string _message;
         private readonly Point3d? _basePoint;
         private readonly IReadOnlyList<string> _keywords;
-        private readonly TurnPathStyle _style;
         private Point3d _current;
         private bool _hasPoint;
-        private List<EntitySpec> _preview = new List<EntitySpec>();
-        private double _lastSimulationMs;
+        private List<EntitySpec> _live = new List<EntitySpec>();
 
-        /// <param name="build">The simulation request for a cursor position, or null when there is nothing to show yet.</param>
+        /// <param name="preview">Temporary graphics for a cursor position, or null for none.</param>
+        /// <param name="fixedGraphics">Temporary graphics drawn whatever the cursor does (earlier legs).</param>
         /// <param name="basePoint">World point for the rubber-band line, if any.</param>
-        public TurnPathJig(string message, Point3d? basePoint, IReadOnlyList<string>? keywords, Func<Point2, TurnPathRequest?> build)
+        public TurnPathJig(string message, Point3d? basePoint, IReadOnlyList<string>? keywords, Func<Point2, List<EntitySpec>?> preview, IReadOnlyList<EntitySpec>? fixedGraphics = null)
         {
             _message = message;
             _basePoint = basePoint;
             _keywords = keywords ?? Array.Empty<string>();
-            _build = build;
-            _style = new TurnPathStyle
-            {
-                Draw = new TurnPathDrawOptions { SweptPath = true, Clearance = true, Vehicle = true, Path = true, WheelPaths = false, Labels = false, Hatch = false },
-            };
+            _preview = preview;
+            _fixed = fixedGraphics ?? Array.Empty<EntitySpec>();
         }
 
         /// <summary>The last point the cursor was at (world coordinates).</summary>
@@ -84,24 +77,66 @@ namespace CsdBridge.BricsCAD
 
             _current = res.Value;
             _hasPoint = true;
-            Update();
+            try
+            {
+                _live = _preview(Point2) ?? new List<EntitySpec>();
+            }
+            catch (Exception)
+            {
+                _live = new List<EntitySpec>();
+            }
+
             return SamplerStatus.OK;
         }
 
-        private void Update()
+        protected override bool WorldDraw(WorldDraw draw)
         {
-            TurnPathRequest? req = null;
-            try
+            foreach (EntitySpec spec in _fixed.Concat(_live))
             {
-                req = _build(Point2);
-                if (req == null)
+                Entity? ent = BricsCadDrawingHost.PreviewEntity(spec);
+                if (ent == null)
                 {
-                    _preview = new List<EntitySpec>();
-                    return;
+                    continue;
                 }
 
-                // Coarser than the final drawing, and coarser still when the last run was slow, so
-                // the preview keeps up with the cursor.
+                using (ent)
+                {
+                    ent.ColorIndex = PreviewBuilder.ColourFor(spec);
+                    draw.Geometry.Draw(ent);
+                }
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Makes the temporary graphics for previews: a quick simulation of a request, or just the
+    /// vehicle at a pose. The simulation step is coarser than the final drawing's, and coarser
+    /// still when the last run was slow, so the preview keeps up with the cursor.
+    /// </summary>
+    internal sealed class PreviewBuilder
+    {
+        private const short SweptColour = 1;       // red
+        private const short ClearanceColour = 8;   // grey
+        private const short VehicleColour = 4;     // cyan
+        private const short PathColour = 3;        // green
+
+        private static readonly TurnPathLayers Layers = new TurnPathLayers();
+
+        private readonly TurnPathStyle _style = new TurnPathStyle
+        {
+            Layers = Layers,
+            Draw = new TurnPathDrawOptions { SweptPath = true, Clearance = true, Vehicle = true, Path = true, WheelPaths = false, Labels = false, Hatch = false },
+        };
+
+        private double _lastSimulationMs;
+
+        /// <summary>Simulates the request coarsely and returns its graphics; on failure, just the path.</summary>
+        public List<EntitySpec> Specs(TurnPathRequest req, bool startVehicle = true)
+        {
+            try
+            {
                 double step = Math.Max(0.1, req.Path.Length / 250);
                 if (_lastSimulationMs > 120)
                 {
@@ -113,49 +148,33 @@ namespace CsdBridge.BricsCAD
                 var watch = Stopwatch.StartNew();
                 TurnPathResult result = TurnPathSimulator.Simulate(req);
                 _lastSimulationMs = watch.Elapsed.TotalMilliseconds;
-                _preview = TurnPathDrafter.Draw(result, _style).Select(d => d.Spec).ToList();
+                _style.SkipStartVehicle = !startVehicle;
+                return TurnPathDrafter.Draw(result, _style).Select(d => d.Spec).ToList();
             }
             catch (Exception)
             {
-                // The path can't be driven yet (too short, doubles back...): show just the path.
-                _preview = req == null ? new List<EntitySpec>() : new List<EntitySpec> { Core.Geometry.PathOps.ToSpec(req.Path) };
+                return new List<EntitySpec> { Core.Geometry.PathOps.ToSpec(req.Path) };
             }
         }
 
-        protected override bool WorldDraw(WorldDraw draw)
-        {
-            foreach (EntitySpec spec in _preview)
-            {
-                Entity? ent = BricsCadDrawingHost.PreviewEntity(spec);
-                if (ent == null)
-                {
-                    continue;
-                }
+        /// <summary>The vehicle outline with wheels at a pose.</summary>
+        public static List<EntitySpec> Vehicle(DesignVehicle v, VehiclePose pose) =>
+            TurnPathDrafter.VehicleOutline(v, pose, Layers.Vehicle, wheels: true);
 
-                using (ent)
-                {
-                    ent.ColorIndex = ColourFor(spec);
-                    draw.Geometry.Draw(ent);
-                }
-            }
-
-            return true;
-        }
-
-        private short ColourFor(EntitySpec spec)
+        public static short ColourFor(EntitySpec spec)
         {
             string layer = spec.Layer ?? "";
-            if (layer == _style.Layers.Clearance)
+            if (layer == Layers.Clearance)
             {
                 return ClearanceColour;
             }
 
-            if (layer == _style.Layers.Vehicle || layer == _style.Layers.VehicleIntermediate)
+            if (layer == Layers.Vehicle || layer == Layers.VehicleIntermediate)
             {
                 return VehicleColour;
             }
 
-            if (layer == _style.Layers.Path)
+            if (layer == Layers.Path)
             {
                 return PathColour;
             }

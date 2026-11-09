@@ -11,6 +11,8 @@
 //   min_turn_radius           smallest template radius, at the outer front wheel (B3.1)
 //   clearance_inside/outside  B3.2: 300 mm manoeuvring both sides; B99 adds 300 mm circulation
 //                             clearance on the outside
+//   ground_clearance          Appendix C / B5: 120 mm under the body between the axles
+//   approach/departure_angle  B5: the underside rises at 10 degrees over the overhangs
 // Add your own vehicles (a service vehicle, say) as more entries with the same fields.
 //
 // Layers: {vehicle} in a layer name is replaced by the vehicle's name, e.g.
@@ -35,6 +37,9 @@
       "min_turn_radius": 6.3,
       "clearance_inside": 0.3,
       "clearance_outside": 0.6,
+      "ground_clearance": 0.12,
+      "approach_angle_deg": 10,
+      "departure_angle_deg": 10,
       "wheel_length": 0.65,
       "wheel_width": 0.22
     },
@@ -52,6 +57,9 @@
       "min_turn_radius": 5.8,
       "clearance_inside": 0.3,
       "clearance_outside": 0.3,
+      "ground_clearance": 0.12,
+      "approach_angle_deg": 10,
+      "departure_angle_deg": 10,
       "wheel_length": 0.65,
       "wheel_width": 0.22
     }
@@ -71,6 +79,12 @@
 
   // Label text height in drawing units (null = the drawing's default).
   "text_height": 0.3,
+
+  // Ground clearance check (AICLEARANCE): template step along a section, position interval along a
+  // path on a surface, and the default vertical exaggeration of long section plots.
+  "clearance_step": 0.05,
+  "clearance_pose_interval": 0.1,
+  "section_vertical_exaggeration": 1,
 
   "draw": {
     "swept_path": true,
@@ -95,7 +109,9 @@
     "wheel_paths": "AE CIV PLN - VEHICLE WHEEL PATHS",
     "labels": "AE CIV PLN - VEHICLE TEXT",
     "hatch": "AE CIV HTC - VEHICLE SWEPT PATH",
-    "block": "AE CIV PLN - VEHICLE BLOCK"
+    "block": "AE CIV PLN - VEHICLE BLOCK",
+    "clearance_check": "AE CIV PLN - VEHICLE GROUND CLEARANCE",
+    "clearance_fail": "AE CIV PLN - VEHICLE GROUND CLEARANCE FAIL"
   },
 
   "hatch": { "pattern": "SOLID", "scale": 1, "angle": 0 },
@@ -109,6 +125,8 @@
     "AE CIV PLN - VEHICLE WHEEL PATHS": { "color": 8, "linetype": "Continuous", "lineweight": 0.13, "description": "Design vehicle wheel paths" },
     "AE CIV PLN - VEHICLE TEXT": { "color": 4, "lineweight": 0.18, "description": "Design vehicle labels" },
     "AE CIV HTC - VEHICLE SWEPT PATH": { "color": 254, "rgb": [ 255, 220, 220 ], "lineweight": 0.13, "description": "Design vehicle swept area" },
-    "AE CIV PLN - VEHICLE BLOCK": { "color": 7, "lineweight": 0.25, "description": "Design vehicle turning path blocks" }
+    "AE CIV PLN - VEHICLE BLOCK": { "color": 7, "lineweight": 0.25, "description": "Design vehicle turning path blocks" },
+    "AE CIV PLN - VEHICLE GROUND CLEARANCE": { "color": 4, "lineweight": 0.25, "description": "Design vehicle ground clearance check (AS/NZS 2890.1 Appendix C)" },
+    "AE CIV PLN - VEHICLE GROUND CLEARANCE FAIL": { "color": 1, "lineweight": 0.5, "description": "Design vehicle ground clearance check: where it grounds" }
   }
 }

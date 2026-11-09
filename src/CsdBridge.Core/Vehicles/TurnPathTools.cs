@@ -36,9 +36,12 @@ namespace CsdBridge.Core.Vehicles
                     "'template' = a standard single turn from a start point (rear axle centre) and heading, at a radius measured at the " +
                     "outer front wheel (default the vehicle's minimum: B99 6.3 m, B85 5.8 m), through turn_angle_deg left or right, with " +
                     "straight lead_in/lead_out; 'follow' = drive the vehicle along an existing line, arc or polyline (handle), from the end " +
-                    "nearest 'start' or the curve's start, forwards or in reverse; 'points' = drive through points with tangent corner arcs " +
-                    "of 'radius' (default the vehicle's minimum). The reference point that follows the path is the outer front wheel for " +
-                    "templates and the front axle centre otherwise (rear axle when reversing); the rear axle tracks in behind it. Returns " +
+                    "nearest 'start' or the curve's start, forwards or in reverse; 'points' = drive like a car: points[0] is the rear axle " +
+                    "at the start (heading_deg, default towards the next point), and each later point is a destination it turns to at " +
+                    "'radius' (never tighter than it can steer) then drives straight to, forwards if ahead, in reverse if behind; each leg " +
+                    "keeps its own swept path, so a three-point turn is three points. The reference point that follows the path is the " +
+                    "outer front wheel for templates and the front axle centre otherwise (rear axle when reversing); the rear axle tracks " +
+                    "in behind it. Returns " +
                     "the tightest radius used and whether it meets the vehicle's minimum, the net turn, the handles drawn by part and the " +
                     "extents. Use dry_run to check a manoeuvre without drawing. Layers come from turn-paths.json; override any with " +
                     "'layers'. draw.block gathers the result into a block (named after the vehicle, inserted at its start point on the " +
@@ -47,13 +50,13 @@ namespace CsdBridge.Core.Vehicles
                     "\"vehicle\":{\"type\":\"string\",\"description\":\"" + vehicles + ". Default the conventions' default (B99).\"}," +
                     "\"mode\":{\"type\":\"string\",\"enum\":[\"template\",\"follow\",\"points\"]}," +
                     "\"start\":" + Point + "," +
-                    "\"heading_deg\":{\"type\":\"number\",\"description\":\"Template: direction of travel at the start, degrees anticlockwise from +X.\"}," +
-                    "\"radius\":{\"type\":\"number\",\"description\":\"Template: turn radius at the outer front wheel. Points: corner radius of the reference point's path.\"}," +
+                    "\"heading_deg\":{\"type\":\"number\",\"description\":\"Template and points: direction the vehicle faces at the start, degrees anticlockwise from +X (points: default towards the second point).\"}," +
+                    "\"radius\":{\"type\":\"number\",\"description\":\"Turn radius at the outer front wheel (template and points); default the vehicle's minimum, and points can't go below it.\"}," +
                     "\"turn_angle_deg\":{\"type\":\"number\",\"description\":\"Template: change of direction (default 90).\"}," +
                     "\"direction\":{\"type\":\"string\",\"enum\":[\"left\",\"right\"],\"description\":\"Template: which way it turns (default left).\"}," +
                     "\"lead_in\":{\"type\":\"number\"},\"lead_out\":{\"type\":\"number\",\"description\":\"Template: straight travel before/after the turn (default 0 and 6).\"}," +
                     "\"handle\":{\"type\":\"string\",\"description\":\"Follow: the curve to drive along.\"}," +
-                    "\"reverse\":{\"type\":\"boolean\",\"description\":\"Follow/points: travel backwards along the path.\"}," +
+                    "\"reverse\":{\"type\":\"boolean\",\"description\":\"Follow: travel backwards along the path. Points: force every leg forwards (false) or in reverse (true); default by where each point is.\"}," +
                     "\"points\":{\"type\":\"array\",\"items\":" + Point + ",\"minItems\":2,\"maxItems\":200}," +
                     "\"reference\":{\"type\":\"string\",\"enum\":[\"outer_front_wheel\",\"front_axle\",\"rear_axle\"],\"description\":\"Which point of the vehicle follows the path.\"}," +
                     "\"clearance_inside\":{\"type\":\"number\"},\"clearance_outside\":{\"type\":\"number\",\"description\":\"Metres; default the vehicle's (B99 0.3/0.6, B85 0.3/0.3).\"}," +
@@ -127,6 +130,8 @@ namespace CsdBridge.Core.Vehicles
                 TurnPathRequest req;
                 string label;
                 double? nominated = null;
+                List<TurnPathRequest>? legs = null;
+                var legNotes = new List<string>();
                 switch (mode)
                 {
                     case "template":
@@ -179,13 +184,41 @@ namespace CsdBridge.Core.Vehicles
 
                     case "points":
                     {
+                        // Drive: points[0] is the rear axle at the start, heading_deg the direction (default towards
+                        // points[1]); every later point is a destination the vehicle turns and drives to, forwards
+                        // or in reverse. Each leg is a request of its own.
                         List<JsonElement> items = JsonArgs.RequireArray(input, "points", "", 2, 200);
                         var pts = items.Select((e, i) => JsonArgs.ReadPoint(e, JsonArgs.Index("points", i))).ToList();
-                        ReferencePoint rp = reference ?? (reverse ? ReferencePoint.RearAxle : ReferencePoint.FrontAxle);
-                        VehiclePoint refPoint = vehicle.Resolve(rp, leftTurn: true);
-                        double radius = JsonArgs.OptionalPositive(input, "radius", "") ?? vehicle.RadiusOfPoint(vehicle.MinTurnRadius, refPoint, left: true);
-                        Path2 path = TurnPathBuilder.FromPoints(pts, radius, warnings);
-                        req = new TurnPathRequest { Vehicle = vehicle, Path = path, Reference = refPoint, Reverse = reverse };
+                        double? headingDeg = JsonArgs.OptionalNumber(input, "heading_deg", "");
+                        double heading = headingDeg is double hd ? hd * Math.PI / 180 : Math.Atan2(pts[1].Y - pts[0].Y, pts[1].X - pts[0].X);
+                        double radius = JsonArgs.OptionalPositive(input, "radius", "") ?? vehicle.MinTurnRadius;
+                        var pose = new VehiclePose(pts[0], heading);
+                        legs = new List<TurnPathRequest>();
+                        for (int i = 1; i < pts.Count; i++)
+                        {
+                            bool? force = JsonArgs.TryGet(input, "reverse", out _) ? reverse : (bool?)null;
+                            TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(vehicle, pose, pts[i], radius, force);
+                            if (leg == null)
+                            {
+                                warnings.Add($"points[{i}] is too close to the vehicle to drive to; skipped.");
+                                continue;
+                            }
+
+                            leg.Request.Step = c.Step;
+                            leg.Request.Tolerance = c.Tolerance;
+                            TurnPathResult legResult = TurnPathSimulator.Simulate(leg.Request);
+                            pose = legResult.Poses[legResult.Poses.Count - 1];
+                            legs.Add(leg.Request);
+                            legNotes.Add($"leg {legs.Count}: {(leg.Reverse ? "reverse" : "forward")}, " +
+                                         (leg.ArcDeg > 0.5 ? $"turn {(leg.Left ? "left" : "right")} {leg.ArcDeg:0} deg then " : "") + $"{leg.StraightLength:0.0} m straight");
+                        }
+
+                        if (legs.Count == 0)
+                        {
+                            throw new ArgumentException("No leg could be driven: every destination is too close to the vehicle.");
+                        }
+
+                        req = legs[0];
                         label = vehicle.Name;
                         break;
                     }
@@ -205,6 +238,20 @@ namespace CsdBridge.Core.Vehicles
 
                 TurnPathResult result = TurnPathSimulator.Simulate(req);
                 warnings.AddRange(result.Warnings);
+                var results = new List<TurnPathResult> { result };
+                if (legs != null)
+                {
+                    for (int i = 1; i < legs.Count; i++)
+                    {
+                        legs[i].Step = c.Step;
+                        legs[i].Tolerance = c.Tolerance;
+                        legs[i].ClearanceInside = req.ClearanceInside;
+                        legs[i].ClearanceOutside = req.ClearanceOutside;
+                        TurnPathResult more = TurnPathSimulator.Simulate(legs[i]);
+                        warnings.AddRange(more.Warnings.Select(w => $"leg {i + 1}: {w}"));
+                        results.Add(more);
+                    }
+                }
 
                 TurnPathStyle style = TurnPathStyle.From(c);
                 style.Label = JsonArgs.OptionalString(input, "label", "") ?? label;
@@ -226,7 +273,8 @@ namespace CsdBridge.Core.Vehicles
                     ["within_minimum_radius"] = result.WithinMinimumRadius,
                     ["clearances"] = new { left = result.ClearanceLeft, right = result.ClearanceRight },
                     ["start"] = Pose(result.Poses[0]),
-                    ["end"] = Pose(result.Poses[result.Poses.Count - 1]),
+                    ["end"] = Pose(results[results.Count - 1].Poses[results[results.Count - 1].Poses.Count - 1]),
+                    ["legs"] = legNotes.Count > 0 ? legNotes : null,
                     ["extents"] = Extents(result),
                 };
 
@@ -236,7 +284,23 @@ namespace CsdBridge.Core.Vehicles
                 }
                 else
                 {
-                    List<DraftedEntity> drafted = TurnPathDrafter.Draw(result, style);
+                    var drafted = new List<DraftedEntity>();
+                    for (int i = 0; i < results.Count; i++)
+                    {
+                        var legStyle = new TurnPathStyle
+                        {
+                            Layers = style.Layers,
+                            Draw = style.Draw.Clone(),
+                            OutlineInterval = style.OutlineInterval,
+                            TextHeight = style.TextHeight,
+                            Hatch = style.Hatch,
+                            Label = style.Label,
+                            SkipStartVehicle = i > 0,
+                        };
+                        legStyle.Draw.Labels = style.Draw.Labels && i == 0;
+                        drafted.AddRange(TurnPathDrafter.Draw(results[i], legStyle));
+                    }
+
                     DrawingInfo info = _host.GetDrawingInfo();
                     List<LayerSpec> missing = TurnPathDrafter.MissingLayers(
                         drafted.Select(d => d.Spec.Layer).Where(l => l != null).Select(l => l!),

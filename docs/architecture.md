@@ -43,8 +43,10 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
 - **CsdBridge.Core/Vehicles** is the AS/NZS 2890.1 turning path simulator: design vehicles (B99,
   B85, or any added to `turn-paths.json`), a kinematic bicycle-model simulation along a path, the
   swept path as the exact boundary of the union of the body over every pose, the clearance
-  template, and the `draw_turn_path` tool. It has no CAD dependency, so the same code serves the
-  `AITURN` command, Claude's tool and the tests.
+  template, the `draw_turn_path` tool, a drive planner (turn at the radius, then straight, forwards or in
+  reverse, leg by leg) and the Appendix C ground clearance check (`check_ground_clearance`) on a long
+  section or along each side of the car on a surface. It has no CAD dependency, so the same code serves
+  the `AITURN`/`AICLEARANCE` commands, Claude's tools and the tests.
 - **CsdBridge.BricsCAD** is the add-in: commands, panel, settings, and the drawing host. `AITURN`
   shows a WinForms dialog, prompts for geometry with the Editor, and draws through
   `BricsCadDrawingHost` like the tools do, so the result is one UNDO step.
