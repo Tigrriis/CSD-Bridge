@@ -82,20 +82,38 @@ namespace CsdBridge.BricsCAD
                         return null;
                     }
 
-                    var dirOptions = new PromptPointOptions("\nDirection of travel (pick a point ahead of the vehicle): ")
+                    Point2 s = Wcs(ed, start.Value);
+                    Point3d startWcs = start.Value.TransformBy(ed.CurrentUserCoordinateSystem);
+                    // Preview the (largest) template as the direction swings with the cursor.
+                    double previewAngle = c.TurnAngles.Max();
+                    var jig = new TurnPathJig("\nDirection of travel (pick a point ahead of the vehicle): ", startWcs, null, cursor =>
                     {
-                        BasePoint = start.Value,
-                        UseBasePoint = true,
-                        UseDashedLine = true,
-                    };
-                    PromptPointResult ahead = ed.GetPoint(dirOptions);
+                        if (Distance(s, cursor) < 1e-6)
+                        {
+                            return null;
+                        }
+
+                        return TurnPathBuilder.Template(new TurnTemplate
+                        {
+                            Vehicle = v,
+                            Start = s,
+                            Heading = Math.Atan2(cursor.Y - s.Y, cursor.X - s.X),
+                            Radius = c.Radius,
+                            TurnAngleDeg = previewAngle,
+                            Left = c.Left,
+                            LeadIn = c.LeadIn,
+                            LeadOut = c.LeadOut,
+                            Reference = c.Reference,
+                        });
+                    });
+                    PromptResult ahead = ed.Drag(jig);
                     if (ahead.Status != PromptStatus.OK)
                     {
                         return null;
                     }
 
-                    Point2 s = Wcs(ed, start.Value), a = Wcs(ed, ahead.Value);
-                    if (Math.Sqrt((a.X - s.X) * (a.X - s.X) + (a.Y - s.Y) * (a.Y - s.Y)) < 1e-6)
+                    Point2 a = jig.Point2;
+                    if (Distance(s, a) < 1e-6)
                     {
                         throw new ArgumentException("The direction point must be away from the start point.");
                     }
@@ -162,20 +180,38 @@ namespace CsdBridge.BricsCAD
                     }
 
                     pts.Add(Wcs(ed, first.Value));
-                    Point3d last = first.Value;
+                    Point3d last = first.Value.TransformBy(ed.CurrentUserCoordinateSystem);
                     while (true)
                     {
-                        var options = new PromptPointOptions("\nNext point (Enter to finish): ")
+                        // Preview the manoeuvre through the points so far plus the cursor.
+                        List<Point2> fixedPoints = pts;
+                        var jig = new TurnPathJig("\nNext point or [Undo] (Enter to finish): ", last, new[] { "Undo" }, cursor =>
                         {
-                            BasePoint = last,
-                            UseBasePoint = true,
-                            UseDashedLine = true,
-                            AllowNone = true,
-                        };
-                        PromptPointResult next = ed.GetPoint(options);
+                            if (Distance(fixedPoints[fixedPoints.Count - 1], cursor) < 0.05)
+                            {
+                                return null;
+                            }
+
+                            var trial = new List<Point2>(fixedPoints) { cursor };
+                            Path2 path = TurnPathBuilder.FromPoints(trial, c.Radius);
+                            return new TurnPathRequest { Vehicle = v, Path = path, Reference = reference, Reverse = c.Reverse };
+                        });
+                        PromptResult next = ed.Drag(jig);
                         if (next.Status == PromptStatus.None)
                         {
                             break;
+                        }
+
+                        if (next.Status == PromptStatus.Keyword)
+                        {
+                            if (pts.Count > 1)
+                            {
+                                pts.RemoveAt(pts.Count - 1);
+                            }
+
+                            Point2 back = pts[pts.Count - 1];
+                            last = new Point3d(back.X, back.Y, 0);
+                            continue;
                         }
 
                         if (next.Status != PromptStatus.OK)
@@ -183,8 +219,8 @@ namespace CsdBridge.BricsCAD
                             return null;
                         }
 
-                        pts.Add(Wcs(ed, next.Value));
-                        last = next.Value;
+                        pts.Add(jig.Point2);
+                        last = jig.Point;
                     }
 
                     if (pts.Count < 2)
@@ -273,6 +309,8 @@ namespace CsdBridge.BricsCAD
 
             ed.WriteMessage("\n");
         }
+
+        private static double Distance(Point2 a, Point2 b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
 
         /// <summary>Prompt results are in the current UCS; the simulator works in world coordinates.</summary>
         private static Point2 Wcs(Editor ed, Point3d ucs)

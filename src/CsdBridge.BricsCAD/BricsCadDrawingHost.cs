@@ -332,6 +332,41 @@ namespace CsdBridge.BricsCAD
             return ItemResult.Success(index, ent.Handle.ToString(), note);
         }
 
+        /// <summary>
+        /// A transient entity for temporary graphics (jigs): lines, polylines, arcs and circles only.
+        /// The caller owns and disposes it; it is never added to the database.
+        /// </summary>
+        internal static Entity? PreviewEntity(EntitySpec spec)
+        {
+            switch (spec)
+            {
+                case LineSpec l:
+                    return new Line(P3(l.Start), P3(l.End));
+
+                case PolylineSpec p:
+                {
+                    var pl = new Polyline(p.Points.Count);
+                    for (int i = 0; i < p.Points.Count; i++)
+                    {
+                        double bulge = p.Bulges != null ? p.Bulges[i] : 0;
+                        pl.AddVertexAt(i, new Point2d(p.Points[i].X, p.Points[i].Y), bulge, 0, 0);
+                    }
+
+                    pl.Closed = p.Closed;
+                    return pl;
+                }
+
+                case CircleSpec c:
+                    return new Circle(P3(c.Center), Vector3d.ZAxis, c.Radius);
+
+                case ArcSpec a:
+                    return new Arc(P3(a.Center), a.Radius, Rad(a.StartAngleDeg), Rad(a.EndAngleDeg));
+
+                default:
+                    return null;
+            }
+        }
+
         private Entity Build(EntitySpec spec, ObjectId blockId)
         {
             switch (spec)
