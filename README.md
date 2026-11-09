@@ -14,6 +14,10 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
 
 - **AIDRAFT** (command line) or **AIPANEL** (dockable chat panel): describe what you want.
   Both are also on the **CSD-Bridge ribbon tab**.
+- **Routines** (ribbon, or `AIROUTINES`): saved, reusable procedures with inputs. Do a job once with
+  Claude in the chat, then save the chat as a routine: Claude writes it up with its inputs and steps, and
+  you check it before it's saved. Run it later on any drawing by filling in a few values. Routines can be
+  shared with the office. See [Routines](#routines).
 - **AIHISTORY** opens a history window:
   - every request, across all drawings and days, searchable
   - each one's full detail: what you asked, every step Claude took, its reply, the result and
@@ -58,7 +62,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 122 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 178 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -72,7 +76,9 @@ src/CsdBridge.Core/        CAD-independent: Claude agent loop, tool schemas, inp
                            in-memory drawing + DXF preview (netstandard2.0 + net8.0)
 src/CsdBridge.BricsCAD/    The add-in: commands, chat panel, BricsCAD drawing host, settings
   Csd/                     Civil Site Design tools: commands, dialogs, ground sampling
+  Routines/                Routines window, editor and run dialog
 src/CsdBridge.Core/Civil/  Vertical profile designer (exact optimisation) and checks
+src/CsdBridge.Core/Routines/ Routine files, the routines library, run prompts, save_routine
 src/CsdBridge.Core/Vehicles/ AS/NZS 2890.1 design vehicles, swept path simulator and the draw_turn_path tool
 tools/CsdBridge.Cli/       Try prompts without BricsCAD; writes a DXF preview
 tools/icons/               Generates the ribbon icons (Python + Pillow)
@@ -101,6 +107,10 @@ dotnet run --project tools/CsdBridge.Cli -- --standards src/CsdBridge.BricsCAD/o
 This draws into an in-memory drawing and writes `preview.dxf`; open it in BricsCAD to look.
 Run with no prompt for an interactive session. `pick_point` and `select_entities` prompt in
 the console. It is the quickest way to tune prompts, tool descriptions and office standards.
+
+To try a routine: `--routine "path\to\Routine.md" --input road=MC01 --input max_grade=7` (defaults fill
+the other inputs). With `--routines <folder>`, `--routine` also takes a routine's name, and when you ask
+Claude to save a routine it is written straight to that folder (there's no review step in the CLI).
 
 ### 2. Build the add-in (Windows, BricsCAD installed)
 
@@ -177,9 +187,11 @@ with `-Remove`.
 |---|---|
 | `AIDRAFT` | Ask Claude on the command line. Uses any pre-selected objects as context. |
 | `AIPANEL` | Open the chat panel (Enter sends, Shift+Enter for a new line, Stop cancels) |
+| `AIROUTINES` | Open the Routines window: run, create, edit, rename, duplicate or delete routines |
 | `AIHISTORY` | Open the history window: every request and what Claude did |
 | `AITURN` | Draw an AS/NZS 2890.1 B85 or B99 vehicle swept path: a turning template, a vehicle driven along a selected line/polyline, or through clicked points. Opens a dialog for the vehicle, radius, clearances, what to draw and the layers. |
 | `AIEFFORT` | Choose how hard Claude works: Auto, Quick, Normal or Thorough (also the Effort box in the chat panel) |
+| `AIMODEL` | Choose the model: Opus, Sonnet or Haiku (also the Model box in the chat panel) |
 | `AIRESET` | New conversation for this drawing; reloads settings |
 | `AIKEY` | Set or remove the stored API key |
 | `AISTATUS` | Show model, key source, standards file, settings and log locations, usage |
@@ -187,9 +199,11 @@ with `-Remove`.
 | `AIFORMDUMP` | Diagnostic: like `AIUIDUMP`, but reads open dialogs from inside BricsCAD as WinForms controls, so it also gets internal control names, grid cell values and the grid component's type and version. Read-only; saves to the same folder. |
 | `AICSD` | Civil Site Design tools: **Read** (default: Claude can open and read CSD dialogs but not change them), **Edit** (Claude can also change values and press buttons), **Off**, or **List** (save the CSD commands found to a text file) |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
+| `AISCALEBARS` | Add a scale bar block to every layout for each viewport scale on it. Runs in the add-in, so it doesn't call Claude or cost anything. See [Scale bars](#scale-bars). |
 
-The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, small New chat,
-Status and API key buttons, and a **Vehicles** panel with the **Turn path** button (`AITURN`). It's added when the add-in loads. If your workspace hides the
+The **CSD-Bridge ribbon tab** has large Chat, Draft, Routines and History buttons, small New chat,
+Status and API key buttons, a Scale Bars button in the Sheets panel, and a **Turn path** button (`AITURN`) in the
+Vehicles panel. It's added when the add-in loads. If your workspace hides the
 ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
 ## Settings
@@ -198,7 +212,7 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
 | Key | Default | Notes |
 |---|---|---|
-| `model` | `claude-opus-5-5` | Any Claude model ID |
+| `model` | `claude-opus-5-5` | `claude-opus-5-5`, `claude-sonnet-5-5` or `claude-haiku-5-5`; also set from the chat panel's Model box or `AIMODEL`. Any other Claude model ID works too and is added to the panel's list. |
 | `effort_mode` | `auto` | `auto` / `quick` / `normal` / `thorough`. Also set from the chat panel's Effort box or `AIEFFORT`. |
 | `effort_quick` | `low` | Effort level for Quick requests (`low` / `medium` / `high` / `xhigh` / `max`). |
 | `effort` | `high` | Effort level for Normal requests. |
@@ -206,11 +220,13 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 | `max_turns` | `30` | Safety limit on model round trips per request |
 | `server_side_fallback` | `true` | If Claude declines a request on policy grounds, Anthropic retries it on a fallback model. Claude API only. |
 | `standards_file` | *(blank)* | Path to your office standards. Blank uses `office-standards.md` next to the DLL. |
+| `office_routines_folder` | *(blank)* | A shared folder of office routines (e.g. on a network drive), listed next to each user's own. Blank = none. |
 | `base_url` | *(blank)* | Optional internal gateway URL that holds the API key centrally |
 | `csd_mode` | `read` | Civil Site Design tools: `read`, `edit` or `off`. Also set with `AICSD`. |
 | `road_drafting_file` | *(blank)* | Road drafting conventions for `draft_road`. Blank uses `road-drafting.json` next to the DLL. |
 | `turn_paths_file` | *(blank)* | Vehicle turning path conventions (vehicles, clearances, layers) for `AITURN` and `draw_turn_path`. Blank uses `%APPDATA%\CsdBridge\turn-paths.json` if the AITURN dialog has saved one, else `turn-paths.json` next to the DLL. |
 | `cache_ttl` | `1h` | How long the prompt cache lives: `1h` suits sessions with pauses; `5m` is cheaper to write. |
+| `scale_bars` | *(not set)* | Optional: overrides where `AISCALEBARS` puts scale bars. Add only the keys you want to change: `block_name` (`Scale Bar {0}`), `x`, `y` (paper mm), `layer`, `scale`, `rotation` (degrees) and `stack_offset` (mm between bars; negative stacks downward). |
 | `clear_old_tool_results_after_tokens` | `60000` | Once a chat's input passes this size, the oldest tool results are dropped (the latest 6 are kept). `0` = never. |
 
 ## Civil Site Design
@@ -257,6 +273,102 @@ The rules live in `road-drafting.json` next to the add-in: which codes become wh
 colours and linetype scales. The pavement, centreline and layer styles come from the office's sample drawings. The
 kerb, shoulder, footpath and batter rules depend on each job's template codes, so check and edit them. Junctions
 between roads aren't trimmed: Claude tidies them with `trim_extend` and `fillet`.
+
+## Scale bars
+
+`AISCALEBARS` (ribbon: **Sheets > Scale Bars**) goes through every layout and reads the scale of each viewport. For
+each scale it inserts the matching block, such as `Scale Bar 750` for 1:750, at the office's standard spot: (821, 68.5) on layer `AE GEN TBL - SCALE BAR`, scale 1, no rotation.
+When a layout has more than one scale, the bars are stacked upward 40 mm apart, the most detailed scale at the standard spot.
+
+- **Section sheets** (layouts with no viewports, just xref'd sections) take their scales from the scale text in their
+  xrefs, such as `SCALES: HORIZONTAL 1:50 VERTICAL 1:20`, which gives bars for 1:20 and 1:50. Only text that mentions a
+  scale counts, so batter slopes like 1:4 are ignored, and so is anything marked NOT TO SCALE. Only text that lands on the
+  sheet counts, in case one xref holds several sheets. Text on frozen or off layers is skipped.
+- The blocks must already be loaded in the drawing. A missing one is listed on the command line and skipped.
+- Model units are taken as metres (the office standard). If `INSUNITS` is millimetres, the millimetre reading is tried
+  first, then metres.
+- Run it again after changing viewport scales. Layouts whose bars already match are left alone, so bars you moved by
+  hand stay put; other layouts have their old bars replaced. One UNDO reverts the whole run.
+- It doesn't call Claude, so it's instant and free.
+
+## Routines
+
+A routine is a saved procedure you can run again on any drawing: a name, the **inputs** that change from
+job to job (road name, grades, a point to pick), and the **steps** for Claude. Open the list with the
+**Routines** button on the ribbon, `AIROUTINES`, or the chat panel's **Routines** menu.
+
+**Making one**
+- **From a chat (recommended):** do the job once with Claude in the chat panel, answering its questions and
+  correcting it as you go. Then choose **Routines > Save this chat as a routine** (or **New > From the chat in
+  this drawing** in the Routines window, or just ask "save this as a routine"). Claude writes it up: values
+  that will differ next time become inputs, your corrections become rules, and dead ends are left out. The
+  editor opens with the draft; nothing is saved until you press Save.
+- **By hand:** **New > Blank routine** in the Routines window.
+
+**Changing one:** select it in the Routines window and use **Edit** (name, description, effort, inputs and
+steps, and where it's saved), **Rename** (F2), **Duplicate** (makes your own copy, e.g. of an office routine
+you want to change) or **Delete**. Deleted routines go to a `deleted` folder next to them, so they can be
+recovered. If a run needed correcting, choose **Save this chat as a routine** afterwards: Claude offers an
+update to that routine with the corrections folded in, for you to check and save.
+
+**Running one:** select it and press **Run** (or double-click, or Enter). The run dialog asks for the
+inputs, starting from the values you used last time (**Reset to defaults** goes back). Points and objects are
+picked in the drawing: select objects before pressing Run, or Claude asks when it needs them. Tick
+**Start a new chat** when the drawing's chat is long or about something else. The run then works like any
+other request: progress in the chat panel, one UNDO step, a line in History (marked with the routine's
+name), and follow-ups in the chat afterwards.
+
+**Inputs** have a name used in the steps as `{{name}}`, and a type:
+
+| Type | Asked for |
+|---|---|
+| Text, Number, Choice, Yes/No | In the run dialog. Numbers are checked; choices are picked from a list. |
+| Point (pick) | In the drawing: Claude asks you to pick it when it needs it. |
+| Objects (select) | In the drawing: the objects selected before the run, or Claude asks. |
+
+Each input can have a label, a default, a unit (`%`, `m`), a hint, and be required.
+
+**Where they're kept**
+- **My routines:** `%APPDATA%\CsdBridge\routines`, yours only. The first time you open Routines it gets an
+  example, "Smooth vertical profile", to look at and copy.
+- **Office routines:** set `office_routines_folder` in `settings.json` to a shared folder (e.g. a network
+  drive; in JSON, double the backslashes: `"office_routines_folder": "S:\\CAD\\CSD-Bridge routines"`), then
+  run `AIRESET`. Everyone with the same setting sees the same routines. In the editor, **Saved in**
+  moves a routine between the two. If someone else saved a routine after you opened it, you're asked before
+  your save replaces theirs.
+
+Each routine is a Markdown file named after it, readable in any text editor. A plain text file without the
+header also works: it is all steps, named after the file.
+
+```markdown
+---
+name: Smooth vertical profile
+description: Propose a smoother vertical for a CSD road with fewer IPs
+effort: thorough
+inputs:
+  - name: road
+    label: Road
+    type: text
+    required: true
+  - name: max_grade
+    label: Max grade
+    type: number
+    default: 8
+    unit: "%"
+  - name: side
+    type: choice
+    options: [Left, Right, Both]
+---
+
+1. Open the Vertical Grading Editor for {{road}} with csd_open_vge ...
+```
+
+Types in the file are `text`, `number`, `choice`, `yesno`, `point` and `selection`; `effort` is `quick`,
+`normal` or `thorough` (leave it out to use the chat panel's Effort setting); `csd_edit: true` marks a
+routine that changes Civil Site Design values, and the run dialog warns if CSD edits are off.
+
+Routines don't give Claude any new powers: it has the same tools as in the chat, and CSD changes still need
+`AICSD` Edit.
 
 ## Vehicle turning paths (AS/NZS 2890.1)
 
@@ -335,6 +447,26 @@ The chosen effort shows on the command line when a request starts, and in the Hi
 Auto uses simple word rules (`src/CsdBridge.Core/Agent/EffortPolicy.cs`), so it costs nothing
 and is easy to tune. To try the rules without BricsCAD, use `--effort auto` in the CLI harness.
 
+## Model
+
+The chat panel's **Model** box (or `AIMODEL`) picks which Claude model answers:
+
+| Model | Notes |
+|---|---|
+| **Opus 5.5** (default) | Most capable; slowest and most expensive |
+| **Sonnet 5.5** | Faster and cheaper |
+| **Haiku 5.5** | Fastest and cheapest. Has no server-side refusal fallback, so a declined request stays declined. |
+
+A change applies from your next message and is remembered in `settings.json`. The drawing's
+conversation carries on with the new model. Two things to know when comparing models:
+
+- The new model doesn't see the previous model's thinking (the API drops it, at no charge),
+  only the visible conversation. For a fair comparison, press **New chat** first.
+- The prompt cache is per model, so the first request after a switch pays to cache the
+  conversation again. Compare token use from the second request on.
+
+The model shows when each request starts, in the summary line after it, and in the History window.
+
 ## Office standards
 
 `office-standards.md` is added to Claude's instructions on every request: layers, colours,
@@ -346,8 +478,17 @@ point `standards_file` at it.
 
 Each request is several API calls, one per round of tool use. The ~4,800-token system prompt
 and tool definitions are prompt-cached, so repeat calls mostly pay the cheap cache-read rate.
-The command line and panel show token usage after every request. The history window
-(`AIHISTORY`) shows each request's usage and today's total. Every request is saved to
+The command line and panel show token usage after every request, with an estimated cost in
+US dollars ("about US$0.12"). The history window (`AIHISTORY`) shows each request's usage and
+cost, and today's totals.
+
+The estimate uses the Claude API's list prices for each model, kept in
+`src/CsdBridge.Core/Agent/ModelPricing.cs` (checked November 2026; compare them with
+claude.com/pricing now and then). Cache reads and writes are priced at their own rates, and
+Haiku 5.5's higher price for prompts over 100,000 tokens is applied per request. It doesn't
+know about gateway pricing (`base_url`), US-only inference or account discounts, so treat it
+as a guide and your Anthropic Console bill as the real figure. Models not in the table show
+tokens only. Every request is saved to
 `%LOCALAPPDATA%\CsdBridge\logs\` as one line of JSON in a file per day (`yyyy-MM-dd.jsonl`).
 Use those numbers rather than estimates when deciding on effort level or model.
 

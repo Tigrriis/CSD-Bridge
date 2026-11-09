@@ -30,12 +30,6 @@ namespace CsdBridge.Core.Agent
         private const string ContextManagementBeta = "context-management-2025-06-27";
         private const string LongCacheBeta = "extended-cache-ttl-2025-04-11";
 
-        /// <summary>Models that accept a per-message effort change (an effort-only system message).</summary>
-        private static readonly HashSet<string> PerMessageEffortModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-haiku-5-5",
-        };
-
         private readonly AnthropicClient _client;
         private readonly ToolDispatcher _dispatcher;
         private readonly AgentOptions _options;
@@ -46,6 +40,7 @@ namespace CsdBridge.Core.Agent
         private readonly List<BetaMessageParam> _messages = new List<BetaMessageParam>();
         private string _conversationEffort; // level currently in effect in the conversation
         private string _requestEffort;      // top-level effort sent with this run's requests
+        private bool _hasEffortMessages;    // the history holds effort-only system messages
         private int _running;
 
         /// <param name="extensions">Extra tool sets (profile design, Civil Site Design dialogs...). Fixed for the agent's lifetime.</param>
@@ -82,6 +77,7 @@ namespace CsdBridge.Core.Agent
                 }
             }
 
+            Model = options.Model;
             _systemPrompt = SystemPrompt.Build(options, sections);
             _tools = definitions.Select(ToSdkTool).ToList();
             _conversationEffort = NormalizeEffort(options.Effort);
@@ -93,7 +89,38 @@ namespace CsdBridge.Core.Agent
         /// (an effort-only system message after the user's turn). Otherwise the top-level
         /// effort changes per request instead.
         /// </summary>
-        public bool UsesPerMessageEffort => PerMessageEffortModels.Contains(_options.Model ?? "");
+        public bool UsesPerMessageEffort => ModelCatalog.SupportsPerMessageEffort(Model);
+
+        /// <summary>The model the conversation's next request goes to.</summary>
+        public string Model { get; private set; }
+
+        /// <summary>
+        /// True if the conversation can carry on with another model. The history moves
+        /// across as it is: the API drops thinking blocks the new model can't read (unbilled).
+        /// The one exception is effort-only system messages, which the new model must accept.
+        /// </summary>
+        public bool CanSwitchTo(string model) => !_hasEffortMessages || ModelCatalog.SupportsPerMessageEffort(model);
+
+        /// <summary>Send this conversation's next requests to another model (see <see cref="CanSwitchTo"/>).</summary>
+        public void SwitchModel(string model)
+        {
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                throw new ArgumentException("Model is empty.", nameof(model));
+            }
+
+            if (IsRunning)
+            {
+                throw new InvalidOperationException("Cannot change model while a request is running.");
+            }
+
+            if (!CanSwitchTo(model))
+            {
+                throw new InvalidOperationException($"{model} can't continue this conversation. Start a new one.");
+            }
+
+            Model = model.Trim();
+        }
 
         /// <summary>The effort level in effect for the conversation now.</summary>
         public string CurrentEffort => _conversationEffort;
@@ -115,6 +142,7 @@ namespace CsdBridge.Core.Agent
             }
 
             _messages.Clear();
+            _hasEffortMessages = false;
             _conversationEffort = NormalizeEffort(_options.Effort);
         }
 
@@ -148,6 +176,7 @@ namespace CsdBridge.Core.Agent
             var result = new AgentRunResult();
             int historyLengthAtStart = _messages.Count;
             string effortAtStart = _conversationEffort;
+            bool effortMessagesAtStart = _hasEffortMessages;
             string desired = NormalizeEffort(effort ?? _options.Effort);
             result.Effort = desired;
 
@@ -160,6 +189,7 @@ namespace CsdBridge.Core.Agent
                 if (desired != _conversationEffort)
                 {
                     _messages.Add(EffortMessage(desired));
+                    _hasEffortMessages = true;
                     _conversationEffort = desired;
                 }
 
@@ -223,6 +253,7 @@ namespace CsdBridge.Core.Agent
                     {
                         _messages.RemoveRange(historyLengthAtStart, _messages.Count - historyLengthAtStart);
                         _conversationEffort = effortAtStart;
+                        _hasEffortMessages = effortMessagesAtStart;
                     }
 
                     return result;
@@ -330,8 +361,11 @@ namespace CsdBridge.Core.Agent
             // A copy of the history, so later appends never alias a request in flight.
             var messages = new List<BetaMessageParam>(_messages);
 
+            // Haiku has no server-side fallback, so it isn't asked for.
+            bool fallback = _options.ServerSideFallback && ModelCatalog.SupportsServerSideFallback(Model);
+
             var betas = new List<string>();
-            if (_options.ServerSideFallback)
+            if (fallback)
             {
                 betas.Add(FallbackBeta);
             }
@@ -352,11 +386,11 @@ namespace CsdBridge.Core.Agent
                 betas.Add(ContextManagementBeta);
             }
 
-            if (_options.ServerSideFallback)
+            if (fallback)
             {
                 return new MessageCreateParams
                 {
-                    Model = _options.Model,
+                    Model = Model,
                     MaxTokens = _options.MaxTokens,
                     System = _systemPrompt,
                     Messages = messages,
@@ -372,7 +406,7 @@ namespace CsdBridge.Core.Agent
 
             return new MessageCreateParams
             {
-                Model = _options.Model,
+                Model = Model,
                 MaxTokens = _options.MaxTokens,
                 System = _systemPrompt,
                 Messages = messages,
@@ -538,15 +572,48 @@ namespace CsdBridge.Core.Agent
         /// <summary>The raw wire value ("end_turn", "tool_use", "max_tokens", "refusal", ...).</summary>
         private static string StopReasonOf(BetaMessage response) => response.StopReason?.Raw() ?? "";
 
-        private static void AddUsage(UsageTotals totals, BetaMessage response)
+        private void AddUsage(UsageTotals totals, BetaMessage response)
         {
             totals.Requests++;
-            if (response.Usage is { } u)
+            if (!(response.Usage is { } u))
             {
-                totals.InputTokens += u.InputTokens;
-                totals.OutputTokens += u.OutputTokens;
-                totals.CacheReadTokens += u.CacheReadInputTokens ?? 0;
-                totals.CacheWriteTokens += u.CacheCreationInputTokens ?? 0;
+                totals.UnpricedRequests++;
+                return;
+            }
+
+            long cacheRead = u.CacheReadInputTokens ?? 0;
+            long cacheWrite = u.CacheCreationInputTokens ?? 0;
+            totals.InputTokens += u.InputTokens;
+            totals.OutputTokens += u.OutputTokens;
+            totals.CacheReadTokens += cacheRead;
+            totals.CacheWriteTokens += cacheWrite;
+
+            // Cache writes are priced by lifetime. Without the API's breakdown, they are at
+            // the lifetime this agent asks for.
+            long write1h = u.CacheCreation?.Ephemeral1hInputTokens ?? 0;
+            long write5m = u.CacheCreation?.Ephemeral5mInputTokens ?? 0;
+            long unsplit = Math.Max(0, cacheWrite - write1h - write5m);
+            if (_options.LongCache)
+            {
+                write1h += unsplit;
+            }
+            else
+            {
+                write5m += unsplit;
+            }
+
+            // Priced at the model that answered (a refusal fallback can answer on another one)
+            // when its price is known, else at the model asked.
+            string answered = response.Model.Raw();
+            string pricedAs = ModelPricing.IsPriced(answered) ? answered : Model;
+            decimal? cost = ModelPricing.Cost(pricedAs, u.InputTokens, cacheRead, write5m, write1h, u.OutputTokens);
+            if (cost.HasValue)
+            {
+                totals.CostUsd += cost.Value;
+            }
+            else
+            {
+                totals.UnpricedRequests++;
             }
         }
 

@@ -23,11 +23,15 @@ namespace CsdBridge.BricsCAD
 
         private static string KeyPath => Path.Combine(Folder, "apikey.bin");
 
+        /// <summary>The user's own routines.</summary>
+        public static string PersonalRoutinesFolder => Path.Combine(Folder, "routines");
+
         public static string LogFolder { get; } =
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CsdBridge", "logs");
 
+        /// <summary>claude-opus-5-5 (default), claude-sonnet-5-5 or claude-haiku-5-5. The chat panel and AIMODEL set it.</summary>
         [JsonPropertyName("model")]
-        public string Model { get; set; } = "claude-opus-5-5";
+        public string Model { get; set; } = ModelCatalog.Opus;
 
         /// <summary>Effort level for Normal requests: low | medium | high | xhigh | max.</summary>
         [JsonPropertyName("effort")]
@@ -72,6 +76,14 @@ namespace CsdBridge.BricsCAD
         public string? RoadDraftingFile { get; set; }
 
         /// <summary>
+        /// Overrides for where AISCALEBARS puts scale bars. Unset means the office defaults in
+        /// ScaleBarOptions; it isn't written to the template, so changes to those defaults reach everyone.
+        /// </summary>
+        [JsonPropertyName("scale_bars")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public CsdBridge.Core.Drawing.ScaleBarOptions? ScaleBars { get; set; }
+
+        /// <summary>
         /// Vehicle turning path conventions file (vehicles, clearances, layers). Empty means
         /// %APPDATA%\CsdBridge\turn-paths.json if the AITURN dialog has saved one, else turn-paths.json
         /// next to the add-in DLL.
@@ -81,6 +93,13 @@ namespace CsdBridge.BricsCAD
 
         [JsonPropertyName("standards_file")]
         public string? StandardsFile { get; set; }
+
+        /// <summary>
+        /// The office's shared routines folder, e.g. on a network drive, listed next to each
+        /// user's own routines. Empty means none.
+        /// </summary>
+        [JsonPropertyName("office_routines_folder")]
+        public string? OfficeRoutinesFolder { get; set; }
 
         /// <summary>Optional API base URL, e.g. an internal gateway that holds the key.</summary>
         [JsonPropertyName("base_url")]
@@ -140,6 +159,10 @@ namespace CsdBridge.BricsCAD
             string dir = Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".";
             return Path.Combine(dir, "office-standards.md");
         }
+
+        /// <summary>The office routines folder with environment variables expanded, or null when none is set.</summary>
+        public string? ResolvedOfficeRoutinesFolder() =>
+            string.IsNullOrWhiteSpace(OfficeRoutinesFolder) ? null : Environment.ExpandEnvironmentVariables(OfficeRoutinesFolder!.Trim());
 
         public string ResolvedRoadDraftingPath()
         {

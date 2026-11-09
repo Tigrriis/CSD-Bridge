@@ -50,8 +50,8 @@ namespace CsdBridge.Core.Agent
         public string Reason { get; }
         public bool Automatic { get; }
 
-        /// <summary>e.g. "Quick (auto: a simple edit)" or "Thorough (set by you)".</summary>
-        public string Describe() => $"{Tier}{(Automatic ? " (auto: " + Reason + ")" : " (set by you)")}";
+        /// <summary>e.g. "Quick (auto: a simple edit)", "Thorough (set by you)" or "Thorough (set by the routine)".</summary>
+        public string Describe() => $"{Tier} ({(Automatic ? "auto: " : "")}{Reason})";
     }
 
     /// <summary>
@@ -93,6 +93,13 @@ namespace CsdBridge.Core.Agent
 
             var (tier, reason) = Classify(prompt, selectedCount);
             return new EffortChoice(tier, levels.For(tier), reason, automatic: true);
+        }
+
+        /// <summary>A fixed tier chosen by something other than the user, e.g. a routine ("set by the routine").</summary>
+        public static EffortChoice Fixed(EffortMode tier, EffortLevels levels, string reason)
+        {
+            EffortMode t = tier == EffortMode.Auto ? EffortMode.Normal : tier;
+            return new EffortChoice(t, levels.For(t), reason, automatic: false);
         }
 
         public static (EffortMode Tier, string Reason) Classify(string prompt, int selectedCount = 0)

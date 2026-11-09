@@ -9,6 +9,7 @@ using Anthropic;
 using CsdBridge.Core.Agent;
 using CsdBridge.Core.Drawing;
 using CsdBridge.Core.Offline;
+using CsdBridge.Core.Routines;
 using CsdBridge.Core.Tools;
 using CsdBridge.Core.Vehicles;
 
@@ -26,6 +27,10 @@ using CsdBridge.Core.Vehicles;
 //                           low | medium | high | xhigh | max (default: high)
 //   --standards <file.md>   Office standards appended to the system prompt
 //   --no-fallback           Don't send the server-side refusal fallback
+//   --routine <file|name>   Run a routine (a .md file, or a name in --routines)
+//   --input name=value      A value for the routine's inputs (repeatable; defaults fill the rest)
+//   --routines <folder>     Routines folder: lets --routine take a name, and lets Claude's
+//                           save_routine save straight there (no review step, unlike BricsCAD)
 
 var options = new AgentOptions { HostName = "BricsCAD (offline preview harness)" };
 var host = new InMemoryDrawingHost();
@@ -33,6 +38,9 @@ string outPath = "preview.dxf";
 var promptParts = new List<string>();
 EffortMode? effortMode = null;
 var effortLevels = new EffortLevels();
+string? routineArg = null;
+string? routinesFolder = null;
+var routineValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -61,9 +69,25 @@ for (int i = 0; i < args.Length; i++)
         }
         case "--standards": options.OfficeStandards = File.ReadAllText(Next()); break;
         case "--no-fallback": options.ServerSideFallback = false; break;
+        case "--routine": routineArg = Next(); break;
+        case "--routines": routinesFolder = Next(); break;
+        case "--input":
+        {
+            string pair = Next();
+            int eq = pair.IndexOf('=');
+            if (eq <= 0)
+            {
+                throw new ArgumentException("--input needs name=value");
+            }
+
+            routineValues[pair.Substring(0, eq).Trim()] = pair.Substring(eq + 1);
+            break;
+        }
+
         case "-h":
         case "--help":
-            Console.WriteLine("csd-bridge [--out preview.dxf] [--units Millimeters] [--model id] [--effort auto|quick|normal|thorough|high] [--standards file.md] [\"prompt\"]");
+            Console.WriteLine("csd-bridge [--out preview.dxf] [--units Millimeters] [--model id] [--effort auto|quick|normal|thorough|high] [--standards file.md] " +
+                              "[--routines folder] [--routine file.md|name --input name=value ...] [\"prompt\"]");
             return 0;
         default: promptParts.Add(args[i]); break;
     }
@@ -102,6 +126,58 @@ host.EntitySelector = prompt =>
         : line.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 };
 
+RoutineLibrary? library = routinesFolder == null ? null : new RoutineLibrary(routinesFolder, null);
+var extensions = new List<IToolExtension>();
+if (library != null)
+{
+    extensions.Add(new RoutineTools(name => library.Find(name), draft =>
+    {
+        try
+        {
+            Routine saved = library.Save(draft.Routine, RoutineLocation.Personal, draft.Replaces, overwriteChanges: true);
+            Console.WriteLine($"\n  Saved routine \"{saved.Name}\" to {saved.FilePath}" + (draft.Note != null ? $" ({draft.Note})" : ""));
+        }
+        catch (Exception ex) when (ex is ArgumentException || ex is IOException)
+        {
+            Console.WriteLine($"\n  Couldn't save the routine: {ex.Message}");
+        }
+    }));
+}
+
+string? routinePrompt = null;
+if (routineArg != null)
+{
+    Routine? routine = File.Exists(routineArg)
+        ? RoutineFile.Parse(File.ReadAllText(routineArg), Path.GetFileNameWithoutExtension(routineArg))
+        : library?.Find(routineArg);
+    if (routine == null)
+    {
+        Console.Error.WriteLine($"No routine file or routine called \"{routineArg}\"" + (library == null ? " (give --routines to look one up by name)." : "."));
+        return 1;
+    }
+
+    foreach (RoutineInput input in routine.Inputs.Where(i => i.IsTyped && Routine.Value(routineValues, i.Name) == null && i.Default != null))
+    {
+        routineValues[input.Name] = input.Default;
+    }
+
+    List<string> problems = routine.Validate().Concat(routine.CheckValues(routineValues)).ToList();
+    if (problems.Count > 0)
+    {
+        Console.Error.WriteLine($"Can't run \"{routine.Name}\":\n  " + string.Join("\n  ", problems));
+        Console.Error.WriteLine("Inputs: " + string.Join(", ", routine.Inputs.Select(i => $"{i.Name} ({RoutineInput.TypeName(i.Type)}{(i.Required ? ", required" : "")})")));
+        return 1;
+    }
+
+    routinePrompt = RoutinePrompt.BuildRun(routine, routineValues);
+    if (effortMode == null && routine.Effort is EffortMode routineEffort)
+    {
+        effortMode = routineEffort;
+    }
+
+    Console.WriteLine(RoutinePrompt.Describe(routine, routineValues));
+}
+
 var client = new AnthropicClient();
 TurnPathConventions? turnPaths = null;
 string? turnPathsError = null;
@@ -114,8 +190,8 @@ catch (Exception ex)
     turnPathsError = ex.Message;
 }
 
-var extensions = new IToolExtension[] { new TurnPathTools(host, turnPaths, turnPathsError) };
-var agent = new DraftingAgent(client, new ToolDispatcher(host), options, extensions: extensions);
+extensions.Add(new TurnPathTools(host, turnPaths, turnPathsError));
+var agent = new DraftingAgent(client, new ToolDispatcher(host), options, null, extensions);
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
@@ -151,6 +227,15 @@ async Task<bool> RunOnce(string prompt)
     DxfPreviewWriter.Write(host, outPath);
     Console.WriteLine($"  {result.Status}. {result.ToolCalls} tool call(s), {result.Usage}. {host.Entities.Count} entities -> {Path.GetFullPath(outPath)}");
     return result.Status != AgentRunStatus.Failed;
+}
+
+if (routinePrompt != null)
+{
+    bool ok = await RunOnce(routinePrompt);
+    if (promptParts.Count == 0)
+    {
+        return ok ? 0 : 1;
+    }
 }
 
 if (promptParts.Count > 0)

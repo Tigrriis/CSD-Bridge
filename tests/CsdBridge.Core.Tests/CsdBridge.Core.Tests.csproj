@@ -15,6 +15,8 @@
   <ItemGroup>
     <!-- The shipped conventions, so the tests check they load and work. -->
     <None Include="..\..\src\CsdBridge.BricsCAD\road-drafting.json" Link="road-drafting.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The example routine new users get, so the tests check it is valid. -->
+    <None Include="..\..\src\CsdBridge.BricsCAD\Resources\routine-examples\*.md" Link="routine-examples\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\CsdBridge.BricsCAD\turn-paths.json" Link="turn-paths.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
