@@ -14,6 +14,7 @@ namespace CsdBridge.BricsCAD
     /// AIDRAFT    ask Claude to draw or change something (command line)
     /// AIPANEL    open the chat panel
     /// AIHISTORY  open the history of requests to Claude
+    /// AITURN     draw an AS/NZS 2890.1 B85/B99 vehicle swept path (turning template or along a path)
     /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
     /// AIEFFORT   choose how hard Claude works: Auto, Quick, Normal or Thorough
     /// AIUIDUMP   diagnostic: save the controls of open dialogs to a text file
@@ -197,6 +198,9 @@ namespace CsdBridge.BricsCAD
         [CommandMethod(Group, "AIHISTORY", CommandFlags.Modal)]
         public void AiHistory() => HistoryWindow.ShowWindow();
 
+        [CommandMethod(Group, "AITURN", CommandFlags.Modal)]
+        public void AiTurn() => TurnPathCommand.Run(CadApp.DocumentManager.MdiActiveDocument);
+
         [CommandMethod(Group, "AIRIBBON", CommandFlags.Modal)]
         public void AiRibbon()
         {
@@ -255,6 +259,8 @@ namespace CsdBridge.BricsCAD
             ed.WriteMessage($"\n  API key:    {keySource}");
             ed.WriteMessage($"\n  Standards:  {standards}{(File.Exists(standards) ? "" : " (not found)")}");
             ed.WriteMessage($"\n  CSD tools:  {Describe((s.CsdMode ?? "read").ToLowerInvariant())} (change with AICSD)");
+            string turnPaths = s.ResolvedTurnPathsPath();
+            ed.WriteMessage($"\n  Turn paths: {turnPaths}{(File.Exists(turnPaths) ? "" : " (not found; built-in B99/B85 used)")}");
             ed.WriteMessage($"\n  Settings:   {BridgeSettings.SettingsPath}");
             ed.WriteMessage($"\n  Logs:       {BridgeSettings.LogFolder}");
             if (AgentRunner.Peek(doc) is { } agent)

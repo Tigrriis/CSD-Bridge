@@ -14,7 +14,7 @@
      locks a loaded add-in), then copies the build to -InstallDir.
 
   Not touched: your API key and settings.json (%APPDATA%\CsdBridge). If the
-  installed office-standards.md or road-drafting.json was edited and differs from
+  installed office-standards.md, road-drafting.json or turn-paths.json was edited and differs from
   the repo copy, the installed one is saved as .bak before it is replaced.
 
 .EXAMPLE
@@ -176,7 +176,7 @@ while (Test-FileLocked $installedDll) {
 
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
-foreach ($pair in @(@("office-standards.md", "standards_file"), @("road-drafting.json", "road_drafting_file"))) {
+foreach ($pair in @(@("office-standards.md", "standards_file"), @("road-drafting.json", "road_drafting_file"), @("turn-paths.json", "turn_paths_file"))) {
     $file = $pair[0]
     $installed = Join-Path $InstallDir $file
     $new = Join-Path $outDir $file

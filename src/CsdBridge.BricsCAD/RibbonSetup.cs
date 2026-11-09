@@ -12,7 +12,8 @@ namespace CsdBridge.BricsCAD
 {
     /// <summary>
     /// Adds a "CSD-Bridge" tab to the BricsCAD ribbon:
-    ///   Chat | Draft | History   (large)    New chat / Status / API key   (small)
+    ///   Claude panel:   Chat | Draft | History   (large)    New chat / Status / API key   (small)
+    ///   Vehicles panel: Turn path (large)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
     ///
@@ -102,8 +103,12 @@ namespace CsdBridge.BricsCAD
                 stack.Items.Add(Button("API key", "AIKEY", "Set or remove the Anthropic API key", "key", large: false));
                 source.Items.Add(stack);
 
+                var vehicles = new RibbonPanelSource { Id = "CSDBRIDGE_VEHICLES", Name = "Vehicles", Title = "Vehicles" };
+                vehicles.Items.Add(Button("Turn path", "AITURN", "Draw an AS/NZS 2890.1 B85 or B99 swept path: a turning template, or a vehicle driven along a line you pick", "turnpath", large: true));
+
                 var tab = new RibbonTab { Id = TabId, Name = "CSD-Bridge", Title = "CSD-Bridge" };
                 tab.Panels.Add(new RibbonPanel { Source = source });
+                tab.Panels.Add(new RibbonPanel { Source = vehicles });
                 ribbon.Tabs.Add(tab);
                 if (activate)
                 {

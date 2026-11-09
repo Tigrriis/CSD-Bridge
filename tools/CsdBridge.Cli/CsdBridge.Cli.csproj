@@ -17,4 +17,9 @@
     <ProjectReference Include="..\..\src\CsdBridge.Core\CsdBridge.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The shipped turning path conventions, so draw_turn_path works offline too. -->
+    <None Include="..\..\src\CsdBridge.BricsCAD\turn-paths.json" Link="turn-paths.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

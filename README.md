@@ -6,7 +6,7 @@ There is no MCP server and no Claude desktop app in the loop.
 
 ```
 BricsCAD ── CSD-Bridge add-in ── Claude API
-              │  agent loop + 12 drafting and geometry tools
+              │  agent loop + drafting, geometry, road and vehicle tools
               └─ draws, edits, asks you to pick points / select objects
 ```
 
@@ -41,6 +41,12 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
 - Objects you select *before* asking are passed in as context ("dimension these").
 - Conversations are per drawing, so follow-ups work ("make it 300 wider").
 - The whole request is **one UNDO step**. Esc or Stop cancels.
+- **Vehicle turning paths (AS/NZS 2890.1).** **AITURN**, or the **Turn path** ribbon button,
+  simulates a B99 or B85 design vehicle and draws its swept path and the standard's clearance
+  template: a standard turn from a picked start point, a vehicle driven along a line or polyline
+  you select (forwards or in reverse), or through points you click. Layers, clearances, what
+  is drawn and the vehicles themselves are configurable (`turn-paths.json`). Claude has the same
+  simulator as the `draw_turn_path` tool. See [Vehicle turning paths](#vehicle-turning-paths-asnzs-28901) below.
 - **Civil Site Design.** Claude can drive CSD's dialogs from inside BricsCAD (see
   [Civil Site Design](#civil-site-design) below), and design vertical profiles with exact
   optimisation rather than guessing levels.
@@ -52,7 +58,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 98 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 122 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -67,6 +73,7 @@ src/CsdBridge.Core/        CAD-independent: Claude agent loop, tool schemas, inp
 src/CsdBridge.BricsCAD/    The add-in: commands, chat panel, BricsCAD drawing host, settings
   Csd/                     Civil Site Design tools: commands, dialogs, ground sampling
 src/CsdBridge.Core/Civil/  Vertical profile designer (exact optimisation) and checks
+src/CsdBridge.Core/Vehicles/ AS/NZS 2890.1 design vehicles, swept path simulator and the draw_turn_path tool
 tools/CsdBridge.Cli/       Try prompts without BricsCAD; writes a DXF preview
 tools/icons/               Generates the ribbon icons (Python + Pillow)
 tests/CsdBridge.Core.Tests Unit tests (no API key or BricsCAD needed)
@@ -171,6 +178,7 @@ with `-Remove`.
 | `AIDRAFT` | Ask Claude on the command line. Uses any pre-selected objects as context. |
 | `AIPANEL` | Open the chat panel (Enter sends, Shift+Enter for a new line, Stop cancels) |
 | `AIHISTORY` | Open the history window: every request and what Claude did |
+| `AITURN` | Draw an AS/NZS 2890.1 B85 or B99 vehicle swept path: a turning template, a vehicle driven along a selected line/polyline, or through clicked points. Opens a dialog for the vehicle, radius, clearances, what to draw and the layers. |
 | `AIEFFORT` | Choose how hard Claude works: Auto, Quick, Normal or Thorough (also the Effort box in the chat panel) |
 | `AIRESET` | New conversation for this drawing; reloads settings |
 | `AIKEY` | Set or remove the stored API key |
@@ -180,8 +188,8 @@ with `-Remove`.
 | `AICSD` | Civil Site Design tools: **Read** (default: Claude can open and read CSD dialogs but not change them), **Edit** (Claude can also change values and press buttons), **Off**, or **List** (save the CSD commands found to a text file) |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
 
-The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, and small New chat,
-Status and API key buttons. It's added when the add-in loads. If your workspace hides the
+The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, small New chat,
+Status and API key buttons, and a **Vehicles** panel with the **Turn path** button (`AITURN`). It's added when the add-in loads. If your workspace hides the
 ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
 ## Settings
@@ -201,6 +209,7 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 | `base_url` | *(blank)* | Optional internal gateway URL that holds the API key centrally |
 | `csd_mode` | `read` | Civil Site Design tools: `read`, `edit` or `off`. Also set with `AICSD`. |
 | `road_drafting_file` | *(blank)* | Road drafting conventions for `draft_road`. Blank uses `road-drafting.json` next to the DLL. |
+| `turn_paths_file` | *(blank)* | Vehicle turning path conventions (vehicles, clearances, layers) for `AITURN` and `draw_turn_path`. Blank uses `%APPDATA%\CsdBridge\turn-paths.json` if the AITURN dialog has saved one, else `turn-paths.json` next to the DLL. |
 | `cache_ttl` | `1h` | How long the prompt cache lives: `1h` suits sessions with pauses; `5m` is cheaper to write. |
 | `clear_old_tool_results_after_tokens` | `60000` | Once a chat's input passes this size, the oldest tool results are dropped (the latest 6 are kept). `0` = never. |
 
@@ -248,6 +257,55 @@ The rules live in `road-drafting.json` next to the add-in: which codes become wh
 colours and linetype scales. The pavement, centreline and layer styles come from the office's sample drawings. The
 kerb, shoulder, footpath and batter rules depend on each job's template codes, so check and edit them. Junctions
 between roads aren't trimmed: Claude tidies them with `trim_extend` and `fillet`.
+
+## Vehicle turning paths (AS/NZS 2890.1)
+
+CSD has no vehicle turning analysis, so CSD-Bridge includes one for the car park standard's design
+vehicles. `AITURN` (ribbon: **Vehicles > Turn path**) opens a dialog, then prompts in the drawing:
+
+| Manoeuvre | What you pick | What it does |
+|---|---|---|
+| **Standard turn template** | Start point (centre of the rear axle of the parked car) and the direction of travel | A single turn at the nominated radius, measured at the outer front wheel as in Paragraph B3.1 (default the vehicle's minimum: B99 6.3 m, B85 5.8 m), through the turn angle(s) you enter (`90`, or `30,60,90,120,150,180` for a fan like Figures B3 to B6), left or right, with straight travel before and after. |
+| **Follow a line, arc or polyline** | The curve, near the end the vehicle starts from | Drives the vehicle along it, forwards (the front axle centre follows the line, the rear axle tracks in behind) or in reverse (the rear axle follows the line). Use it to check a driveway, ramp or aisle you have already drawn. |
+| **Through points** | Two or more points | Builds a path with tangent corner arcs of the corner radius you enter and drives the vehicle along it. Corners without room for the radius get a smaller one, and the command says so. |
+
+What is drawn, each part on its own configurable layer:
+
+- **Swept path**: the envelope of the body, two solid lines from the parked car's rear corners to the
+  front corners at the end (or one closed outline). It is the exact boundary of everything the body
+  covered, including the rear swinging out at the start of a turn.
+- **Clearances**: the swept path offset by the standard's clearances, dashed: 300 mm manoeuvring on
+  both sides, plus 300 mm circulation clearance on the outside for the B99 (Paragraph B3.2). The
+  values are editable per run.
+- **Vehicle** outline with wheels and axles at the start and end, and optionally every *n* metres along the path.
+- The **driven path**, optional **wheel paths**, a **label** (e.g. `B99 R6.3 m`) and an optional **hatch** of the swept area.
+
+The command reports the tightest turn the manoeuvre needed (as an outer-front-wheel radius) against
+the vehicle's minimum, and warns when a path is too tight for the vehicle or a template radius is below
+the standard's minimum. Reminders from the standard: B99 is required for access driveways, ramps and
+circulation roadways; B85 may only be used for parking spaces and aisles (B2.2, B2.3); turns on
+circulating roadways should be at least 8 m radius (A4). Aisle widths for parking manoeuvres come
+from Tables B2/B3 and Figure 2.2, not from swept paths.
+
+**How it works.** The vehicles are the base dimensions of Figures B1 and B2 (B99: 5.2 × 1.94 m,
+wheelbase 3.05 m; B85: 4.91 × 1.87 m, wheelbase 2.8 m), with the effective front and rear overhangs
+and effective width that the standard uses for swept paths (rounded corners). The rear axle cannot
+slip sideways, so when a point of the vehicle follows the path the heading changes by that point's
+sideways movement divided by the wheelbase: the classic tractrix. That is why a template starts with
+the car straight and the inner line only gradually tightens, as in the standard's figures. The swept
+path is the boundary of the union of the body over every position: every corner's and side's trace,
+minus whatever another position of the body covers.
+
+**Configuration.** `turn-paths.json` next to the add-in holds the vehicles (add your own with the
+same fields), the default clearances, lead-in/lead-out, text height, what to draw and the layer for
+each part (`{vehicle}` in a layer name is replaced by the vehicle's name). Layer styles apply only
+when a layer doesn't exist yet. The dialog can change all of it per run; **Save as defaults** writes
+`%APPDATA%\CsdBridge\turn-paths.json`, which is then used instead of the shipped file (or point
+`turn_paths_file` in `settings.json` at a shared copy).
+
+**In chat.** Claude has the same simulator as `draw_turn_path`: *"check a B99 can get into the
+driveway on the kerb return I just drew"* or *"add B85 turning templates at 5.8 m for each aisle
+end"*. It can also run it as a dry run and report the tightest radius without drawing.
 
 ## Saving work between chats
 

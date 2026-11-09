@@ -35,7 +35,7 @@ namespace CsdBridge.BricsCAD
             RibbonSetup.Initialize();
 
             docs.MdiActiveDocument?.Editor.WriteMessage(
-                "\nCSD-Bridge loaded. Commands: AIDRAFT, AIPANEL, AIHISTORY, AIRESET, AIKEY, AISTATUS (or use the CSD-Bridge ribbon tab).\n");
+                "\nCSD-Bridge loaded. Commands: AIDRAFT, AIPANEL, AIHISTORY, AITURN, AIRESET, AIKEY, AISTATUS (or use the CSD-Bridge ribbon tab).\n");
         }
     }
 
