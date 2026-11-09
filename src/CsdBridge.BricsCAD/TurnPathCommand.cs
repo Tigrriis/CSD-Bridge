@@ -245,6 +245,7 @@ namespace CsdBridge.BricsCAD
             TurnPathConventions conv = c.Conventions;
             var drafted = new List<DraftedEntity>();
             var summary = new List<string>();
+            Point2? blockBase = null;
             foreach (var (req, label) in runs)
             {
                 req.Step = conv.Step;
@@ -253,6 +254,7 @@ namespace CsdBridge.BricsCAD
                 req.ClearanceOutside = c.ClearanceOutside;
                 TurnPathResult result = TurnPathSimulator.Simulate(req);
                 warnings.AddRange(result.Warnings);
+                blockBase ??= result.Poses[0].RearAxle;
 
                 var style = new TurnPathStyle
                 {
@@ -290,12 +292,36 @@ namespace CsdBridge.BricsCAD
             int ok = created.Count(r => r.Ok);
             List<string> failed = created.Where(r => !r.Ok).Select(r => r.Error ?? "unknown error").Distinct().ToList();
 
+            string blockNote = "";
+            if (c.Style.Draw.Block && ok > 0 && blockBase is Point2 basePoint)
+            {
+                try
+                {
+                    List<string> handles = created.Where(r => r.Ok && r.Handle != null).Select(r => r.Handle!).ToList();
+                    string blockLayer = c.Style.Layers.Resolve(c.Vehicle.Name).Block;
+                    List<LayerSpec> blockLayerSpec = TurnPathDrafter.MissingLayers(new[] { blockLayer }, info.Layers.Select(l => l.Name), conv.LayerStyles);
+                    if (blockLayerSpec.Count > 0)
+                    {
+                        host.EnsureLayers(blockLayerSpec);
+                    }
+
+                    BlockResult block = host.MakeBlock(handles, $"{c.Vehicle.Name} turning path", basePoint, blockLayer);
+                    blockNote = $"\n  Made block '{block.BlockName}' ({block.EntityCount} entities) on layer {blockLayer}, inserted at the vehicle's start point.";
+                }
+                catch (System.Exception ex)
+                {
+                    blockNote = "\n  Couldn't make the block (the entities are left as drawn): " + ex.Message;
+                }
+            }
+
             ed.WriteMessage($"\nCSD-Bridge: drew {ok} entities for the {c.Vehicle.Name} turning path" +
                             (missing.Count > 0 ? $" (created layers: {string.Join(", ", missing.Select(m => m.Name))})" : "") + ".");
             foreach (string line in summary)
             {
                 ed.WriteMessage("\n  " + line);
             }
+
+            ed.WriteMessage(blockNote);
 
             foreach (string w in warnings.Distinct())
             {

@@ -71,6 +71,7 @@ namespace CsdBridge.BricsCAD
         private readonly CheckBox _drawLabels;
         private readonly CheckBox _drawHatch;
         private readonly CheckBox _closedOutline;
+        private readonly CheckBox _block;
         private readonly TextBox _outlineInterval;
         private readonly TextBox _textHeight;
         private readonly Dictionary<string, TextBox> _layers = new Dictionary<string, TextBox>();
@@ -83,137 +84,166 @@ namespace CsdBridge.BricsCAD
             _savePath = savePath;
 
             Text = "CSD-Bridge - Vehicle turning path (AS/NZS 2890.1)";
+            Font = new Font("Segoe UI", 9f);
+            AutoScaleDimensions = new SizeF(7f, 15f);
+            AutoScaleMode = AutoScaleMode.Font;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterScreen;
             MinimizeBox = false;
             MaximizeBox = false;
             ShowInTaskbar = false;
-            ClientSize = new Size(770, 640);
-            Font = new Font("Segoe UI", 9f);
+            // Everything sizes to its text, so the layout holds at any display scaling.
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            Padding = new Padding(12);
 
             // ------------------------------------------------------------ left column
-            int x = 12, y = 12;
-            Controls.Add(new Label { Text = "Design vehicle", Location = new Point(x, y + 3), AutoSize = true });
-            _vehicle = new ComboBox { Location = new Point(x + 110, y), Width = 140, DropDownStyle = ComboBoxStyle.DropDownList };
+            TableLayoutPanel left = Column();
+
+            TableLayoutPanel vehicleRow = Table(2);
+            vehicleRow.Controls.Add(Caption("Design vehicle"), 0, 0);
+            _vehicle = new ComboBox { Width = 150, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
             foreach (string name in conventions.Vehicles.Keys)
             {
                 _vehicle.Items.Add(name);
             }
 
-            Controls.Add(_vehicle);
-            _vehicleInfo = new Label { Location = new Point(x, y + 28), Size = new Size(360, 34), ForeColor = SystemColors.GrayText };
-            Controls.Add(_vehicleInfo);
+            vehicleRow.Controls.Add(_vehicle, 1, 0);
+            left.Controls.Add(vehicleRow);
+            _vehicleInfo = Note("", LeftWidth);
+            left.Controls.Add(_vehicleInfo);
 
-            var manoeuvre = new GroupBox { Text = "Manoeuvre", Location = new Point(x, 78), Size = new Size(360, 262) };
-            Controls.Add(manoeuvre);
-            int gy = 22;
-            _modeTemplate = new RadioButton { Text = "Standard turn template: pick the start point and direction", Location = new Point(10, gy), AutoSize = true, Checked = true };
-            _modeFollow = new RadioButton { Text = "Follow a line, arc or polyline you select", Location = new Point(10, gy + 22), AutoSize = true };
-            _modePoints = new RadioButton { Text = "Drive through points you click (corners get arcs)", Location = new Point(10, gy + 44), AutoSize = true };
-            manoeuvre.Controls.AddRange(new Control[] { _modeTemplate, _modeFollow, _modePoints });
+            TableLayoutPanel manoeuvre = Table(3);
+            _modeTemplate = new RadioButton { Text = "Standard turn template: pick the start point and direction", AutoSize = true, Checked = true };
+            _modeFollow = new RadioButton { Text = "Follow a line, arc or polyline you select", AutoSize = true };
+            _modePoints = new RadioButton { Text = "Drive through points you click (corners get arcs)", AutoSize = true };
+            foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints })
+            {
+                rb.Margin = new Padding(3, 2, 3, 2);
+                manoeuvre.Controls.Add(rb, 0, manoeuvre.RowCount);
+                manoeuvre.SetColumnSpan(rb, 3);
+                manoeuvre.RowCount++;
+            }
 
-            gy += 74;
-            _radiusLabel = Field(manoeuvre, "Turn radius (m)", gy, out _radius, 70);
-            manoeuvre.Controls.Add(new Label { Text = "at the outer front wheel", Location = new Point(215, gy + 3), AutoSize = true, ForeColor = SystemColors.GrayText });
-            gy += 28;
-            Field(manoeuvre, "Turn angle(s), degrees", gy, out _angles, 120);
+            _radiusLabel = Caption("Turn radius (m)");
+            _radius = Box(60);
+            Row(manoeuvre, _radiusLabel, _radius, Hint("at the outer front wheel"));
+            _angles = Box(110);
             _angles.Text = "90";
-            manoeuvre.Controls.Add(new Label { Text = "e.g. 90 or 30,60,90,120,150,180", Location = new Point(265, gy + 3), AutoSize = true, ForeColor = SystemColors.GrayText });
-            gy += 28;
-            manoeuvre.Controls.Add(new Label { Text = "Direction", Location = new Point(10, gy + 3), AutoSize = true });
-            _left = new RadioButton { Text = "Left", Location = new Point(140, gy), AutoSize = true, Checked = true };
-            _right = new RadioButton { Text = "Right", Location = new Point(200, gy), AutoSize = true };
-            manoeuvre.Controls.AddRange(new Control[] { _left, _right });
-            gy += 28;
-            Field(manoeuvre, "Straight before / after (m)", gy, out _leadIn, 50);
-            _leadOut = new TextBox { Location = new Point(200, gy), Width = 50 };
-            manoeuvre.Controls.Add(_leadOut);
-            gy += 28;
-            manoeuvre.Controls.Add(new Label { Text = "Point following the path", Location = new Point(10, gy + 3), AutoSize = true });
-            _reference = new ComboBox { Location = new Point(140, gy), Width = 205, DropDownStyle = ComboBoxStyle.DropDownList };
+            Row(manoeuvre, Caption("Turn angle(s), degrees"), _angles, Hint("e.g. 90, or 30,60,90,120,150,180"));
+            _left = new RadioButton { Text = "Left", AutoSize = true, Checked = true };
+            _right = new RadioButton { Text = "Right", AutoSize = true };
+            Row(manoeuvre, Caption("Direction"), Flow(_left, _right), null);
+            _leadIn = Box(55);
+            _leadOut = Box(55);
+            Row(manoeuvre, Caption("Straight before / after (m)"), Flow(_leadIn, Hint("/"), _leadOut), null);
+            _reference = new ComboBox { Width = 230, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
             _reference.Items.AddRange(new object[] { "Outer front wheel (AS 2890 radius)", "Front axle centre", "Rear axle centre" });
-            manoeuvre.Controls.Add(_reference);
-            gy += 28;
-            _reverse = new CheckBox { Text = "Reverse (drive backwards along the path)", Location = new Point(140, gy), AutoSize = true };
-            manoeuvre.Controls.Add(_reverse);
+            Row(manoeuvre, Caption("Point following the path"), _reference, null);
+            _reverse = new CheckBox { Text = "Reverse (drive backwards along the path)", AutoSize = true };
+            Row(manoeuvre, null, _reverse, null);
+            manoeuvre.SetColumnSpan(_reverse, 2);
+            left.Controls.Add(Group("Manoeuvre", manoeuvre));
 
-            var clearances = new GroupBox { Text = "Clearances added to the swept path (dashed template)", Location = new Point(x, 348), Size = new Size(360, 86) };
-            Controls.Add(clearances);
-            Field(clearances, "Inside / outside of the turn (m)", 22, out _clearInside, 50, 190);
-            _clearOutside = new TextBox { Location = new Point(250, 22), Width = 50 };
-            clearances.Controls.Add(_clearOutside);
-            clearances.Controls.Add(new Label
-            {
-                Text = "B3.2: 300 mm manoeuvring both sides; B99 adds 300 mm circulation clearance on the outside.",
-                Location = new Point(10, 50),
-                Size = new Size(340, 30),
-                ForeColor = SystemColors.GrayText,
-            });
+            TableLayoutPanel clearances = Table(2);
+            _clearInside = Box(55);
+            _clearOutside = Box(55);
+            Row(clearances, Caption("Inside / outside of the turn (m)"), Flow(_clearInside, Hint("/"), _clearOutside), null);
+            Label clearanceNote = Note("B3.2: 300 mm manoeuvring clearance both sides; the B99 adds 300 mm circulation clearance on the outside.", LeftWidth - 30);
+            clearances.Controls.Add(clearanceNote, 0, clearances.RowCount);
+            clearances.SetColumnSpan(clearanceNote, 2);
+            clearances.RowCount++;
+            left.Controls.Add(Group("Clearances added to the swept path (dashed template)", clearances));
 
-            var notes = new Label
-            {
-                Location = new Point(x, 442),
-                Size = new Size(360, 130),
-                ForeColor = SystemColors.GrayText,
-                Text = "B99 is required for access driveways, ramps and circulation roadways; B85 only for parking spaces " +
-                       "and aisles (B2.2, B2.3). Minimum template radii: B99 6.3 m, B85 5.8 m (B3.1). Turns on circulating " +
-                       "roadways should be at least 8 m (A4).\n\nThe rear axle tracks in behind the point that follows the path, " +
-                       "so the swept path includes the transition into the turn, as in Figures B3 to B6.",
-            };
-            Controls.Add(notes);
+            left.Controls.Add(Note(
+                "B99 is required for access driveways, ramps and circulation roadways; B85 only for parking spaces and aisles " +
+                "(B2.2, B2.3). Minimum template radii: B99 6.3 m, B85 5.8 m (B3.1). Turns on circulating roadways should be at " +
+                "least 8 m (A4). The rear axle tracks in behind the point that follows the path, so the swept path includes the " +
+                "transition into the turn, as in Figures B3 to B6.", LeftWidth));
 
             // ----------------------------------------------------------- right column
-            x = 390;
-            var draw = new GroupBox { Text = "Draw", Location = new Point(x, 12), Size = new Size(368, 170) };
-            Controls.Add(draw);
-            _drawSwept = Check(draw, "Swept path (body)", 10, 22);
-            _drawClearance = Check(draw, "Swept path + clearances", 10, 44);
-            _drawVehicle = Check(draw, "Vehicle at start and end", 10, 66);
-            _drawPath = Check(draw, "Driven path", 10, 88);
-            _drawWheels = Check(draw, "Wheel paths", 190, 22);
-            _drawLabels = Check(draw, "Label", 190, 44);
-            _drawHatch = Check(draw, "Hatch the swept area", 190, 66);
-            _closedOutline = Check(draw, "Swept path as one closed outline", 190, 88);
-            Field(draw, "Vehicle outline every (m)", 114, out _outlineInterval, 50, 150);
-            draw.Controls.Add(new Label { Text = "0 = none", Location = new Point(215, 117), AutoSize = true, ForeColor = SystemColors.GrayText });
-            Field(draw, "Label text height", 140, out _textHeight, 50, 150);
-            draw.Controls.Add(new Label { Text = "blank = drawing default", Location = new Point(215, 143), AutoSize = true, ForeColor = SystemColors.GrayText });
+            TableLayoutPanel right = Column();
 
-            var layers = new GroupBox { Text = "Layers ({vehicle} is replaced by the vehicle name)", Location = new Point(x, 190), Size = new Size(368, 262) };
-            Controls.Add(layers);
-            int ly = 22;
+            TableLayoutPanel draw = Table(2);
+            _drawSwept = Check("Swept path (body)");
+            _drawClearance = Check("Swept path + clearances");
+            _drawVehicle = Check("Vehicle at start and end");
+            _drawPath = Check("Driven path");
+            _drawWheels = Check("Wheel paths");
+            _drawLabels = Check("Label");
+            _drawHatch = Check("Hatch the swept area");
+            _closedOutline = Check("Swept path as one closed outline");
+            _block = Check("Make the result a block");
+            Control[] column1 = { _drawSwept, _drawClearance, _drawVehicle, _drawPath, _block };
+            Control[] column2 = { _drawWheels, _drawLabels, _drawHatch, _closedOutline, Hint("named '<vehicle> turning path', inserted at the start") };
+            for (int i = 0; i < column1.Length; i++)
+            {
+                draw.Controls.Add(column1[i], 0, i);
+                draw.Controls.Add(column2[i], 1, i);
+            }
+
+            draw.RowCount = column1.Length;
+            TableLayoutPanel drawNumbers = Table(3);
+            _outlineInterval = Box(55);
+            Row(drawNumbers, Caption("Vehicle outline every (m)"), _outlineInterval, Hint("0 = none"));
+            _textHeight = Box(55);
+            Row(drawNumbers, Caption("Label text height"), _textHeight, Hint("blank = drawing default"));
+            draw.Controls.Add(drawNumbers, 0, draw.RowCount);
+            draw.SetColumnSpan(drawNumbers, 2);
+            draw.RowCount++;
+            right.Controls.Add(Group("Draw", draw));
+
+            TableLayoutPanel layers = Table(2);
             foreach (var (part, caption) in new[]
             {
                 ("swept_path", "Swept path"), ("clearance", "Clearances"), ("vehicle", "Vehicle outline"),
                 ("vehicle_intermediate", "Outlines along the path"), ("path", "Driven path"), ("wheel_paths", "Wheel paths"),
-                ("labels", "Label"), ("hatch", "Hatch"),
+                ("labels", "Label"), ("hatch", "Hatch"), ("block", "Block"),
             })
             {
-                Field(layers, caption, ly, out TextBox box, 215, 140);
+                TextBox box = Box(260);
+                Row(layers, Caption(caption), box, null);
                 _layers[part] = box;
-                ly += 28;
             }
 
-            layers.Controls.Add(new Label
-            {
-                Text = "New layers get the styles from turn-paths.json; existing layers are not changed.",
-                Location = new Point(10, ly + 2),
-                Size = new Size(350, 16),
-                ForeColor = SystemColors.GrayText,
-            });
+            Label layerNote = Note("New layers get the styles from turn-paths.json; existing layers are not changed.", 400);
+            layers.Controls.Add(layerNote, 0, layers.RowCount);
+            layers.SetColumnSpan(layerNote, 2);
+            layers.RowCount++;
+            right.Controls.Add(Group("Layers ({vehicle} is replaced by the vehicle name)", layers));
 
             // ------------------------------------------------------------------ bottom
-            _status = new Label { Location = new Point(12, 604), Size = new Size(420, 30), ForeColor = SystemColors.GrayText };
-            Controls.Add(_status);
-            var save = new Button { Text = "Save as defaults", Location = new Point(390, 600), Width = 120 };
+            _status = Note("", 440);
+            var save = Button("Save as defaults");
             save.Click += (s, e) => SaveDefaults();
-            var reset = new Button { Text = "Reset", Location = new Point(516, 600), Width = 70 };
+            var reset = Button("Reset");
             reset.Click += (s, e) => LoadFrom(_conventions, keepVehicle: false);
-            var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(602, 600), Width = 75 };
-            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(683, 600), Width = 75 };
-            Controls.AddRange(new Control[] { save, reset, ok, cancel });
+            var ok = Button("OK");
+            ok.DialogResult = DialogResult.OK;
+            var cancel = Button("Cancel");
+            cancel.DialogResult = DialogResult.Cancel;
+            var buttons = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Anchor = AnchorStyles.Right | AnchorStyles.Bottom, Margin = new Padding(0) };
+            buttons.Controls.AddRange(new Control[] { save, reset, ok, cancel });
+            TableLayoutPanel bottom = Table(2);
+            bottom.Dock = DockStyle.Fill;
+            bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            bottom.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            _status.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            bottom.Controls.Add(_status, 0, 0);
+            bottom.Controls.Add(buttons, 1, 0);
             AcceptButton = ok;
             CancelButton = cancel;
+
+            TableLayoutPanel root = Table(2);
+            root.Controls.Add(left, 0, 0);
+            root.Controls.Add(right, 1, 0);
+            root.Controls.Add(bottom, 0, 1);
+            root.SetColumnSpan(bottom, 2);
+            left.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            right.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            left.Margin = new Padding(0, 0, 16, 0);
+            root.Dock = DockStyle.Fill;
+            Controls.Add(root);
 
             _vehicle.SelectedIndexChanged += (s, e) => OnVehicleChanged();
             foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints })
@@ -227,7 +257,7 @@ namespace CsdBridge.BricsCAD
                 };
             }
 
-            _drawVehicle.CheckedChanged += (s, e) => _closedOutline.Enabled = _drawSwept.Checked;
+            _drawSwept.CheckedChanged += (s, e) => _closedOutline.Enabled = _drawSwept.Checked;
             FormClosing += (s, e) =>
             {
                 if (DialogResult == DialogResult.OK && !TryBuildChoice(out _, out string? problem))
@@ -250,20 +280,113 @@ namespace CsdBridge.BricsCAD
             }
         }
 
-        private static Label Field(Control parent, string caption, int y, out TextBox box, int width, int boxX = 140)
+        // ------------------------------------------------------------- layout helpers
+        // Design-time pixel widths; AutoScaleMode.Font scales them with the display.
+
+        private const int LeftWidth = 420;
+
+        /// <summary>An auto-sizing table whose rows grow to their content.</summary>
+        private static TableLayoutPanel Table(int columns) => new TableLayoutPanel
         {
-            var label = new Label { Text = caption, Location = new Point(10, y + 3), AutoSize = true };
-            box = new TextBox { Location = new Point(boxX, y), Width = width };
-            parent.Controls.Add(label);
-            parent.Controls.Add(box);
-            return label;
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = columns,
+            RowCount = 0,
+            Margin = new Padding(0),
+        };
+
+        /// <summary>A one-column stack in which every item stretches to the widest.</summary>
+        private static TableLayoutPanel Column()
+        {
+            TableLayoutPanel t = Table(1);
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            t.ControlAdded += (s, e) =>
+            {
+                if (e.Control == null)
+                {
+                    return;
+                }
+
+                e.Control.Dock = DockStyle.Fill;
+                if (e.Control.Margin == new Padding(0))
+                {
+                    e.Control.Margin = new Padding(0, 0, 0, 8);
+                }
+            };
+            return t;
         }
 
-        private static CheckBox Check(Control parent, string caption, int x, int y)
+        private static GroupBox Group(string title, Control content)
         {
-            var box = new CheckBox { Text = caption, Location = new Point(x, y), AutoSize = true };
-            parent.Controls.Add(box);
-            return box;
+            content.Dock = DockStyle.Fill;
+            var group = new GroupBox { Text = title, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(8, 4, 8, 6), Margin = new Padding(0, 0, 0, 10) };
+            group.Controls.Add(content);
+            return group;
+        }
+
+        /// <summary>Adds one row: caption | control | hint. Nulls leave the cell empty.</summary>
+        private static void Row(TableLayoutPanel table, Control? caption, Control control, Control? hint)
+        {
+            int row = table.RowCount;
+            if (caption != null)
+            {
+                table.Controls.Add(caption, 0, row);
+            }
+
+            table.Controls.Add(control, 1, row);
+            if (hint != null && table.ColumnCount > 2)
+            {
+                table.Controls.Add(hint, 2, row);
+            }
+
+            table.RowCount = row + 1;
+        }
+
+        private static Label Caption(string text) => new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 0, 8, 0) };
+
+        private static Label Hint(string text) => new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = SystemColors.GrayText, Margin = new Padding(3, 0, 3, 0) };
+
+        /// <summary>A grey note that wraps at the given design width.</summary>
+        private static Label Note(string text, int width) => new Label
+        {
+            Text = text,
+            AutoSize = true,
+            MaximumSize = new Size(width, 0),
+            ForeColor = SystemColors.GrayText,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(3, 2, 3, 6),
+        };
+
+        private static TextBox Box(int width) => new TextBox { Width = width, Anchor = AnchorStyles.Left, Margin = new Padding(3, 2, 3, 2) };
+
+        private static CheckBox Check(string text) => new CheckBox { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 2, 12, 2) };
+
+        private static Button Button(string text) => new Button
+        {
+            Text = text,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = new Size(80, 27),
+            Padding = new Padding(8, 0, 8, 0),
+            Margin = new Padding(6, 0, 0, 0),
+        };
+
+        /// <summary>Controls side by side, sized to fit.</summary>
+        private static FlowLayoutPanel Flow(params Control[] controls)
+        {
+            var flow = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Anchor = AnchorStyles.Left, Margin = new Padding(0) };
+            foreach (Control c in controls)
+            {
+                c.Anchor = AnchorStyles.Left;
+                if (c is Label)
+                {
+                    c.Margin = new Padding(2, 5, 2, 0);
+                }
+
+                flow.Controls.Add(c);
+            }
+
+            return flow;
         }
 
         private void LoadFrom(TurnPathConventions c, bool keepVehicle)
@@ -284,6 +407,7 @@ namespace CsdBridge.BricsCAD
             _drawLabels.Checked = c.Draw.Labels;
             _drawHatch.Checked = c.Draw.Hatch;
             _closedOutline.Checked = c.Draw.ClosedOutline;
+            _block.Checked = c.Draw.Block;
             _outlineInterval.Text = Num(c.OutlineInterval);
             _textHeight.Text = c.TextHeight is double th ? Num(th) : "";
             foreach (KeyValuePair<string, string> kv in c.Layers.All())
@@ -449,6 +573,7 @@ namespace CsdBridge.BricsCAD
             style.Draw.Labels = _drawLabels.Checked;
             style.Draw.Hatch = _drawHatch.Checked;
             style.Draw.ClosedOutline = _closedOutline.Checked;
+            style.Draw.Block = _block.Checked;
             style.OutlineInterval = interval;
             style.TextHeight = textHeight;
             foreach (KeyValuePair<string, TextBox> kv in _layers)

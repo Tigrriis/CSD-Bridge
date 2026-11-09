@@ -80,7 +80,10 @@
     "wheel_paths": false,
     "labels": true,
     "hatch": false,
-    "closed_outline": false
+    "closed_outline": false,
+    // Gather everything drawn into one block, named "<vehicle> turning path", inserted at the
+    // vehicle's start point on the block layer. The entities keep their layers inside the block.
+    "block": false
   },
 
   "layers": {
@@ -91,7 +94,8 @@
     "path": "AE CIV PLN - VEHICLE PATH",
     "wheel_paths": "AE CIV PLN - VEHICLE WHEEL PATHS",
     "labels": "AE CIV PLN - VEHICLE TEXT",
-    "hatch": "AE CIV HTC - VEHICLE SWEPT PATH"
+    "hatch": "AE CIV HTC - VEHICLE SWEPT PATH",
+    "block": "AE CIV PLN - VEHICLE BLOCK"
   },
 
   "hatch": { "pattern": "SOLID", "scale": 1, "angle": 0 },
@@ -104,6 +108,7 @@
     "AE CIV PLN - VEHICLE PATH": { "color": 8, "linetype": "DASHDOT", "lineweight": 0.13, "description": "Path driven by the design vehicle's reference point" },
     "AE CIV PLN - VEHICLE WHEEL PATHS": { "color": 8, "linetype": "Continuous", "lineweight": 0.13, "description": "Design vehicle wheel paths" },
     "AE CIV PLN - VEHICLE TEXT": { "color": 4, "lineweight": 0.18, "description": "Design vehicle labels" },
-    "AE CIV HTC - VEHICLE SWEPT PATH": { "color": 254, "rgb": [ 255, 220, 220 ], "lineweight": 0.13, "description": "Design vehicle swept area" }
+    "AE CIV HTC - VEHICLE SWEPT PATH": { "color": 254, "rgb": [ 255, 220, 220 ], "lineweight": 0.13, "description": "Design vehicle swept area" },
+    "AE CIV PLN - VEHICLE BLOCK": { "color": 7, "lineweight": 0.25, "description": "Design vehicle turning path blocks" }
   }
 }
