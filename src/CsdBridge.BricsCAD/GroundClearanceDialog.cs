@@ -32,6 +32,10 @@ namespace CsdBridge.BricsCAD
         public bool DrawTemplates { get; set; } = true;
         public bool DrawGroundings { get; set; } = true;
         public bool DrawLabels { get; set; } = true;
+
+        /// <summary>The lowest the underside gets along the whole section, as one line.</summary>
+        public bool DrawEnvelope { get; set; } = true;
+
         public TurnPathLayers Layers { get; set; } = new TurnPathLayers();
         public double? TextHeight { get; set; }
         public TurnPathConventions Conventions { get; set; } = TurnPathConventions.Default();
@@ -61,6 +65,7 @@ namespace CsdBridge.BricsCAD
         private readonly CheckBox _drawTemplates;
         private readonly CheckBox _drawGroundings;
         private readonly CheckBox _drawLabels;
+        private readonly CheckBox _drawEnvelope;
         private readonly TextBox _textHeight;
         private readonly Dictionary<string, TextBox> _layers = new Dictionary<string, TextBox>();
         private readonly Label _status;
@@ -165,7 +170,8 @@ namespace CsdBridge.BricsCAD
             _drawTemplates = new CheckBox { Text = "Template at its worst position (each direction)", AutoSize = true };
             _drawGroundings = new CheckBox { Text = "Where it grounds", AutoSize = true };
             _drawLabels = new CheckBox { Text = "Labels", AutoSize = true };
-            foreach (CheckBox cb in new[] { _drawTemplates, _drawGroundings, _drawLabels })
+            _drawEnvelope = new CheckBox { Text = "Lowest point of the underside along the whole section (one line)", AutoSize = true };
+            foreach (CheckBox cb in new[] { _drawEnvelope, _drawTemplates, _drawGroundings, _drawLabels })
             {
                 draw.Controls.Add(cb, 0, draw.RowCount);
                 draw.SetColumnSpan(cb, 3);
@@ -258,7 +264,7 @@ namespace CsdBridge.BricsCAD
             _plot.Checked = true;
             _plotVe.Text = Num(Math.Max(1, c.SectionVerticalExaggeration));
             _step.Text = Num(c.ClearanceStep);
-            _drawTemplates.Checked = _drawGroundings.Checked = _drawLabels.Checked = true;
+            _drawTemplates.Checked = _drawGroundings.Checked = _drawLabels.Checked = _drawEnvelope.Checked = true;
             _textHeight.Text = c.TextHeight is double th ? Num(th) : "";
             foreach (KeyValuePair<string, string> kv in c.Layers.All())
             {
@@ -395,6 +401,7 @@ namespace CsdBridge.BricsCAD
                 DrawTemplates = _drawTemplates.Checked,
                 DrawGroundings = _drawGroundings.Checked,
                 DrawLabels = _drawLabels.Checked,
+                DrawEnvelope = _drawEnvelope.Checked,
                 Layers = layers,
                 TextHeight = textHeight,
                 Conventions = _conventions,

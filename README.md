@@ -62,7 +62,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 198 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 199 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -435,12 +435,14 @@ placed with both wheels on the ground and slid along in small steps; it must nev
 
 - **2D, on a plotted long section**: select the plotted profile polyline and give its vertical exaggeration
   (and horizontal scale if the plot isn't 1 drawing unit per metre). The template is run both ways along the
-  section, since the two overhangs differ. The template is drawn at its worst position in each direction, the
-  ground it touches is marked, and a label gives the smallest gap (or how far it grounds).
+  section, since the two overhangs differ. One line shows the lowest the underside ever gets along the whole
+  section (it must stay above the ground everywhere); the template is drawn at its worst position in each
+  direction, the ground it touches is marked, and a label gives the smallest gap (or how far it grounds).
 - **3D, on a surface**: select the line or polyline the vehicle drives (forwards or in reverse). At every
   position the surface is sampled along each side of the car, from the rear extremity through both wheels to
   the front extremity, and the template is placed on that side's wheels. Grounding spots are ringed on the plan,
-  and each wheel path can be plotted as a long section with the template at its worst position. It reads
+  and each wheel path can be plotted as a long section with the underside line and the template at its worst
+  position. It reads
   BricsCAD TIN surfaces; for a CSD surface make a BricsCAD copy with Surface Exchange first.
 - The clearance and angles are editable per run (Appendix C, Note: lower the underside for a lesser clearance),
   and saved with the other defaults. Layers: templates and plots, where it grounds, labels.

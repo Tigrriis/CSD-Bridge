@@ -69,6 +69,12 @@ namespace CsdBridge.Core.Vehicles
 
         public List<GroundingRange> Groundings { get; } = new List<GroundingRange>();
 
+        /// <summary>
+        /// The lowest the underside ever gets at each chainage, over every position and direction:
+        /// a (chainage, level) line that must stay above the ground everywhere.
+        /// </summary>
+        public List<(double Chainage, double Level)> UndersideEnvelope { get; set; } = new List<(double, double)>();
+
         /// <summary>Smallest underside-to-ground distance anywhere (m); negative = the vehicle grounds.</summary>
         public double MinGap => Worst.MinGap;
 
@@ -127,6 +133,9 @@ namespace CsdBridge.Core.Vehicles
 
         /// <summary>Reference-path chainage ranges over which this side grounds.</summary>
         public List<(double From, double To, double WorstGap)> Groundings { get; } = new List<(double, double, double)>();
+
+        /// <summary>The lowest the underside gets along this side's wheel path, by distance along the trace.</summary>
+        public List<(double Chainage, double Level)> UndersideEnvelope { get; set; } = new List<(double, double)>();
 
         public int OffSurfaceCount { get; set; }
 
@@ -237,7 +246,54 @@ namespace CsdBridge.Core.Vehicles
                 result.Groundings.AddRange(Ranges(result.Positions.Where(p => p.Forward == dir).OrderBy(p => p.RearChainage).ToList()));
             }
 
+            result.UndersideEnvelope = LowerEnvelope(result.Positions.Select(p => p.Underside), profile.Start, profile.End, Math.Min(step, SampleStep));
             return result;
+        }
+
+        /// <summary>
+        /// The lowest of a set of (chainage, level) lines at every chainage: the undersides over all
+        /// positions give the lowest the vehicle ever reaches. Simplified to 1 mm.
+        /// </summary>
+        public static List<(double Chainage, double Level)> LowerEnvelope(IEnumerable<(double Chainage, double Level)[]> lines, double from, double to, double step)
+        {
+            int n = Math.Max(2, (int)Math.Round((to - from) / step) + 1);
+            double[] low = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                low[i] = double.PositiveInfinity;
+            }
+
+            foreach ((double Chainage, double Level)[] line in lines)
+            {
+                if (line.Length == 0)
+                {
+                    continue;
+                }
+
+                double a = line[0].Chainage, b = line[line.Length - 1].Chainage;
+                int i0 = Math.Max(0, (int)Math.Ceiling((a - from) / step));
+                int i1 = Math.Min(n - 1, (int)Math.Floor((b - from) / step));
+                for (int i = i0; i <= i1; i++)
+                {
+                    double x = from + i * step;
+                    double z = Interpolate(line, x);
+                    if (z < low[i])
+                    {
+                        low[i] = z;
+                    }
+                }
+            }
+
+            var pts = new List<Point2>();
+            for (int i = 0; i < n; i++)
+            {
+                if (!double.IsInfinity(low[i]))
+                {
+                    pts.Add(new Point2(from + i * step, low[i]));
+                }
+            }
+
+            return TurnPathSimulator.Simplify(pts, 0.001).Select(p => (p.X, p.Y)).ToList();
         }
 
         /// <summary>Template positions with the rear wheel every <paramref name="step"/> along the profile, facing up chainage.</summary>
@@ -589,6 +645,15 @@ namespace CsdBridge.Core.Vehicles
                 }
 
                 side.Worst = side.Samples.Where(s => !s.OffSurface).OrderBy(s => s.MinGap).FirstOrDefault();
+                var checkedSamples = side.Samples.Where(s => !s.OffSurface).ToList();
+                if (checkedSamples.Count > 0)
+                {
+                    double from = checkedSamples.Min(s => s.WheelPathChainage) - v.RearOverhang;
+                    double to = checkedSamples.Max(s => s.WheelPathChainage) + v.Wheelbase + v.FrontOverhang;
+                    side.UndersideEnvelope = LowerEnvelope(
+                        checkedSamples.Select(s => Underside(template, s.WheelPathChainage, s.RearLevel, s.WheelPathChainage + v.Wheelbase, s.FrontLevel)),
+                        from, to, SampleStep);
+                }
                 (double From, double To, double Worst)? current = null;
                 foreach (PathClearanceSample s in side.Samples)
                 {

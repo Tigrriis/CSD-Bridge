@@ -38,10 +38,15 @@ namespace CsdBridge.Core.Vehicles
         /// Onto a long section: the template at its worst position in each direction, the ground over
         /// which the vehicle grounds, and a label.
         /// </summary>
-        public static List<DraftedEntity> DrawOnSection(GroundClearanceResult r, SectionFrame f, TurnPathLayers layers, double? textHeight, bool templates = true, bool groundings = true, bool label = true)
+        public static List<DraftedEntity> DrawOnSection(GroundClearanceResult r, SectionFrame f, TurnPathLayers layers, double? textHeight, bool templates = true, bool groundings = true, bool label = true, bool envelope = true)
         {
             var list = new List<DraftedEntity>();
             TurnPathLayers l = layers.Resolve(r.Vehicle.Name);
+            if (envelope && r.UndersideEnvelope.Count >= 2)
+            {
+                list.Add(new DraftedEntity("clearance_envelope", new PolylineSpec { Layer = l.ClearanceCheck, Points = r.UndersideEnvelope.Select(u => f.ToDrawing(u.Chainage, u.Level)).ToList() }));
+            }
+
             if (templates)
             {
                 foreach (ClearancePosition? p in new[] { r.WorstForward, r.WorstBackward })
@@ -128,7 +133,7 @@ namespace CsdBridge.Core.Vehicles
         /// Long section plots of each side's wheel path with the template at its worst position,
         /// stacked downwards from <paramref name="origin"/>.
         /// </summary>
-        public static List<DraftedEntity> DrawSectionPlots(PathClearanceResult r, Point2 origin, double verticalExaggeration, TurnPathLayers layers, double? textHeight)
+        public static List<DraftedEntity> DrawSectionPlots(PathClearanceResult r, Point2 origin, double verticalExaggeration, TurnPathLayers layers, double? textHeight, bool envelope = true)
         {
             var list = new List<DraftedEntity>();
             TurnPathLayers l = layers.Resolve(r.Vehicle.Name);
@@ -142,13 +147,23 @@ namespace CsdBridge.Core.Vehicles
                 }
 
                 double datum = Math.Floor(profile.Points.Min(p => p.Level)) - 0.5;
-                double height = (profile.Points.Max(p => p.Level) - datum) * verticalExaggeration;
+                double top = profile.Points.Max(p => p.Level);
+                if (side.UndersideEnvelope.Count > 0)
+                {
+                    top = Math.Max(top, side.UndersideEnvelope.Max(u => u.Level));
+                }
+
+                double height = (top - datum) * verticalExaggeration;
                 var f = new SectionFrame { Origin = new Point2(origin.X, y - height - 1.5), Datum = datum, VerticalExaggeration = verticalExaggeration };
 
                 // Title, datum line and the ground.
                 list.Add(new DraftedEntity("labels", new TextSpec { Layer = l.Labels, Position = new Point2(origin.X, y - 0.6), Text = $"{r.Vehicle.Name} ground clearance, {side.Name} wheel path (VE {verticalExaggeration:0.#}, datum {datum:0.0})", Height = textHeight }));
                 list.Add(new DraftedEntity("clearance_section", new LineSpec { Layer = l.ClearanceCheck, Start = f.ToDrawing(profile.Start, datum), End = f.ToDrawing(profile.End, datum) }));
                 list.Add(new DraftedEntity("clearance_section", new PolylineSpec { Layer = l.ClearanceCheck, Points = profile.Points.Select(p => f.ToDrawing(p.Chainage, p.Level)).ToList() }));
+                if (envelope && side.UndersideEnvelope.Count >= 2)
+                {
+                    list.Add(new DraftedEntity("clearance_envelope", new PolylineSpec { Layer = l.ClearanceCheck, Points = side.UndersideEnvelope.Select(u => f.ToDrawing(u.Chainage, u.Level)).ToList() }));
+                }
 
                 if (side.Worst != null)
                 {
