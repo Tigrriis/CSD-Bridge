@@ -1,0 +1,109 @@
+// CSD-Bridge vehicle turning path conventions, used by AITURN (the Turn path ribbon button)
+// and Claude's draw_turn_path tool.
+//
+// Vehicles are AS/NZS 2890.1:2004 Appendix B base dimensions (Figures B1 and B2), in metres:
+//   length / width            overall body
+//   wheelbase, front_overhang, rear_overhang
+//   effective_*               the rounded corners that actually bound the swept path
+//   track                     wheel centre to wheel centre (scaled from the figures; the
+//                             standard doesn't dimension it). It only moves the wheel paths and
+//                             sets how the nominated radius (outer front wheel) relates to the body.
+//   min_turn_radius           smallest template radius, at the outer front wheel (B3.1)
+//   clearance_inside/outside  B3.2: 300 mm manoeuvring both sides; B99 adds 300 mm circulation
+//                             clearance on the outside
+// Add your own vehicles (a service vehicle, say) as more entries with the same fields.
+//
+// Layers: {vehicle} in a layer name is replaced by the vehicle's name, e.g.
+// "AE CIV PLN - {vehicle} SWEPT PATH". layer_styles apply only when a layer doesn't exist yet;
+// existing layers are never changed. The AITURN dialog can edit all of this per run and save it.
+//
+// To use your own copy, set "turn_paths_file" in %APPDATA%\CsdBridge\settings.json. A copy saved
+// from the dialog lives at %APPDATA%\CsdBridge\turn-paths.json and takes precedence over this file.
+{
+  "vehicles": {
+    "B99": {
+      "description": "AS/NZS 2890.1:2004 Figure B1, 99.8th percentile car (5.2 x 1.94 m). Access driveways, ramps, circulation roadways.",
+      "length": 5.2,
+      "width": 1.94,
+      "wheelbase": 3.05,
+      "front_overhang": 1.2,
+      "rear_overhang": 0.95,
+      "effective_front_overhang": 1.15,
+      "effective_rear_overhang": 0.8,
+      "effective_width": 1.84,
+      "track": 1.62,
+      "min_turn_radius": 6.3,
+      "clearance_inside": 0.3,
+      "clearance_outside": 0.6,
+      "wheel_length": 0.65,
+      "wheel_width": 0.22
+    },
+    "B85": {
+      "description": "AS/NZS 2890.1:2004 Figure B2, 85th percentile car (4.91 x 1.87 m). Parking spaces and aisles only.",
+      "length": 4.91,
+      "width": 1.87,
+      "wheelbase": 2.8,
+      "front_overhang": 1.19,
+      "rear_overhang": 0.92,
+      "effective_front_overhang": 1.1,
+      "effective_rear_overhang": 0.75,
+      "effective_width": 1.77,
+      "track": 1.57,
+      "min_turn_radius": 5.8,
+      "clearance_inside": 0.3,
+      "clearance_outside": 0.3,
+      "wheel_length": 0.65,
+      "wheel_width": 0.22
+    }
+  },
+  "default_vehicle": "B99",
+
+  // Simulation: step along the path (m) and the tolerance the drawn polylines are simplified to (m).
+  "step": 0.02,
+  "tolerance": 0.001,
+
+  // Template turns: straight travel before and after the arc (m).
+  "lead_in": 0,
+  "lead_out": 6,
+
+  // Vehicle outlines every this many metres along the path (0 = only at the start and end).
+  "outline_interval": 0,
+
+  // Label text height in drawing units (null = the drawing's default).
+  "text_height": 0.3,
+
+  "draw": {
+    "swept_path": true,
+    "clearance": true,
+    "vehicle": true,
+    "path": true,
+    "wheel_paths": false,
+    "labels": true,
+    "hatch": false,
+    "closed_outline": false
+  },
+
+  "layers": {
+    "swept_path": "AE CIV PLN - VEHICLE SWEPT PATH",
+    "clearance": "AE CIV PLN - VEHICLE CLEARANCE",
+    "vehicle": "AE CIV PLN - VEHICLE OUTLINE",
+    "vehicle_intermediate": "AE CIV PLN - VEHICLE OUTLINE INTERMEDIATE",
+    "path": "AE CIV PLN - VEHICLE PATH",
+    "wheel_paths": "AE CIV PLN - VEHICLE WHEEL PATHS",
+    "labels": "AE CIV PLN - VEHICLE TEXT",
+    "hatch": "AE CIV HTC - VEHICLE SWEPT PATH"
+  },
+
+  "hatch": { "pattern": "SOLID", "scale": 1, "angle": 0 },
+
+  "layer_styles": {
+    "AE CIV PLN - VEHICLE SWEPT PATH": { "color": 1, "linetype": "Continuous", "lineweight": 0.35, "description": "Design vehicle swept path (body)" },
+    "AE CIV PLN - VEHICLE CLEARANCE": { "color": 1, "linetype": "DASHED", "lineweight": 0.25, "description": "Design vehicle swept path plus AS/NZS 2890.1 clearances" },
+    "AE CIV PLN - VEHICLE OUTLINE": { "color": 4, "linetype": "Continuous", "lineweight": 0.25, "description": "Design vehicle outline at the start and end" },
+    "AE CIV PLN - VEHICLE OUTLINE INTERMEDIATE": { "color": 8, "linetype": "Continuous", "lineweight": 0.13, "description": "Design vehicle outlines along the path" },
+    "AE CIV PLN - VEHICLE PATH": { "color": 8, "linetype": "DASHDOT", "lineweight": 0.13, "description": "Path driven by the design vehicle's reference point" },
+    "AE CIV PLN - VEHICLE WHEEL PATHS": { "color": 8, "linetype": "Continuous", "lineweight": 0.13, "description": "Design vehicle wheel paths" },
+    "AE CIV PLN - VEHICLE TEXT": { "color": 4, "lineweight": 0.18, "description": "Design vehicle labels" },
+    "AE CIV HTC - VEHICLE SWEPT PATH": { "color": 254, "rgb": [ 255, 220, 220 ], "lineweight": 0.13, "description": "Design vehicle swept area" }
+  }
+}

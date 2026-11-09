@@ -40,7 +40,14 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
   and DXF writer for the CLI harness and tests. Porting to AutoCAD means writing another
   `IDrawingHost`. The BricsCAD host already uses the AutoCAD-compatible API, so that is mostly a
   namespace swap.
-- **CsdBridge.BricsCAD** is the add-in: commands, panel, settings, and the drawing host.
+- **CsdBridge.Core/Vehicles** is the AS/NZS 2890.1 turning path simulator: design vehicles (B99,
+  B85, or any added to `turn-paths.json`), a kinematic bicycle-model simulation along a path, the
+  swept path as the exact boundary of the union of the body over every pose, the clearance
+  template, and the `draw_turn_path` tool. It has no CAD dependency, so the same code serves the
+  `AITURN` command, Claude's tool and the tests.
+- **CsdBridge.BricsCAD** is the add-in: commands, panel, settings, and the drawing host. `AITURN`
+  shows a WinForms dialog, prompts for geometry with the Editor, and draws through
+  `BricsCadDrawingHost` like the tools do, so the result is one UNDO step.
 
 ## Request flow
 

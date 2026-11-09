@@ -139,6 +139,23 @@ def routines():
     return img
 
 
+def turn_path():
+    """A car in plan at the bottom left, with its swept path curving away to the right."""
+    img, d = canvas()
+    RED = (205, 55, 45, 255)
+    # swept path: a band between two concentric quarter arcs about (236, 236)
+    d.pieslice((236 - 206, 236 - 206, 236 + 206, 236 + 206), 180, 270, fill=RED)
+    d.pieslice((236 - 118, 236 - 118, 236 + 118, 236 + 118), 180, 270, fill=(0, 0, 0, 0))
+    # dashed clearance line outside the band
+    for a in range(182, 270, 16):
+        d.arc((236 - 236, 236 - 236, 236 + 236, 236 + 236), a, a + 8, fill=RED, width=10)
+    # the car, parked at the start, pointing up
+    d.rounded_rectangle((52, 118, 128, 238), radius=18, fill=BLUE, outline=BLUE_DARK, width=OUTLINE)
+    for (x0, y0) in ((44, 132), (118, 132), (44, 196), (118, 196)):
+        d.rectangle((x0, y0, x0 + 18, y0 + 30), fill=BLUE_DARK)
+    return img
+
+
 ICONS = {
     "chat": chat,
     "draft": draft,
@@ -148,6 +165,7 @@ ICONS = {
     "status": status,
     "key": key,
     "scalebar": scale_bar,
+    "turnpath": turn_path,
 }
 
 

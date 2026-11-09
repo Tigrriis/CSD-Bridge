@@ -83,6 +83,14 @@ namespace CsdBridge.BricsCAD
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public CsdBridge.Core.Drawing.ScaleBarOptions? ScaleBars { get; set; }
 
+        /// <summary>
+        /// Vehicle turning path conventions file (vehicles, clearances, layers). Empty means
+        /// %APPDATA%\CsdBridge\turn-paths.json if the AITURN dialog has saved one, else turn-paths.json
+        /// next to the add-in DLL.
+        /// </summary>
+        [JsonPropertyName("turn_paths_file")]
+        public string? TurnPathsFile { get; set; }
+
         [JsonPropertyName("standards_file")]
         public string? StandardsFile { get; set; }
 
@@ -181,6 +189,47 @@ namespace CsdBridge.BricsCAD
                 }
 
                 return CsdBridge.Core.Civil.RoadConventions.Load(path);
+            }
+            catch (Exception ex)
+            {
+                error = $"{path}: {ex.Message}";
+                return null;
+            }
+        }
+
+        /// <summary>Where the AITURN dialog saves the user's turning path conventions.</summary>
+        public static string UserTurnPathsPath => Path.Combine(Folder, "turn-paths.json");
+
+        public string ResolvedTurnPathsPath()
+        {
+            if (!string.IsNullOrWhiteSpace(TurnPathsFile))
+            {
+                return Environment.ExpandEnvironmentVariables(TurnPathsFile!);
+            }
+
+            if (File.Exists(UserTurnPathsPath))
+            {
+                return UserTurnPathsPath;
+            }
+
+            string dir = Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".";
+            return Path.Combine(dir, "turn-paths.json");
+        }
+
+        /// <summary>The turning path conventions, or null with the reason.</summary>
+        public CsdBridge.Core.Vehicles.TurnPathConventions? LoadTurnPathConventions(out string? error)
+        {
+            string path = ResolvedTurnPathsPath();
+            error = null;
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    error = $"{path} not found";
+                    return null;
+                }
+
+                return CsdBridge.Core.Vehicles.TurnPathConventions.Load(path);
             }
             catch (Exception ex)
             {
