@@ -15,6 +15,7 @@
   <ItemGroup>
     <!-- The shipped conventions, so the tests check they load and work. -->
     <None Include="..\..\src\CsdBridge.BricsCAD\road-drafting.json" Link="road-drafting.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\CsdBridge.BricsCAD\long-section-hatch.json" Link="long-section-hatch.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

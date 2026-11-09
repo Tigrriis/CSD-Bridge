@@ -1,0 +1,42 @@
+// CSD-Bridge: how AIPIPEHATCH hatches the pipes in Civil Site Design long sections.
+//
+// AIPIPEHATCH looks at every layout whose name contains one of layout_name_contains, finds
+// the long section xref in it, and puts one SOLID hatch over all the pipe runs, on the
+// service's hatch layer. It replaces its own earlier hatches, so run it again after CSD
+// updates a long section.
+//
+// To use your own copy, set "long_section_hatch_file" in %APPDATA%\CsdBridge\settings.json.
+{
+  "layout_name_contains": [ "long section" ],
+
+  // Layers in the long section xref that hold the pipe lines (wildcards * and ?; leave out
+  // the "xref|" prefix). Empty = find pipes by shape: two parallel lines on one layer, one
+  // above the other, between the same two chainages. AIPIPEHATCH reports the layers it found
+  // pipes on; put them here if it ever picks up something that isn't a pipe.
+  "pipe_layers": [],
+
+  "pattern": "SOLID",
+  "send_to_back": true,
+
+  // A long section's service comes from the first of these that has a service's keywords:
+  // the layout name, the xref's name, the pipe layers, then the labels in the long section
+  // (e.g. "900Ø CORRUTECH SW SN8"). Keywords match whole words; digits and punctuation count
+  // as breaks, so SW matches "LINE SW1-12/1". If nothing matches, AIPIPEHATCH asks.
+  // color / rgb are only used when the hatch layer has to be created.
+  "services": [
+    {
+      "name": "Stormwater",
+      "keywords": [ "STORMWATER", "STORM", "DRAINAGE", "SW", "SWD" ],
+      "hatch_layer": "AE CIV DET - STORMWATER PIPE NEW",
+      "color": 94,
+      "rgb": [ 0, 166, 0 ]
+    },
+    {
+      "name": "Sewer",
+      "keywords": [ "SEWER", "SEWERAGE", "SEW", "SS" ],
+      "hatch_layer": "AE CIV DET - SEWER PIPE NEW",
+      "color": 1,
+      "rgb": [ 255, 0, 0 ]
+    }
+  ]
+}

@@ -12,7 +12,7 @@ namespace CsdBridge.BricsCAD
 {
     /// <summary>
     /// Adds a "CSD-Bridge" tab to the BricsCAD ribbon:
-    ///   Chat | Draft | History   (large)    New chat / Status / API key   (small)
+    ///   Chat | Draft | History   (large)    New chat / Status / API key   (small)    Hatch pipes (large)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
     ///
@@ -102,8 +102,12 @@ namespace CsdBridge.BricsCAD
                 stack.Items.Add(Button("API key", "AIKEY", "Set or remove the Anthropic API key", "key", large: false));
                 source.Items.Add(stack);
 
+                var drafting = new RibbonPanelSource { Id = "CSDBRIDGE_DRAFTING_PANEL", Name = "Long sections", Title = "Long sections" };
+                drafting.Items.Add(Button("Hatch pipes", "AIPIPEHATCH", "Hatch the sewer and stormwater pipes in every long section layout", "pipehatch", large: true));
+
                 var tab = new RibbonTab { Id = TabId, Name = "CSD-Bridge", Title = "CSD-Bridge" };
                 tab.Panels.Add(new RibbonPanel { Source = source });
+                tab.Panels.Add(new RibbonPanel { Source = drafting });
                 ribbon.Tabs.Add(tab);
                 if (activate)
                 {

@@ -71,6 +71,10 @@ namespace CsdBridge.BricsCAD
         [JsonPropertyName("road_drafting_file")]
         public string? RoadDraftingFile { get; set; }
 
+        /// <summary>Long section pipe hatch settings (AIPIPEHATCH). Empty means long-section-hatch.json next to the add-in DLL.</summary>
+        [JsonPropertyName("long_section_hatch_file")]
+        public string? LongSectionHatchFile { get; set; }
+
         [JsonPropertyName("standards_file")]
         public string? StandardsFile { get; set; }
 
@@ -164,6 +168,39 @@ namespace CsdBridge.BricsCAD
                 error = $"{path}: {ex.Message}";
                 return null;
             }
+        }
+
+        public string ResolvedLongSectionHatchPath()
+        {
+            if (!string.IsNullOrWhiteSpace(LongSectionHatchFile))
+            {
+                return Environment.ExpandEnvironmentVariables(LongSectionHatchFile!);
+            }
+
+            string dir = Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".";
+            return Path.Combine(dir, "long-section-hatch.json");
+        }
+
+        /// <summary>The AIPIPEHATCH settings; the built-in defaults, with the reason, if the file can't be read.</summary>
+        public CsdBridge.Core.Civil.LongSectionHatchSettings LoadLongSectionHatch(out string? note)
+        {
+            string path = ResolvedLongSectionHatchPath();
+            note = null;
+            try
+            {
+                if (File.Exists(path))
+                {
+                    return CsdBridge.Core.Civil.LongSectionHatchSettings.Load(path);
+                }
+
+                note = $"{path} not found";
+            }
+            catch (Exception ex)
+            {
+                note = $"{path}: {ex.Message}";
+            }
+
+            return new CsdBridge.Core.Civil.LongSectionHatchSettings();
         }
 
         private string? LoadStandards()
