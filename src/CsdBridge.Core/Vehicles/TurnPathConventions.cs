@@ -75,6 +75,7 @@ namespace CsdBridge.Core.Vehicles
             c.LayerStyles[c.Layers.WheelPaths] = new LayerStyle { Color = 8, Lineweight = 0.13, Description = "Design vehicle wheel paths" };
             c.LayerStyles[c.Layers.Labels] = new LayerStyle { Color = 4, Lineweight = 0.18, Description = "Design vehicle labels" };
             c.LayerStyles[c.Layers.Hatch] = new LayerStyle { Color = 254, Rgb = new[] { 255, 220, 220 }, Lineweight = 0.13, Plot = true, Description = "Design vehicle swept area" };
+            c.LayerStyles[c.Layers.Block] = new LayerStyle { Color = 7, Lineweight = 0.25, Description = "Design vehicle turning path blocks" };
             return c;
         }
 
@@ -154,7 +155,8 @@ namespace CsdBridge.Core.Vehicles
 
             sb.Append("Layers: swept path on ").Append(Layers.SweptPath).Append(", clearance on ").Append(Layers.Clearance)
               .Append(", vehicle outlines on ").Append(Layers.Vehicle).Append(", path on ").Append(Layers.Path)
-              .Append(", labels on ").Append(Layers.Labels).Append(" ({vehicle} is replaced by the vehicle name).\n");
+              .Append(", labels on ").Append(Layers.Labels).Append(", block references on ").Append(Layers.Block)
+              .Append(" ({vehicle} is replaced by the vehicle name).\n");
             return sb.ToString();
         }
     }
@@ -184,6 +186,9 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Draw the swept path as one closed outline instead of two lines.</summary>
         public bool ClosedOutline { get; set; }
 
+        /// <summary>Gather everything drawn into a block, inserted at the vehicle's start point on the Block layer.</summary>
+        public bool Block { get; set; }
+
         public TurnPathDrawOptions Clone() => (TurnPathDrawOptions)MemberwiseClone();
     }
 
@@ -198,6 +203,9 @@ namespace CsdBridge.Core.Vehicles
         public string WheelPaths { get; set; } = "AE CIV PLN - VEHICLE WHEEL PATHS";
         public string Labels { get; set; } = "AE CIV PLN - VEHICLE TEXT";
         public string Hatch { get; set; } = "AE CIV HTC - VEHICLE SWEPT PATH";
+
+        /// <summary>Layer of the block reference when the result is made into a block.</summary>
+        public string Block { get; set; } = "AE CIV PLN - VEHICLE BLOCK";
 
         public TurnPathLayers Clone() => (TurnPathLayers)MemberwiseClone();
 
@@ -218,6 +226,7 @@ namespace CsdBridge.Core.Vehicles
                 WheelPaths = Fill(WheelPaths, defaults.WheelPaths),
                 Labels = Fill(Labels, defaults.Labels),
                 Hatch = Fill(Hatch, defaults.Hatch),
+                Block = Fill(Block, defaults.Block),
             };
         }
 
@@ -232,6 +241,7 @@ namespace CsdBridge.Core.Vehicles
             yield return new KeyValuePair<string, string>("wheel_paths", WheelPaths);
             yield return new KeyValuePair<string, string>("labels", Labels);
             yield return new KeyValuePair<string, string>("hatch", Hatch);
+            yield return new KeyValuePair<string, string>("block", Block);
         }
 
         /// <summary>Sets a layer by its part name; false if the name is unknown.</summary>
@@ -247,6 +257,7 @@ namespace CsdBridge.Core.Vehicles
                 case "wheel_paths": WheelPaths = layer; return true;
                 case "labels": Labels = layer; return true;
                 case "hatch": Hatch = layer; return true;
+                case "block": Block = layer; return true;
                 default: return false;
             }
         }

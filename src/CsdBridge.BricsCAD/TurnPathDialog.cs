@@ -71,6 +71,7 @@ namespace CsdBridge.BricsCAD
         private readonly CheckBox _drawLabels;
         private readonly CheckBox _drawHatch;
         private readonly CheckBox _closedOutline;
+        private readonly CheckBox _block;
         private readonly TextBox _outlineInterval;
         private readonly TextBox _textHeight;
         private readonly Dictionary<string, TextBox> _layers = new Dictionary<string, TextBox>();
@@ -172,8 +173,9 @@ namespace CsdBridge.BricsCAD
             _drawLabels = Check("Label");
             _drawHatch = Check("Hatch the swept area");
             _closedOutline = Check("Swept path as one closed outline");
-            CheckBox[] column1 = { _drawSwept, _drawClearance, _drawVehicle, _drawPath };
-            CheckBox[] column2 = { _drawWheels, _drawLabels, _drawHatch, _closedOutline };
+            _block = Check("Make the result a block");
+            Control[] column1 = { _drawSwept, _drawClearance, _drawVehicle, _drawPath, _block };
+            Control[] column2 = { _drawWheels, _drawLabels, _drawHatch, _closedOutline, Hint("named '<vehicle> turning path', inserted at the start") };
             for (int i = 0; i < column1.Length; i++)
             {
                 draw.Controls.Add(column1[i], 0, i);
@@ -196,7 +198,7 @@ namespace CsdBridge.BricsCAD
             {
                 ("swept_path", "Swept path"), ("clearance", "Clearances"), ("vehicle", "Vehicle outline"),
                 ("vehicle_intermediate", "Outlines along the path"), ("path", "Driven path"), ("wheel_paths", "Wheel paths"),
-                ("labels", "Label"), ("hatch", "Hatch"),
+                ("labels", "Label"), ("hatch", "Hatch"), ("block", "Block"),
             })
             {
                 TextBox box = Box(260);
@@ -405,6 +407,7 @@ namespace CsdBridge.BricsCAD
             _drawLabels.Checked = c.Draw.Labels;
             _drawHatch.Checked = c.Draw.Hatch;
             _closedOutline.Checked = c.Draw.ClosedOutline;
+            _block.Checked = c.Draw.Block;
             _outlineInterval.Text = Num(c.OutlineInterval);
             _textHeight.Text = c.TextHeight is double th ? Num(th) : "";
             foreach (KeyValuePair<string, string> kv in c.Layers.All())
@@ -570,6 +573,7 @@ namespace CsdBridge.BricsCAD
             style.Draw.Labels = _drawLabels.Checked;
             style.Draw.Hatch = _drawHatch.Checked;
             style.Draw.ClosedOutline = _closedOutline.Checked;
+            style.Draw.Block = _block.Checked;
             style.OutlineInterval = interval;
             style.TextHeight = textHeight;
             foreach (KeyValuePair<string, TextBox> kv in _layers)

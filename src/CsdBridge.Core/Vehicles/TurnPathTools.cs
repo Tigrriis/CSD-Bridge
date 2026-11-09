@@ -41,7 +41,8 @@ namespace CsdBridge.Core.Vehicles
                     "templates and the front axle centre otherwise (rear axle when reversing); the rear axle tracks in behind it. Returns " +
                     "the tightest radius used and whether it meets the vehicle's minimum, the net turn, the handles drawn by part and the " +
                     "extents. Use dry_run to check a manoeuvre without drawing. Layers come from turn-paths.json; override any with " +
-                    "'layers'. B99 is for access driveways, ramps and circulation roadways; B85 only for parking spaces and aisles.",
+                    "'layers'. draw.block gathers the result into a block (named after the vehicle, inserted at its start point on the " +
+                    "block layer). B99 is for access driveways, ramps and circulation roadways; B85 only for parking spaces and aisles.",
                     "{\"type\":\"object\",\"properties\":{" +
                     "\"vehicle\":{\"type\":\"string\",\"description\":\"" + vehicles + ". Default the conventions' default (B99).\"}," +
                     "\"mode\":{\"type\":\"string\",\"enum\":[\"template\",\"follow\",\"points\"]}," +
@@ -57,11 +58,13 @@ namespace CsdBridge.Core.Vehicles
                     "\"reference\":{\"type\":\"string\",\"enum\":[\"outer_front_wheel\",\"front_axle\",\"rear_axle\"],\"description\":\"Which point of the vehicle follows the path.\"}," +
                     "\"clearance_inside\":{\"type\":\"number\"},\"clearance_outside\":{\"type\":\"number\",\"description\":\"Metres; default the vehicle's (B99 0.3/0.6, B85 0.3/0.3).\"}," +
                     "\"label\":{\"type\":\"string\"}," +
-                    "\"layers\":{\"type\":\"object\",\"description\":\"Layer per part: swept_path, clearance, vehicle, vehicle_intermediate, path, wheel_paths, labels, hatch.\",\"additionalProperties\":{\"type\":\"string\"}}," +
+                    "\"layers\":{\"type\":\"object\",\"description\":\"Layer per part: swept_path, clearance, vehicle, vehicle_intermediate, path, wheel_paths, labels, hatch, block.\",\"additionalProperties\":{\"type\":\"string\"}}," +
                     "\"draw\":{\"type\":\"object\",\"properties\":{" +
                     "\"swept_path\":{\"type\":\"boolean\"},\"clearance\":{\"type\":\"boolean\"},\"vehicle\":{\"type\":\"boolean\"},\"path\":{\"type\":\"boolean\"}," +
                     "\"wheel_paths\":{\"type\":\"boolean\"},\"labels\":{\"type\":\"boolean\"},\"hatch\":{\"type\":\"boolean\"},\"closed_outline\":{\"type\":\"boolean\"}," +
+                    "\"block\":{\"type\":\"boolean\",\"description\":\"Make the result one block.\"}," +
                     "\"outline_interval\":{\"type\":\"number\",\"description\":\"Vehicle outline every this many metres (0 = none).\"}}}," +
+                    "\"block_name\":{\"type\":\"string\",\"description\":\"Name for the block (default '<vehicle> turning path'; a number is added if taken).\"}," +
                     "\"dry_run\":{\"type\":\"boolean\"}" +
                     "},\"required\":[\"mode\"]}"),
             };
@@ -267,6 +270,21 @@ namespace CsdBridge.Core.Vehicles
 
                     report["drawn"] = handles;
                     report["layers"] = style.Layers.Resolve(vehicle.Name).All().ToDictionary(kv => kv.Key, kv => kv.Value);
+                    if (style.Draw.Block)
+                    {
+                        List<string> all = handles.Values.SelectMany(h => h).ToList();
+                        if (!(_host is IBlockMaker maker))
+                        {
+                            warnings.Add("This drawing host can't make blocks, so the entities were left as they are.");
+                        }
+                        else if (all.Count > 0)
+                        {
+                            string name = JsonArgs.OptionalString(input, "block_name", "") ?? $"{vehicle.Name} turning path";
+                            BlockResult block = maker.MakeBlock(all, name, result.Poses[0].RearAxle, style.Layers.Resolve(vehicle.Name).Block);
+                            report["block"] = new { name = block.BlockName, handle = block.Handle, entities = block.EntityCount };
+                        }
+                    }
+
                     if (failures.Count > 0)
                     {
                         report["failed"] = failures;
@@ -332,6 +350,7 @@ namespace CsdBridge.Core.Vehicles
             d.Labels = JsonArgs.OptionalBool(obj, "labels", "draw", d.Labels);
             d.Hatch = JsonArgs.OptionalBool(obj, "hatch", "draw", d.Hatch);
             d.ClosedOutline = JsonArgs.OptionalBool(obj, "closed_outline", "draw", d.ClosedOutline);
+            d.Block = JsonArgs.OptionalBool(obj, "block", "draw", d.Block);
             double? interval = JsonArgs.OptionalNumber(obj, "outline_interval", "draw");
             if (interval != null)
             {

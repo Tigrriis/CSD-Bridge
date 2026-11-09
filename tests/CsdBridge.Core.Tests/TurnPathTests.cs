@@ -73,6 +73,10 @@ namespace CsdBridge.Core.Tests
             }
 
             Assert.Throws<ArgumentException>(() => c.Vehicle("HRV"));
+            Assert.Equal("AE CIV PLN - VEHICLE BLOCK", c.Layers.Block);
+            Assert.False(c.Draw.Block);
+            Assert.Contains(c.Layers.All(), kv => kv.Key == "block");
+            Assert.True(c.LayerStyles.ContainsKey(c.Layers.Block));
             Assert.True(c.LayerStyles.ContainsKey(c.Layers.Clearance));
             Assert.Equal("DASHED", c.LayerStyles[c.Layers.Clearance].Linetype);
         }
@@ -83,6 +87,8 @@ namespace CsdBridge.Core.Tests
             TurnPathConventions c = TurnPathConventions.Default();
             c.Layers.SweptPath = "MY-{vehicle}-SWEPT";
             c.Draw.Hatch = true;
+            c.Draw.Block = true;
+            c.Layers.Set("block", "BLK-{vehicle}");
             string path = Path.Combine(Path.GetTempPath(), "csdbridge-turn-paths-" + Guid.NewGuid().ToString("N") + ".json");
             try
             {
@@ -91,6 +97,8 @@ namespace CsdBridge.Core.Tests
                 Assert.Equal("MY-{vehicle}-SWEPT", back.Layers.SweptPath);
                 Assert.Equal("MY-B85-SWEPT", back.Layers.Resolve("B85").SweptPath);
                 Assert.True(back.Draw.Hatch);
+                Assert.True(back.Draw.Block);
+                Assert.Equal("BLK-B99", back.Layers.Resolve("B99").Block);
                 Assert.Equal(2, back.Vehicles.Count);
                 Assert.Equal(6.3, back.Vehicle("b99").MinTurnRadius);
             }
@@ -617,6 +625,17 @@ namespace CsdBridge.Core.Tests
             Assert.Equal(15, doc2.RootElement.GetProperty("start").GetProperty("rear_axle")[0].GetDouble(), 3);
             Assert.True(doc2.RootElement.GetProperty("reverse").GetBoolean());
             Assert.True(host.Entities.Count > 10);
+        }
+
+        [Fact]
+        public void ToolBlockOptionIsReportedWhenTheHostCantMakeBlocks()
+        {
+            var host = new InMemoryDrawingHost("Meters");
+            var tools = new TurnPathTools(host, Conventions());
+            using JsonDocument doc = Run(tools, "{\"mode\":\"template\",\"start\":[0,0],\"heading_deg\":0,\"draw\":{\"block\":true}}", out _);
+            Assert.False(doc.RootElement.TryGetProperty("block", out _));
+            Assert.Contains(doc.RootElement.GetProperty("warnings").EnumerateArray(), w => w.GetString()!.Contains("can't make blocks"));
+            Assert.True(host.Entities.Count > 5); // still drawn
         }
 
         [Fact]

@@ -20,7 +20,7 @@ namespace CsdBridge.BricsCAD
     /// BricsCAD's main thread, inside the AIDRAFT command (see <see cref="AgentRunner"/>),
     /// so the whole AI request is one UNDO step.
     /// </summary>
-    internal sealed class BricsCadDrawingHost : IDrawingHost
+    internal sealed class BricsCadDrawingHost : IDrawingHost, IBlockMaker
     {
         private const int MaxListedNames = 5000;
         private const int MaxPolylinePoints = 500;
@@ -1451,6 +1451,66 @@ namespace CsdBridge.BricsCAD
             foreach (ObjectId id in ids)
             {
                 ((Entity)tr.GetObject(id, OpenMode.ForWrite)).TransformBy(matrix);
+            }
+        }
+
+        // ================================================================ blocks
+
+        private static readonly char[] InvalidNameChars = { '<', '>', '/', '\\', '"', ':', ';', '?', '*', '|', ',', '=', '`' };
+
+        public BlockResult MakeBlock(IReadOnlyList<string> handles, string name, Point2 basePoint, string? layer)
+        {
+            string clean = new string(name.Select(ch => Array.IndexOf(InvalidNameChars, ch) >= 0 ? '-' : ch).ToArray()).Trim();
+            if (clean.Length == 0)
+            {
+                clean = "Turning path";
+            }
+
+            using (_doc.LockDocument())
+            using (Transaction tr = Db.TransactionManager.StartTransaction())
+            {
+                var bt = (BlockTable)tr.GetObject(Db.BlockTableId, OpenMode.ForWrite);
+                string unique = clean;
+                for (int n = 2; bt.Has(unique); n++)
+                {
+                    unique = $"{clean} {n}";
+                }
+
+                var ids = new ObjectIdCollection();
+                foreach (string h in handles)
+                {
+                    ObjectId id = ResolveHandle(h);
+                    if (!id.IsNull && !id.IsErased)
+                    {
+                        ids.Add(id);
+                    }
+                }
+
+                if (ids.Count == 0)
+                {
+                    throw new ArgumentException("None of the entities could be found to make the block from.");
+                }
+
+                var btr = new BlockTableRecord { Name = unique, Origin = P3(basePoint) };
+                ObjectId btrId = bt.Add(btr);
+                tr.AddNewlyCreatedDBObject(btr, true);
+                // Moves the entities out of model space into the block, keeping their coordinates and layers.
+                btr.AssumeOwnershipOf(ids);
+
+                var space = (BlockTableRecord)tr.GetObject(Db.CurrentSpaceId, OpenMode.ForWrite);
+                var br = new BlockReference(P3(basePoint), btrId);
+                br.SetDatabaseDefaults(Db);
+                if (!string.IsNullOrWhiteSpace(layer))
+                {
+                    GetOrCreateLayer(tr, layer!, out _);
+                    br.Layer = layer;
+                }
+
+                space.AppendEntity(br);
+                tr.AddNewlyCreatedDBObject(br, true);
+                tr.Commit();
+                Flush();
+                return new BlockResult { BlockName = unique, Handle = br.Handle.ToString(), EntityCount = ids.Count };
             }
         }
 

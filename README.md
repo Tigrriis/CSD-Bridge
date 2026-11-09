@@ -62,7 +62,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 178 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 179 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -394,6 +394,9 @@ What is drawn, each part on its own configurable layer:
   values are editable per run.
 - **Vehicle** outline with wheels and axles at the start and end, and optionally every *n* metres along the path.
 - The **driven path**, optional **wheel paths**, a **label** (e.g. `B99 R6.3 m`) and an optional **hatch** of the swept area.
+- Optionally the whole result is made into a **block** (`B99 turning path`, numbered if the name is taken),
+  inserted at the vehicle's start point on the Block layer, so it moves, copies and deletes as one. The
+  entities keep their own layers inside the block.
 
 The command reports the tightest turn the manoeuvre needed (as an outer-front-wheel radius) against
 the vehicle's minimum, and warns when a path is too tight for the vehicle or a template radius is below
