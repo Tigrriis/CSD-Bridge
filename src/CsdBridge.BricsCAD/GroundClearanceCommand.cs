@@ -149,9 +149,9 @@ namespace CsdBridge.BricsCAD
             Path2 plot = Path2.From(curves.Values.First()) ?? throw new ArgumentException("That entity has no curve geometry.");
             GroundProfile profile = GroundClearanceChecker.ProfileFromPlot(plot, c.VerticalExaggeration, c.HorizontalScale);
             GroundClearanceResult r = GroundClearanceChecker.CheckProfile(profile, c.Vehicle, c.Step, c.BothDirections, c.GroundClearance);
-            if (c.DrawTemplates || c.DrawGroundings || c.DrawLabels)
+            if (c.DrawTemplates || c.DrawGroundings || c.DrawLabels || c.DrawEnvelope)
             {
-                drafted.AddRange(GroundClearanceDrafter.DrawOnSection(r, SectionFrame.OfPlot(c.VerticalExaggeration, c.HorizontalScale), c.Layers, c.TextHeight, c.DrawTemplates, c.DrawGroundings, c.DrawLabels));
+                drafted.AddRange(GroundClearanceDrafter.DrawOnSection(r, SectionFrame.OfPlot(c.VerticalExaggeration, c.HorizontalScale), c.Layers, c.TextHeight, c.DrawTemplates, c.DrawGroundings, c.DrawLabels, c.DrawEnvelope));
             }
 
             return r;
@@ -201,7 +201,7 @@ namespace CsdBridge.BricsCAD
                 PromptPointResult at = ed.GetPoint(new PromptPointOptions("\nBottom-left corner for the wheel path long section plots: "));
                 if (at.Status == PromptStatus.OK)
                 {
-                    drafted.AddRange(GroundClearanceDrafter.DrawSectionPlots(r, TurnPathCommand.Wcs(ed, at.Value), c.PlotVerticalExaggeration, c.Layers, c.TextHeight));
+                    drafted.AddRange(GroundClearanceDrafter.DrawSectionPlots(r, TurnPathCommand.Wcs(ed, at.Value), c.PlotVerticalExaggeration, c.Layers, c.TextHeight, c.DrawEnvelope));
                 }
             }
 

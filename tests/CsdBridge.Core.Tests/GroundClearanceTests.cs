@@ -54,6 +54,22 @@ namespace CsdBridge.Core.Tests
             Assert.NotNull(r.WorstForward);
             Assert.NotNull(r.WorstBackward);
             Assert.Contains("OK", r.Summary());
+            // The underside envelope sits a constant 120 mm above flat ground.
+            Assert.True(r.UndersideEnvelope.Count >= 2);
+            Assert.All(r.UndersideEnvelope.Where(u => u.Chainage > 1 && u.Chainage < 29), u => Assert.Equal(10.12, u.Level, 3));
+        }
+
+        [Fact]
+        public void UndersideEnvelopeTouchesTheWorstGap()
+        {
+            GroundProfile crest = Crest(0.09);
+            GroundClearanceResult r = GroundClearanceChecker.CheckProfile(crest, DesignVehicle.B99);
+            // Its lowest point relative to the ground is the worst gap, at the crest.
+            double worst = r.UndersideEnvelope.Min(u => u.Level - crest.LevelAt(u.Chainage));
+            Assert.Equal(r.MinGap, worst, 2);
+            (double Chainage, double Level) low = r.UndersideEnvelope.OrderBy(u => u.Level - crest.LevelAt(u.Chainage)).First();
+            Assert.Equal(20, low.Chainage, 0);
+            Assert.True(r.UndersideEnvelope.Count < 200); // simplified
         }
 
         [Fact]
@@ -163,6 +179,8 @@ namespace CsdBridge.Core.Tests
             List<DraftedEntity> drafted = GroundClearanceDrafter.DrawOnSection(r, frame, c.Layers, 0.3);
             // Two templates (one per direction), each failing: polyline + 2 wheels + tick, plus grounding ground lines and labels.
             Assert.True(drafted.Count(d => d.Group == "clearance_fail") >= 8);
+            Assert.Single(drafted, d => d.Group == "clearance_envelope");
+            Assert.Empty(GroundClearanceDrafter.DrawOnSection(r, frame, c.Layers, 0.3, envelope: false).Where(d => d.Group == "clearance_envelope"));
             Assert.Contains(drafted, d => d.Group == "labels" && ((TextSpec)d.Spec).Text.Contains("GROUNDS"));
             Assert.All(drafted.Where(d => d.Group == "clearance_fail"), d => Assert.Equal(c.Layers.ClearanceFail, d.Spec.Layer));
             // The template sits on the exaggerated plot: its wheel at chainage ~18.5 is drawn at Y = level * 10.
@@ -240,6 +258,8 @@ namespace CsdBridge.Core.Tests
 
             List<DraftedEntity> plots = GroundClearanceDrafter.DrawSectionPlots(r, new Point2(100, 100), 5, c.Layers, 0.3);
             Assert.Equal(2, plots.Count(d => d.Group == "clearance_section" && d.Spec is PolylineSpec)); // one ground line per side
+            Assert.Equal(2, plots.Count(d => d.Group == "clearance_envelope")); // and one underside line per side
+            Assert.All(r.Sides, s => Assert.True(s.UndersideEnvelope.Count >= 2));
             Assert.Equal(2, plots.Count(d => d.Group == "labels" && ((TextSpec)d.Spec).Text.Contains("wheel path")));
             Assert.True(plots.Count(d => d.Group == "clearance_fail") >= 2);
             Assert.All(plots.Select(d => d.Spec).OfType<PolylineSpec>(), p => Assert.All(p.Points, pt => Assert.True(pt.X >= 99 && pt.Y <= 100.5)));

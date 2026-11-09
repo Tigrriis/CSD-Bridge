@@ -163,6 +163,7 @@ namespace CsdBridge.Core.Vehicles
                         report["worst_facing_down_chainage"] = r.WorstBackward == null ? null : Describe(r.WorstBackward);
                         report["groundings"] = r.Groundings.Select(g => new { rear_wheel_from = Math.Round(g.From, 2), rear_wheel_to = Math.Round(g.To, 2), facing = g.Forward ? "up chainage" : "down chainage", worst_gap_mm = Math.Round(g.WorstGap * 1000), part = g.Part }).ToList();
                         report["profile"] = new { from = Math.Round(profile.Start, 3), to = Math.Round(profile.End, 3), points = profile.Points.Count };
+                        report["underside_envelope_points"] = r.UndersideEnvelope.Count;
 
                         if (draw)
                         {
