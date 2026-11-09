@@ -379,7 +379,10 @@ vehicles. `AITURN` (ribbon: **Vehicles > Turn path**) opens a dialog, then promp
 |---|---|---|
 | **Standard turn template** | Start point (centre of the rear axle of the parked car) and the direction of travel | A single turn at the nominated radius, measured at the outer front wheel as in Paragraph B3.1 (default the vehicle's minimum: B99 6.3 m, B85 5.8 m), through the turn angle(s) you enter (`90`, or `30,60,90,120,150,180` for a fan like Figures B3 to B6), left or right, with straight travel before and after. |
 | **Follow a line, arc or polyline** | The curve, near the end the vehicle starts from | Drives the vehicle along it, forwards (the front axle centre follows the line, the rear axle tracks in behind) or in reverse (the rear axle follows the line). Use it to check a driveway, ramp or aisle you have already drawn. |
-| **Through points** | Two or more points | Builds a path with tangent corner arcs of the corner radius you enter and drives the vehicle along it. Corners without room for the radius get a smaller one, and the command says so. |
+| **Through points** | Two or more points | Builds a path with tangent corner arcs of the corner radius you enter and drives the vehicle along it. Corners without room for the radius get a smaller one, and the command says so. Type `U` to take back the last point. |
+
+While you pick the direction of a template, or the next point of a path, the swept path, clearances,
+driven path and end vehicle are previewed live under the cursor (at a coarser step than the final result).
 
 What is drawn, each part on its own configurable layer:
 
