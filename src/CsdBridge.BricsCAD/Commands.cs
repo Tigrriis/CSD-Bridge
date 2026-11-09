@@ -24,6 +24,7 @@ namespace CsdBridge.BricsCAD
     /// AIFORMDUMP diagnostic: save open dialogs' WinForms controls and grid cells (read from inside)
     /// AICSD      Civil Site Design tools: read only, edit, off, or list CSD's commands
     /// AISCALEBARS add scale bar blocks to every layout from its viewport scales (no Claude call)
+    /// AIPIPEHATCH hatch the sewer and stormwater pipes in the long section layouts
     /// AIRESET    start a new conversation for this drawing
     /// AIKEY      set or remove the Anthropic API key
     /// AISTATUS   show settings, key source and usage
@@ -276,6 +277,12 @@ namespace CsdBridge.BricsCAD
             AgentRunner.ReloadSettings();
             ChatPalette.Control?.ClearLog();
             doc.Editor.WriteMessage("\nCSD-Bridge: new conversation started for this drawing (settings reloaded).\n");
+        }
+
+        [CommandMethod(Group, "AIPIPEHATCH", CommandFlags.Modal)]
+        public void AiPipeHatch()
+        {
+            PipeHatcher.Run(CadApp.DocumentManager.MdiActiveDocument);
         }
 
         [CommandMethod(Group, "AIKEY", CommandFlags.Modal)]

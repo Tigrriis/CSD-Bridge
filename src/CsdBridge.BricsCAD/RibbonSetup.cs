@@ -15,6 +15,7 @@ namespace CsdBridge.BricsCAD
     ///   Claude panel:   Chat | Draft | Routines | History (large), New chat / Status / API key (small)
     ///   Sheets panel:   Scale Bars (runs in the add-in, no Claude call)
     ///   Vehicles panel: Turn path | Clearance (run in the add-in, no Claude call)
+    ///   Long sections panel: Hatch pipes (runs in the add-in, no Claude call)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
     ///
@@ -116,6 +117,10 @@ namespace CsdBridge.BricsCAD
                 sheets.Items.Add(Button("Scale Bars", "AISCALEBARS", "Add a scale bar to every layout for each viewport scale (no Claude call, no cost)", "scalebar", large: true));
                 tab.Panels.Add(new RibbonPanel { Source = sheets });
                 tab.Panels.Add(new RibbonPanel { Source = vehicles });
+
+                var longSections = new RibbonPanelSource { Id = "CSDBRIDGE_LONGSECTIONS", Name = "Long sections", Title = "Long sections" };
+                longSections.Items.Add(Button("Hatch pipes", "AIPIPEHATCH", "Hatch the sewer and stormwater pipes in every long section layout (no Claude call, no cost)", "pipehatch", large: true));
+                tab.Panels.Add(new RibbonPanel { Source = longSections });
                 ribbon.Tabs.Add(tab);
                 if (activate)
                 {
