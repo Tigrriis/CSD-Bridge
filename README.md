@@ -52,7 +52,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 98 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 110 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -178,6 +178,7 @@ with `-Remove`.
 | `AIUIDUMP` | Diagnostic: after a countdown (default 10 s), saves the controls of BricsCAD's open dialogs (labels, values, buttons, keyboard shortcuts) to `%LOCALAPPDATA%\CsdBridge\uidumps\`. Read-only. Used to check whether other add-ins' dialogs, such as Civil Site Design's, can be automated. |
 | `AIFORMDUMP` | Diagnostic: like `AIUIDUMP`, but reads open dialogs from inside BricsCAD as WinForms controls, so it also gets internal control names, grid cell values and the grid component's type and version. Read-only; saves to the same folder. |
 | `AICSD` | Civil Site Design tools: **Read** (default: Claude can open and read CSD dialogs but not change them), **Edit** (Claude can also change values and press buttons), **Off**, or **List** (save the CSD commands found to a text file) |
+| `AIPIPEHATCH` | Hatch the sewer and stormwater pipes in every long section layout. No API key needed; see [Hatching long section pipes](#hatching-long-section-pipes). |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft and History buttons, and small New chat,
@@ -201,6 +202,7 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 | `base_url` | *(blank)* | Optional internal gateway URL that holds the API key centrally |
 | `csd_mode` | `read` | Civil Site Design tools: `read`, `edit` or `off`. Also set with `AICSD`. |
 | `road_drafting_file` | *(blank)* | Road drafting conventions for `draft_road`. Blank uses `road-drafting.json` next to the DLL. |
+| `long_section_hatch_file` | *(blank)* | Settings for `AIPIPEHATCH`. Blank uses `long-section-hatch.json` next to the DLL. |
 | `cache_ttl` | `1h` | How long the prompt cache lives: `1h` suits sessions with pauses; `5m` is cheaper to write. |
 | `clear_old_tool_results_after_tokens` | `60000` | Once a chat's input passes this size, the oldest tool results are dropped (the latest 6 are kept). `0` = never. |
 
@@ -248,6 +250,30 @@ The rules live in `road-drafting.json` next to the add-in: which codes become wh
 colours and linetype scales. The pavement, centreline and layer styles come from the office's sample drawings. The
 kerb, shoulder, footpath and batter rules depend on each job's template codes, so check and edit them. Junctions
 between roads aren't trimmed: Claude tidies them with `trim_extend` and `fillet`.
+
+## Hatching long section pipes
+
+`AIPIPEHATCH` (ribbon: **Hatch pipes**) hatches the pipes of Civil Site Design long sections. It doesn't use Claude,
+so it is instant and free.
+
+- It works on every layout with "long section" in its name (**All**, the default), or on the layout you are in
+  (**Current**). **Remove** takes its hatches out again.
+- In each layout it reads the long section xref in paper space and finds the pipe runs by shape: two parallel lines on
+  one layer, one above the other, between the same two chainages. Pit walls, ground lines and the data band don't
+  match. Frozen and switched-off layers are ignored.
+- All the runs of a long section get one SOLID hatch in the layout, behind the xref, on
+  `AE CIV DET - STORMWATER PIPE NEW` or `AE CIV DET - SEWER PIPE NEW` (created if missing).
+- Sewer or stormwater comes from the layout name, then the xref's name, the pipe layer names, then the labels in the
+  section (e.g. `900Ø CORRUTECH SW SN8`). If none of those says, the command asks.
+- The hatch can't follow the xref. After CSD updates a long section, run `AIPIPEHATCH` again: it replaces the hatches
+  it made earlier and leaves hatches you drew yourself alone. The whole run is one UNDO step.
+
+The command lists, per layout, how many runs it hatched and which xref layers the pipe lines were on. If it ever picks
+up something that isn't a pipe, put those layer names in `pipe_layers` in `long-section-hatch.json` (next to the DLL),
+which also holds the layout name test, the hatch layers and the keywords for each service.
+
+**Not yet run inside BricsCAD**: the pipe finding is unit-tested on a synthetic long section, but the layer names and
+linework of real CSD long sections haven't been checked.
 
 ## Saving work between chats
 

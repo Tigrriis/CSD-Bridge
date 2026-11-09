@@ -111,6 +111,19 @@ def key():
     return img.rotate(35, resample=Image.BICUBIC, center=(128, 128)).resize((S, S))
 
 
+def pipe_hatch():
+    img, d = canvas()
+    # a long section: ground line above a hatched pipe falling to the left
+    d.line([(20, 96), (90, 70), (160, 58), (236, 30)], fill=GREY, width=14, joint="curve")
+    pipe = [(20, 196), (236, 120), (236, 176), (20, 252 - 6)]
+    d.polygon(pipe, fill=GREEN, outline=GREEN_DARK)
+    d.line(pipe + [pipe[0]], fill=GREEN_DARK, width=OUTLINE, joint="curve")
+    # pit walls at each end
+    d.line([(20, 96), (20, 248)], fill=GREY, width=14)
+    d.line([(236, 30), (236, 178)], fill=GREY, width=14)
+    return img
+
+
 ICONS = {
     "chat": chat,
     "draft": draft,
@@ -118,6 +131,7 @@ ICONS = {
     "newchat": new_chat,
     "status": status,
     "key": key,
+    "pipehatch": pipe_hatch,
 }
 
 
