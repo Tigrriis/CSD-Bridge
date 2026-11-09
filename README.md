@@ -62,7 +62,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 211 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 213 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -463,6 +463,9 @@ so it is instant and free.
 - In each layout it reads the long section xref in paper space and finds the pipe runs by shape: two parallel lines on
   one layer, one above the other, between the same two chainages. Pit walls, ground lines and the data band don't
   match. Frozen and switched-off layers are ignored.
+- Only the section's own pipe is hatched: runs whose two ends sit on a structure's vertical line. Crossing and nearby
+  pipes that CSD plots on the section start or stop between structures, so they are left out (and counted in the
+  command's report). `"main_pipe_only": false` in `long-section-hatch.json` hatches every pipe found.
 - All the runs of a long section get one SOLID hatch in the layout, behind the xref, on
   `AE CIV DET - STORMWATER PIPE NEW` or `AE CIV DET - SEWER PIPE NEW` (created if missing).
 - Sewer or stormwater comes from the layout name, then the xref's name, the pipe layer names, then the labels in the
@@ -474,8 +477,6 @@ The command lists, per layout, how many runs it hatched and which xref layers th
 up something that isn't a pipe, put those layer names in `pipe_layers` in `long-section-hatch.json` (next to the DLL),
 which also holds the layout name test, the hatch layers and the keywords for each service.
 
-**Not yet run inside BricsCAD**: the pipe finding is unit-tested on a synthetic long section, but the layer names and
-linework of real CSD long sections haven't been checked.
 
 ## Saving work between chats
 

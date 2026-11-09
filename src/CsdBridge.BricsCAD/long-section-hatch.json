@@ -15,6 +15,11 @@
   // pipes on; put them here if it ever picks up something that isn't a pipe.
   "pipe_layers": [],
 
+  // Hatch only the long section's own pipe: runs whose two ends sit on a structure's vertical
+  // line. Crossing and nearby pipes plotted on the section, which start or stop between
+  // structures, are left out. false = hatch every pipe found.
+  "main_pipe_only": true,
+
   "pattern": "SOLID",
   "send_to_back": true,
 

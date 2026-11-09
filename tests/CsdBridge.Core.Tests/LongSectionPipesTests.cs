@@ -138,6 +138,41 @@ namespace CsdBridge.Core.Tests
             }
         }
 
+        [Fact]
+        public void CrossingAndNearbyPipesAreLeftOut()
+        {
+            List<SectionLine> lines = Section();
+            // A nearby pipe from the first pit that runs past the second (as CSD plots them)...
+            lines.AddRange(Pipe(0, 9.6, 42, 9.2, 0.3));
+            // ...one that starts just after the second pit and ends on the third...
+            lines.AddRange(Pipe(42, 12.6, 95, 15.3, 0.225));
+            // ...one floating between structures, with its own end caps...
+            lines.AddRange(Pipe(110, 12, 150, 13, 0.45));
+            lines.Add(L(110, 12, 110, 12.45, "PIPE"));
+            lines.Add(L(150, 13, 150, 13.45, "PIPE"));
+            // ...and a smaller one that does run pit to pit, alongside the main pipe.
+            lines.AddRange(Pipe(95, 16, 180, 22, 0.15));
+
+            List<PipeQuad> all = LongSectionPipes.Find(lines);
+            Assert.Equal(7, all.Count);
+
+            List<PipeQuad> main = LongSectionPipes.MainLine(all, lines);
+            Assert.Equal(3, main.Count);
+            Assert.Equal(new[] { 0.0, 40, 95 }, main.Select(q => q.Corners[0].X));
+            Assert.Equal(new[] { 0.9, 0.9, 0.525 }, main.Select(q => Math.Round(q.Depth, 6)));
+        }
+
+        [Fact]
+        public void MainLineKeepsEverythingWhenThereAreNoStructureLines()
+        {
+            var lines = new List<SectionLine>();
+            lines.AddRange(Pipe(0, 10, 40, 10.8, 0.9));
+            lines.AddRange(Pipe(40, 11.2, 95, 14, 0.9));
+
+            List<PipeQuad> all = LongSectionPipes.Find(lines);
+            Assert.Equal(2, LongSectionPipes.MainLine(all, lines).Count);
+        }
+
         [Theory]
         [InlineData("C410 STORMWATER LONG SECTIONS SHEET 1", "Stormwater")]
         [InlineData("C420 Sewer Long Sections", "Sewer")]
@@ -172,6 +207,7 @@ namespace CsdBridge.Core.Tests
         {
             LongSectionHatchSettings s = Settings();
             Assert.Equal("SOLID", s.Pattern);
+            Assert.True(s.MainPipeOnly);
             Assert.Equal("AE CIV DET - STORMWATER PIPE NEW", s.Services.Single(x => x.Name == "Stormwater").HatchLayer);
             Assert.Equal("AE CIV DET - SEWER PIPE NEW", s.Services.Single(x => x.Name == "Sewer").HatchLayer);
             Assert.True(s.IsLongSectionLayout("C410 Stormwater Long Sections"));

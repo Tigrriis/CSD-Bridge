@@ -188,6 +188,12 @@ namespace CsdBridge.BricsCAD
                     continue; // a title block or other xref, or a long section whose file wasn't found
                 }
 
+                int found = quads.Count;
+                if (settings.MainPipeOnly)
+                {
+                    quads = LongSectionPipes.MainLine(quads, content.Lines);
+                }
+
                 List<string> pipeLayers = quads.Select(q => q.Layer).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 PipeService? service = LongSectionPipes.Classify(settings.Services, new IEnumerable<string>[]
                 {
@@ -206,7 +212,8 @@ namespace CsdBridge.BricsCAD
                 AddHatch(tr, db, space, br, quads, service, settings);
                 hatches++;
                 layoutPipes += quads.Count;
-                notes.Add($"{quads.Count} {service.Name.ToLowerInvariant()} pipe run(s) from {def.Name} (pipe lines on {string.Join(", ", pipeLayers)}) hatched on {service.HatchLayer}");
+                notes.Add($"{quads.Count} {service.Name.ToLowerInvariant()} pipe run(s) from {def.Name} (pipe lines on {string.Join(", ", pipeLayers)}) hatched on {service.HatchLayer}"
+                    + (found > quads.Count ? $", {found - quads.Count} crossing or nearby pipe(s) left out" : ""));
             }
 
             pipes += layoutPipes;
