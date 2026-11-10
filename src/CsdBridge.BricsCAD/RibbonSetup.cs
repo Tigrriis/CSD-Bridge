@@ -262,7 +262,9 @@ namespace CsdBridge.BricsCAD
             {
                 try
                 {
-                    switch (parameter as string)
+                    // The ribbon passes the clicked button, not its CommandParameter.
+                    string? command = parameter as string ?? (parameter as RibbonCommandItem)?.CommandParameter as string;
+                    switch (command)
                     {
                         // Windows open directly, so they also work while a request is running.
                         case "AIPANEL":
@@ -274,15 +276,36 @@ namespace CsdBridge.BricsCAD
                         case "AIROUTINES":
                             Routines.RoutinesWindow.ShowWindow();
                             return;
-                        case string command:
+                        case null:
+                            Say($"the ribbon button gave no command ({parameter?.GetType().FullName ?? "nothing"} was passed). Type the command instead.");
+                            return;
+                        default:
                             Document? doc = CadApp.DocumentManager.MdiActiveDocument;
-                            doc?.SendStringToExecute(command + " ", true, false, true);
+                            if (doc == null)
+                            {
+                                return; // no drawing open
+                            }
+
+                            doc.SendStringToExecute(command + " ", true, false, true);
                             return;
                     }
                 }
+                catch (Exception ex)
+                {
+                    // A failed click shouldn't take anything else down, but say why it did nothing.
+                    Say("the ribbon button failed: " + ex.Message);
+                }
+            }
+
+            private static void Say(string message)
+            {
+                try
+                {
+                    CadApp.DocumentManager.MdiActiveDocument?.Editor.WriteMessage("\nCSD-Bridge: " + message + "\n");
+                }
                 catch (Exception)
                 {
-                    // A failed click shouldn't take anything else down.
+                    // Nowhere to report it.
                 }
             }
         }
