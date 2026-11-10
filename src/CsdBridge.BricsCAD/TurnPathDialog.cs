@@ -412,7 +412,11 @@ namespace CsdBridge.BricsCAD
             _textHeight.Text = c.TextHeight is double th ? Num(th) : "";
             foreach (KeyValuePair<string, string> kv in c.Layers.All())
             {
-                _layers[kv.Key].Text = kv.Value;
+                // The conventions also hold the ground clearance layers, which this dialog doesn't show.
+                if (_layers.TryGetValue(kv.Key, out TextBox? box))
+                {
+                    box.Text = kv.Value;
+                }
             }
 
             OnModeChanged();
