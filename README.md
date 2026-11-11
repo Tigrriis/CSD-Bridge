@@ -62,7 +62,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 214 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 223 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -190,6 +190,7 @@ with `-Remove`.
 | `AIROUTINES` | Open the Routines window: run, create, edit, rename, duplicate or delete routines |
 | `AIHISTORY` | Open the history window: every request and what Claude did |
 | `AITURN` | Draw an AS/NZS 2890.1 B85 or B99 vehicle swept path: a turning template, a vehicle driven along a selected line/polyline, or driven click by click (forward and reverse legs). Opens a dialog for the vehicle, radius, clearances, what to draw and the layers. |
+| `AITURNEDIT` | Change a turning path drawn by `AITURN`: pick any part of it, adjust the vehicle, radius, clearances, layers or conflict layers in the dialog, then regenerate it as it was, pick its geometry again, or (drive) continue from where it ended. |
 | `AICLEARANCE` | Check a B85 or B99 car's ground clearance (AS/NZS 2890.1 Appendix C): slide the template along a plotted long section, or drive along a path and check each side of the car against a BricsCAD TIN surface, with wheel path long sections plotted. |
 | `AIEFFORT` | Choose how hard Claude works: Auto, Quick, Normal or Thorough (also the Effort box in the chat panel) |
 | `AIMODEL` | Choose the model: Opus, Sonnet or Haiku (also the Model box in the chat panel) |
@@ -204,7 +205,7 @@ with `-Remove`.
 | `AISCALEBARS` | Add a scale bar block to every layout for each viewport scale on it. Runs in the add-in, so it doesn't call Claude or cost anything. See [Scale bars](#scale-bars). |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft, Routines and History buttons, small New chat,
-Status and API key buttons, a Scale Bars button in the Sheets panel, and **Turn path** (`AITURN`) and
+Status and API key buttons, a Scale Bars button in the Sheets panel, and **Turn path** (`AITURN`), **Edit path** (`AITURNEDIT`) and
 **Clearance** (`AICLEARANCE`) buttons in the Vehicles panel. It's added when the add-in loads. If your workspace hides the
 ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
@@ -382,7 +383,7 @@ vehicles. `AITURN` (ribbon: **Vehicles > Turn path**) opens a dialog, then promp
 |---|---|---|
 | **Standard turn template** | Start point (centre of the rear axle of the parked car) and the direction of travel | A single turn at the nominated radius, measured at the outer front wheel as in Paragraph B3.1 (default the vehicle's minimum: B99 6.3 m, B85 5.8 m), through the turn angle(s) you enter (`90`, or `30,60,90,120,150,180` for a fan like Figures B3 to B6), left or right, with straight travel before and after. |
 | **Follow a line, arc or polyline** | The curve, near the end the vehicle starts from | Drives the vehicle along it, forwards (the front axle centre follows the line, the rear axle tracks in behind) or in reverse (the rear axle follows the line). Use it to check a driveway, ramp or aisle you have already drawn. |
-| **Drive** | The start point and direction, then where the vehicle goes next, click by click | Each click is a destination. The car drives there on one arc when that arc is no tighter than the turn radius, so it arrives pointing along it; otherwise it turns at the turn radius until it points at the destination, then drives straight (the **Drive turns** option makes it always do the latter). A click ahead goes forward, a click behind reverses. A leg never turns more than a half turn: a point inside the turning circle can't be reached in one leg, so drive past and reverse. Every leg keeps its own swept path, so a three-point turn is three clicks. Type `U` to take back the last leg, Enter to finish. |
+| **Drive** | The start point and direction, then where the vehicle goes next, click by click | Each click is a destination. The car drives there on one arc when that arc is no tighter than the turn radius; otherwise it turns at the turn radius until it points at the destination, then drives straight (the **Drive turns** option makes it always do the latter). A click ahead goes forward, a click behind reverses. With **arrival direction** on (a dialog tick box, or `D` while driving), a second pick sets which way the car faces at the destination, and the leg becomes turn, straight, turn so it arrives exactly on that heading: square into a bay, parallel to an aisle. A leg never turns more than a half turn, so a point inside the turning circle can't be reached in one leg: drive past and reverse. Every leg keeps its own swept path, so a three-point turn is three clicks. `U` takes back the last leg, Enter finishes. |
 
 While you pick the direction, or the next destination, the swept path, clearances, driven path and vehicle
 are previewed live under the cursor (at a coarser step than the final result), with the earlier legs kept on screen.
@@ -427,6 +428,36 @@ when a layer doesn't exist yet. The dialog can change all of it per run; **Save 
 **In chat.** Claude has the same simulator as `draw_turn_path`: *"check a B99 can get into the
 driveway on the kerb return I just drew"* or *"add B85 turning templates at 5.8 m for each aisle
 end"*. It can also run it as a dry run and report the tightest radius without drawing.
+
+### Conflicts with kerbs, walls and columns
+
+Tick **Check against kerbs, walls and columns** in the dialog and name the layers they are on (commas between,
+`*` as a wildcard; `A-WALL*` also finds xref layers such as `arch|A-WALL-EXT`). Leave the box blank to pick
+objects on those layers after OK. Lines, arcs, circles and polylines on those layers are checked, in the drawing
+and inside blocks and xrefs; frozen and off layers are ignored. After drawing, the command reports:
+
+- a **hit** where linework is inside the swept path, with how far inside;
+- an **encroachment** where linework is between the swept path and the clearance line, with the gap left and the
+  gap required on that side;
+- otherwise, how close the nearest obstruction comes to the swept path.
+
+Each conflict is marked on the Conflicts layer: the offending stretch of the obstruction, a ring at the worst
+point and a note (`HIT 120 mm`, or `215 mm (needs 300)`).
+
+### Editing a turning path
+
+Every path remembers how it was made. `AITURNEDIT` (ribbon: **Vehicles > Edit path**): pick any part of a path,
+or its block. The dialog opens with that path's settings; change the vehicle, radius, clearances, what is drawn,
+the layers or the conflict layers, then choose:
+
+- **Regenerate** (Enter): redraw it with the new settings and the same geometry;
+- **Pick**: pick the start, direction, line or destinations again;
+- **Continue** (drive): add more legs from where the drive ended.
+
+The old version is only erased once the new one has been worked out, so a change that can't be driven (a bigger
+vehicle that can't reach a destination, say) leaves the path as it was and says which destination failed. A path
+drawn as a block that has since been moved or rotated is regenerated where the block now is. Paths drawn before
+this version carry no settings and can't be edited: draw them again.
 
 ### Ground clearance (Appendix C)
 

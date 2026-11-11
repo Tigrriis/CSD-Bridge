@@ -156,6 +156,19 @@ def turn_path():
     return img
 
 
+def turn_edit():
+    """The turn path icon with a pencil over it."""
+    img = turn_path()
+    d = ImageDraw.Draw(img)
+    body = [(150, 196), (214, 132), (238, 156), (174, 220)]
+    d.polygon(body, fill=ORANGE, outline=ORANGE_DARK)
+    d.line(body + [body[0]], fill=ORANGE_DARK, width=OUTLINE, joint="curve")
+    tip = [(150, 196), (174, 220), (136, 234)]
+    d.polygon(tip, fill=(245, 215, 170, 255))
+    d.line(tip + [tip[0]], fill=ORANGE_DARK, width=OUTLINE, joint="curve")
+    return img
+
+
 def clearance():
     """A car in side view clearing a hump in the ground."""
     img, d = canvas()
@@ -198,6 +211,7 @@ ICONS = {
     "key": key,
     "scalebar": scale_bar,
     "turnpath": turn_path,
+    "turnedit": turn_edit,
     "clearance": clearance,
     "pipehatch": pipe_hatch,
 }

@@ -20,7 +20,7 @@ namespace CsdBridge.BricsCAD
     /// BricsCAD's main thread, inside the AIDRAFT command (see <see cref="AgentRunner"/>),
     /// so the whole AI request is one UNDO step.
     /// </summary>
-    internal sealed class BricsCadDrawingHost : IDrawingHost, IBlockMaker, CsdBridge.Core.Vehicles.IGroundSurfaceProvider
+    internal sealed class BricsCadDrawingHost : IDrawingHost, IBlockMaker, CsdBridge.Core.Vehicles.IGroundSurfaceProvider, CsdBridge.Core.Vehicles.IObstructionSource
     {
         private const int MaxListedNames = 5000;
         private const int MaxPolylinePoints = 500;
@@ -1168,7 +1168,7 @@ namespace CsdBridge.BricsCAD
         }
 
         /// <summary>Exact plan geometry of a curve in world X/Y, or null if it isn't a line, arc, circle or polyline.</summary>
-        private static EntitySpec? CurveSpec(Entity ent)
+        internal static EntitySpec? CurveSpec(Entity ent)
         {
             switch (ent)
             {
@@ -1453,6 +1453,11 @@ namespace CsdBridge.BricsCAD
                 ((Entity)tr.GetObject(id, OpenMode.ForWrite)).TransformBy(matrix);
             }
         }
+
+        // =========================================================== obstructions
+
+        public IReadOnlyList<CsdBridge.Core.Vehicles.Obstruction> Obstructions(IReadOnlyList<string> layerPatterns, Point2 min, Point2 max, IReadOnlyCollection<string> excludeLayers) =>
+            ObstructionScanner.Scan(_doc, layerPatterns, min, max, excludeLayers);
 
         // ============================================================== surfaces
 

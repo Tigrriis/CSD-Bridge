@@ -108,6 +108,9 @@ namespace CsdBridge.Core.Vehicles
 
             public double StraightLength { get; set; }
 
+            /// <summary>The moves in order, in words: "turn left 40°", "6.0 m straight".</summary>
+            public List<string> Moves { get; set; } = new List<string>();
+
             public double Length => Request.Path.Length;
         }
 
@@ -234,14 +237,176 @@ namespace CsdBridge.Core.Vehicles
             return best;
         }
 
-        private static DriveLeg Leg(DesignVehicle v, VehiclePose start, bool back, VehiclePoint reference, Path2 path, bool left, double sweep, double straight) => new DriveLeg
+        private static DriveLeg Leg(DesignVehicle v, VehiclePose start, bool back, VehiclePoint reference, Path2 path, bool left, double sweep, double straight)
         {
-            Request = new TurnPathRequest { Vehicle = v, Path = path, Reference = reference, Reverse = back, InitialHeading = start.Heading },
-            Reverse = back,
-            Left = left,
-            ArcDeg = sweep * 180 / Math.PI,
-            StraightLength = straight,
-        };
+            var leg = new DriveLeg
+            {
+                Request = new TurnPathRequest { Vehicle = v, Path = path, Reference = reference, Reverse = back, InitialHeading = start.Heading },
+                Reverse = back,
+                Left = left,
+                ArcDeg = sweep * 180 / Math.PI,
+                StraightLength = straight,
+            };
+            if (leg.ArcDeg > 0.5)
+            {
+                leg.Moves.Add($"turn {(left ? "left" : "right")} {leg.ArcDeg:0}°");
+            }
+
+            if (straight > 0.005)
+            {
+                leg.Moves.Add($"{straight:0.0} m straight");
+            }
+
+            return leg;
+        }
+
+        /// <summary>
+        /// The leg that brings the vehicle to <paramref name="target"/> facing <paramref name="arrivalHeading"/>:
+        /// a turn at the turn radius, a straight, and a second turn (either may be left or right, or
+        /// vanish). The rear axle follows the path, so the vehicle arrives exactly on the heading.
+        /// Forwards the front axle centre arrives at the target, in reverse the rear axle centre;
+        /// both are tried and the shorter is used unless <paramref name="reverse"/> says. No turn is
+        /// more than <see cref="MaxLegTurnDeg"/>, and two turns the same way together no more than
+        /// that, so there are no loops: null when that can't be done in one leg.
+        /// </summary>
+        public static DriveLeg? DriveToPose(DesignVehicle v, VehiclePose start, Point2 target, double arrivalHeading, double? outerWheelRadius = null, bool? reverse = null)
+        {
+            double radius = outerWheelRadius ?? v.MinTurnRadius;
+            if (radius < v.MinTurnRadius - 1e-9)
+            {
+                throw new ArgumentException($"The turn radius can't be less than the {v.Name}'s minimum of {v.MinTurnRadius:0.#} m.");
+            }
+
+            double rho = v.RearAxleRadius(radius);
+            DriveLeg? best = null;
+            foreach (bool back in reverse is bool forced ? new[] { forced } : new[] { false, true })
+            {
+                Point2 goal = back ? target : new Point2(target.X - v.Wheelbase * Math.Cos(arrivalHeading), target.Y - v.Wheelbase * Math.Sin(arrivalHeading));
+                double flip = back ? Math.PI : 0;
+                DriveLeg? leg = TurnStraightTurn(v, start, start.RearAxle, start.Heading + flip, goal, arrivalHeading + flip, rho, back);
+                if (leg != null && (best == null || leg.Length < best.Length - 1e-9))
+                {
+                    best = leg;
+                }
+            }
+
+            return best;
+        }
+
+        /// <summary>The shortest turn-straight-turn path between two positions and directions of travel, within the turn caps.</summary>
+        private static DriveLeg? TurnStraightTurn(DesignVehicle v, VehiclePose start, Point2 p0, double t0, Point2 p1, double t1, double rho, bool back)
+        {
+            double maxSweep = MaxLegTurnDeg * Math.PI / 180;
+            DriveLeg? best = null;
+            foreach (double s0 in new[] { 1.0, -1.0 })
+            {
+                foreach (double s1 in new[] { 1.0, -1.0 })
+                {
+                    var c0 = new Point2(p0.X - Math.Sin(t0) * rho * s0, p0.Y + Math.Cos(t0) * rho * s0);
+                    var c1 = new Point2(p1.X - Math.Sin(t1) * rho * s1, p1.Y + Math.Cos(t1) * rho * s1);
+                    double dx = c1.X - c0.X, dy = c1.Y - c0.Y;
+                    double dist = Math.Sqrt(dx * dx + dy * dy);
+                    double beta, straight;
+                    if (s0 == s1)
+                    {
+                        beta = dist < 1e-9 ? t1 : Math.Atan2(dy, dx);
+                        straight = dist;
+                    }
+                    else
+                    {
+                        if (dist < 2 * rho)
+                        {
+                            continue; // the circles overlap: no crossing tangent
+                        }
+
+                        double gamma = Math.Asin(Math.Min(1, 2 * rho / dist));
+                        beta = Math.Atan2(dy, dx) + gamma * s0;
+                        straight = Math.Sqrt(Math.Max(0, dist * dist - 4 * rho * rho));
+                    }
+
+                    double sweep0 = Turn(t0, beta, s0), sweep1 = Turn(beta, t1, s1);
+                    if (Math.Abs(sweep0) > maxSweep || Math.Abs(sweep1) > maxSweep || (s0 == s1 && Math.Abs(sweep0) + Math.Abs(sweep1) > maxSweep))
+                    {
+                        continue; // that would be a loop
+                    }
+
+                    var segments = new List<Segment>();
+                    Point2 at = p0;
+                    if (Math.Abs(sweep0) > 1e-6)
+                    {
+                        var arc = new ArcSegment(c0, rho, Math.Atan2(p0.Y - c0.Y, p0.X - c0.X), sweep0);
+                        segments.Add(arc);
+                        at = arc.End;
+                    }
+
+                    if (straight > 1e-6)
+                    {
+                        var to = new Point2(at.X + Math.Cos(beta) * straight, at.Y + Math.Sin(beta) * straight);
+                        segments.Add(new LineSegment(at, to));
+                        at = to;
+                    }
+
+                    if (Math.Abs(sweep1) > 1e-6)
+                    {
+                        var arc = new ArcSegment(c1, rho, Math.Atan2(at.Y - c1.Y, at.X - c1.X), sweep1);
+                        segments.Add(arc);
+                        at = arc.End;
+                    }
+
+                    if (segments.Count == 0 || Segment.Dist(at, p1) > 1e-4)
+                    {
+                        continue;
+                    }
+
+                    var path = new Path2(segments, false);
+                    if (path.Length < 0.05 || (best != null && path.Length >= best.Length))
+                    {
+                        continue;
+                    }
+
+                    // In reverse the driver's left is the right of the direction of travel.
+                    bool Left(double side) => back ? side < 0 : side > 0;
+                    var leg = new DriveLeg
+                    {
+                        Request = new TurnPathRequest { Vehicle = v, Path = path, Reference = v.RearAxleCentre, Reverse = back, InitialHeading = start.Heading },
+                        Reverse = back,
+                        Left = Math.Abs(sweep0) > 1e-6 ? Left(s0) : Left(s1),
+                        ArcDeg = (Math.Abs(sweep0) + Math.Abs(sweep1)) * 180 / Math.PI,
+                        StraightLength = straight,
+                    };
+                    if (Math.Abs(sweep0) * 180 / Math.PI > 0.5)
+                    {
+                        leg.Moves.Add($"turn {(Left(s0) ? "left" : "right")} {Math.Abs(sweep0) * 180 / Math.PI:0}°");
+                    }
+
+                    if (straight > 0.005)
+                    {
+                        leg.Moves.Add($"{straight:0.0} m straight");
+                    }
+
+                    if (Math.Abs(sweep1) * 180 / Math.PI > 0.5)
+                    {
+                        leg.Moves.Add($"turn {(Left(s1) ? "left" : "right")} {Math.Abs(sweep1) * 180 / Math.PI:0}°");
+                    }
+
+                    best = leg;
+                }
+            }
+
+            return best;
+        }
+
+        /// <summary>The signed angle turned going from one heading to another, turning left (side +1) or right (-1).</summary>
+        private static double Turn(double from, double to, double side)
+        {
+            double a = side > 0 ? Angles.Normalize(to - from) : Angles.Normalize(from - to);
+            if (a > 2 * Math.PI - 1e-7)
+            {
+                a = 0;
+            }
+
+            return a * side;
+        }
 
         /// <summary>
         /// A path through points with a tangent arc at each corner. Corners that don't have room

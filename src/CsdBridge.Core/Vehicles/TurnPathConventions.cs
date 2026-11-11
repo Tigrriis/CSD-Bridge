@@ -36,6 +36,16 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Drive mode turns: "arc" (one arc to the destination where its radius allows) or "corner" (turn at the radius, then straight).</summary>
         public string DriveTurns { get; set; } = "arc";
 
+        /// <summary>Drive mode: ask for the direction the vehicle faces at each destination.</summary>
+        public bool DriveArrivalHeading { get; set; }
+
+        /// <summary>Check the swept path and clearances against linework on the obstruction layers.</summary>
+        public bool CheckConflicts { get; set; }
+
+        /// <summary>Layers holding kerbs, walls, columns and so on; * and ? wildcards; xref layers match by the part after '|'.</summary>
+        public List<string> ObstructionLayers { get; set; } = new List<string>();
+
+        [System.Text.Json.Serialization.JsonIgnore]
         public TurnPathBuilder.DriveTurns DriveTurnsMode =>
             string.Equals(DriveTurns, "corner", StringComparison.OrdinalIgnoreCase) ? TurnPathBuilder.DriveTurns.Corner : TurnPathBuilder.DriveTurns.Arc;
 
@@ -91,6 +101,7 @@ namespace CsdBridge.Core.Vehicles
             c.LayerStyles[c.Layers.Labels] = new LayerStyle { Color = 4, Lineweight = 0.18, Description = "Design vehicle labels" };
             c.LayerStyles[c.Layers.Hatch] = new LayerStyle { Color = 254, Rgb = new[] { 255, 220, 220 }, Lineweight = 0.13, Plot = true, Description = "Design vehicle swept area" };
             c.LayerStyles[c.Layers.Block] = new LayerStyle { Color = 7, Lineweight = 0.25, Description = "Design vehicle turning path blocks" };
+            c.LayerStyles[c.Layers.Conflict] = new LayerStyle { Color = 6, Lineweight = 0.7, Description = "Design vehicle conflicts with obstructions" };
             c.LayerStyles[c.Layers.ClearanceCheck] = new LayerStyle { Color = 4, Lineweight = 0.25, Description = "Design vehicle ground clearance check (AS/NZS 2890.1 Appendix C)" };
             c.LayerStyles[c.Layers.ClearanceFail] = new LayerStyle { Color = 1, Lineweight = 0.5, Description = "Design vehicle ground clearance check: where it grounds" };
             return c;
@@ -224,6 +235,9 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Layer of the block reference when the result is made into a block.</summary>
         public string Block { get; set; } = "AE CIV PLN - VEHICLE BLOCK";
 
+        /// <summary>Where the swept path or its clearance meets an obstruction.</summary>
+        public string Conflict { get; set; } = "AE CIV PLN - VEHICLE CONFLICT";
+
         /// <summary>Ground clearance templates, markers and section plots.</summary>
         public string ClearanceCheck { get; set; } = "AE CIV PLN - VEHICLE GROUND CLEARANCE";
 
@@ -250,6 +264,7 @@ namespace CsdBridge.Core.Vehicles
                 Labels = Fill(Labels, defaults.Labels),
                 Hatch = Fill(Hatch, defaults.Hatch),
                 Block = Fill(Block, defaults.Block),
+                Conflict = Fill(Conflict, defaults.Conflict),
                 ClearanceCheck = Fill(ClearanceCheck, defaults.ClearanceCheck),
                 ClearanceFail = Fill(ClearanceFail, defaults.ClearanceFail),
             };
@@ -267,6 +282,7 @@ namespace CsdBridge.Core.Vehicles
             yield return new KeyValuePair<string, string>("labels", Labels);
             yield return new KeyValuePair<string, string>("hatch", Hatch);
             yield return new KeyValuePair<string, string>("block", Block);
+            yield return new KeyValuePair<string, string>("conflict", Conflict);
             yield return new KeyValuePair<string, string>("clearance_check", ClearanceCheck);
             yield return new KeyValuePair<string, string>("clearance_fail", ClearanceFail);
         }
@@ -285,6 +301,7 @@ namespace CsdBridge.Core.Vehicles
                 case "labels": Labels = layer; return true;
                 case "hatch": Hatch = layer; return true;
                 case "block": Block = layer; return true;
+                case "conflict": Conflict = layer; return true;
                 case "clearance_check": ClearanceCheck = layer; return true;
                 case "clearance_fail": ClearanceFail = layer; return true;
                 default: return false;

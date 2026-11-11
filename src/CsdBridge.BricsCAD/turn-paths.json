@@ -77,6 +77,14 @@
   // Drive mode: "arc" = one arc to each destination when its radius allows (otherwise a turn at the
   // radius then straight); "corner" = always a turn at the radius then straight.
   "drive_turns": "arc",
+  // Drive mode: also ask which way the vehicle faces at each destination (turn, straight, turn).
+  "drive_arrival_heading": false,
+
+  // Conflict check: flag where the swept path (a hit) or its clearance (an encroachment) meets
+  // linework on these layers. * and ? are wildcards; "A-WALL*" also matches xref layers such as
+  // "arch|A-WALL-EXT". Blank with check_conflicts on = pick objects on the layers when prompted.
+  "check_conflicts": false,
+  "obstruction_layers": [],
 
   // Vehicle outlines every this many metres along the path (0 = only at the start and end).
   "outline_interval": 0,
@@ -114,6 +122,7 @@
     "labels": "AE CIV PLN - VEHICLE TEXT",
     "hatch": "AE CIV HTC - VEHICLE SWEPT PATH",
     "block": "AE CIV PLN - VEHICLE BLOCK",
+    "conflict": "AE CIV PLN - VEHICLE CONFLICT",
     "clearance_check": "AE CIV PLN - VEHICLE GROUND CLEARANCE",
     "clearance_fail": "AE CIV PLN - VEHICLE GROUND CLEARANCE FAIL"
   },
@@ -130,6 +139,7 @@
     "AE CIV PLN - VEHICLE TEXT": { "color": 4, "lineweight": 0.18, "description": "Design vehicle labels" },
     "AE CIV HTC - VEHICLE SWEPT PATH": { "color": 254, "rgb": [ 255, 220, 220 ], "lineweight": 0.13, "description": "Design vehicle swept area" },
     "AE CIV PLN - VEHICLE BLOCK": { "color": 7, "lineweight": 0.25, "description": "Design vehicle turning path blocks" },
+    "AE CIV PLN - VEHICLE CONFLICT": { "color": 6, "lineweight": 0.7, "description": "Design vehicle conflicts with obstructions" },
     "AE CIV PLN - VEHICLE GROUND CLEARANCE": { "color": 4, "lineweight": 0.25, "description": "Design vehicle ground clearance check (AS/NZS 2890.1 Appendix C)" },
     "AE CIV PLN - VEHICLE GROUND CLEARANCE FAIL": { "color": 1, "lineweight": 0.5, "description": "Design vehicle ground clearance check: where it grounds" }
   }
