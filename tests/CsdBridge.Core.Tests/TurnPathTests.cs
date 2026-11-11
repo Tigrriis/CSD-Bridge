@@ -479,7 +479,8 @@ namespace CsdBridge.Core.Tests
         {
             DesignVehicle v = DesignVehicle.B99;
             var start = new VehiclePose(new Point2(0, 0), 0); // facing east, rear axle at the origin
-            TurnPathBuilder.DriveLeg leg = TurnPathBuilder.DriveTo(v, start, new Point2(20, 12))!;
+            // Corner turns: minimum-radius arc then straight.
+            TurnPathBuilder.DriveLeg leg = TurnPathBuilder.DriveTo(v, start, new Point2(20, 12), turns: TurnPathBuilder.DriveTurns.Corner)!;
             Assert.False(leg.Reverse);
             Assert.True(leg.Left);
             Assert.Equal(2, leg.Request.Path.Segments.Count);
@@ -512,10 +513,13 @@ namespace CsdBridge.Core.Tests
             Assert.True(rb.Reverse);
             Assert.Equal(0, Dist(rb.Poses[rb.Poses.Count - 1].RearAxle, new Point2(2, -8)), 0.03);
 
-            // A point just to the left, inside the left turning circle: the car turns right, most of the way round.
-            TurnPathBuilder.DriveLeg around = TurnPathBuilder.DriveTo(v, start, new Point2(-2, v.Wheelbase + 1))!;
-            Assert.False(around.Left);
-            Assert.True(around.ArcDeg > 180);
+            // A point just to the left, inside the left turning circle: not reachable in one leg (no loops).
+            Assert.Null(TurnPathBuilder.DriveTo(v, start, new Point2(-2, v.Wheelbase + 1)));
+            Assert.Null(TurnPathBuilder.DriveTo(v, start, new Point2(-2, v.Wheelbase + 1), turns: TurnPathBuilder.DriveTurns.Corner));
+            // A U-turn is still allowed: a point beside the car, two turning circles over.
+            double rf = v.RadiusOfPoint(v.MinTurnRadius, v.FrontAxleCentre, true);
+            TurnPathBuilder.DriveLeg uturn = TurnPathBuilder.DriveTo(v, start, new Point2(2 * rf + 0.5, v.Wheelbase - 1))!;
+            Assert.InRange(uturn.ArcDeg, 150, 190);
 
             // Too close to move: nothing. Too tight a radius: refused.
             Assert.Null(TurnPathBuilder.DriveTo(v, start, new Point2(0, v.Wheelbase)));
@@ -525,15 +529,62 @@ namespace CsdBridge.Core.Tests
         }
 
         [Fact]
+        public void DriveToUsesOneArcWhenTheRadiusAllows()
+        {
+            DesignVehicle v = DesignVehicle.B99;
+            var start = new VehiclePose(new Point2(0, 0), 0);
+            double rf = v.RadiusOfPoint(v.MinTurnRadius, v.FrontAxleCentre, true);
+
+            // A gentle destination: one arc, tangent to the heading, ending at the point.
+            TurnPathBuilder.DriveLeg arc = TurnPathBuilder.DriveTo(v, start, new Point2(v.Wheelbase + 10, 3))!;
+            Assert.Single(arc.Request.Path.Segments);
+            var seg = Assert.IsType<ArcSegment>(arc.Request.Path.Segments[0]);
+            Assert.Equal(109.0 / 6, seg.Radius, 6); // d² / (2 × lateral) = (100 + 9) / 6
+            Assert.True(seg.Radius > rf);
+            Assert.Equal(0, seg.TangentAt(0), 6);
+            Assert.Equal(0, Dist(arc.Request.Path.End, new Point2(v.Wheelbase + 10, 3)), 1e-9);
+            Assert.True(arc.Left);
+            Assert.Equal(0, arc.StraightLength, 9);
+
+            // Driving it, the car arrives pointing along the arc.
+            TurnPathResult r = TurnPathSimulator.Simulate(arc.Request);
+            Assert.Equal(0, Dist(r.Poses[r.Poses.Count - 1].ToWorld(v.FrontAxleCentre), new Point2(v.Wheelbase + 10, 3)), 0.03);
+            Assert.True(r.WithinMinimumRadius);
+
+            // A point ahead that one arc can't reach without being tighter than the car can steer is
+            // exactly a point inside the turning circle: refused, never a loop.
+            Assert.Null(TurnPathBuilder.DriveTo(v, start, new Point2(v.Wheelbase + 4, 6)));
+
+            // Beside the car, past the turning circle: one arc would be more than a half circle, so
+            // it is a minimum-radius turn then straight.
+            TurnPathBuilder.DriveLeg tight = TurnPathBuilder.DriveTo(v, start, new Point2(v.Wheelbase - 1, 2 * rf + 0.5))!;
+            Assert.Equal(2, tight.Request.Path.Segments.Count);
+            Assert.Equal(rf, ((ArcSegment)tight.Request.Path.Segments[0]).Radius, 9);
+            Assert.True(tight.StraightLength > 0);
+
+            // Straight ahead: just a line. Corner mode never uses the single arc.
+            Assert.IsType<LineSegment>(TurnPathBuilder.DriveTo(v, start, new Point2(15, 0))!.Request.Path.Segments[0]);
+            Assert.Equal(2, TurnPathBuilder.DriveTo(v, start, new Point2(v.Wheelbase + 10, 3), turns: TurnPathBuilder.DriveTurns.Corner)!.Request.Path.Segments.Count);
+
+            // In reverse the same rule applies to the rear axle.
+            TurnPathBuilder.DriveLeg back = TurnPathBuilder.DriveTo(v, start, new Point2(-12, 2))!;
+            Assert.True(back.Reverse);
+            Assert.Single(back.Request.Path.Segments);
+            Assert.Equal(0, Dist(back.Request.Path.End, new Point2(-12, 2)), 1e-9);
+        }
+
+        [Fact]
         public void ThreePointTurnLegsChainFromEachOthersEndPose()
         {
             DesignVehicle v = DesignVehicle.B99;
             var pose = new VehiclePose(new Point2(0, 0), 0);
-            var targets = new[] { new Point2(8, 4), new Point2(4, 2), new Point2(0, 6) };
+            var targets = new[] { new Point2(12, 5), new Point2(6, -4), new Point2(14, 12) };
             var results = new List<TurnPathResult>();
             foreach (Point2 t in targets)
             {
-                TurnPathBuilder.DriveLeg leg = TurnPathBuilder.DriveTo(v, pose, t)!;
+                TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(v, pose, t);
+                Assert.True(leg != null, $"no leg to {t}");
+                Assert.True(leg!.ArcDeg <= TurnPathBuilder.MaxLegTurnDeg);
                 TurnPathResult r = TurnPathSimulator.Simulate(leg.Request);
                 Assert.True(r.WithinMinimumRadius);
                 results.Add(r);
@@ -716,8 +767,8 @@ namespace CsdBridge.Core.Tests
         {
             var host = new InMemoryDrawingHost("Meters");
             var tools = new TurnPathTools(host, Conventions());
-            // Start at the origin facing east; forward to (10,6), reverse to (6,4), forward to (12,12).
-            using JsonDocument doc = Run(tools, "{\"mode\":\"points\",\"points\":[[0,0],[10,6],[6,4],[12,12]],\"heading_deg\":0}", out _);
+            // Start at the origin facing east; forward to (12,5), reverse to (6,-4), forward to (14,12).
+            using JsonDocument doc = Run(tools, "{\"mode\":\"points\",\"points\":[[0,0],[12,5],[6,-4],[14,12]],\"heading_deg\":0}", out _);
             JsonElement legs = doc.RootElement.GetProperty("legs");
             Assert.Equal(3, legs.GetArrayLength());
             Assert.Contains("forward", legs[0].GetString());
@@ -740,6 +791,8 @@ namespace CsdBridge.Core.Tests
                 "{\"mode\":\"follow\",\"handle\":\"ZZZ\"}",
                 "{\"mode\":\"points\",\"points\":[[0,0]]}",
                 "{\"mode\":\"points\",\"points\":[[0,0],[10,0]],\"radius\":3}",
+                "{\"mode\":\"points\",\"points\":[[0,0],[7,6]],\"heading_deg\":0}",
+                "{\"mode\":\"points\",\"points\":[[0,0],[20,5]],\"turns\":\"zigzag\"}",
                 "{\"mode\":\"template\",\"start\":[0,0],\"heading_deg\":0,\"layers\":{\"kerb\":\"X\"}}",
                 "{\"mode\":\"sideways\"}",
             })

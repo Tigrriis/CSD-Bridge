@@ -62,7 +62,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 213 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 214 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -382,7 +382,7 @@ vehicles. `AITURN` (ribbon: **Vehicles > Turn path**) opens a dialog, then promp
 |---|---|---|
 | **Standard turn template** | Start point (centre of the rear axle of the parked car) and the direction of travel | A single turn at the nominated radius, measured at the outer front wheel as in Paragraph B3.1 (default the vehicle's minimum: B99 6.3 m, B85 5.8 m), through the turn angle(s) you enter (`90`, or `30,60,90,120,150,180` for a fan like Figures B3 to B6), left or right, with straight travel before and after. |
 | **Follow a line, arc or polyline** | The curve, near the end the vehicle starts from | Drives the vehicle along it, forwards (the front axle centre follows the line, the rear axle tracks in behind) or in reverse (the rear axle follows the line). Use it to check a driveway, ramp or aisle you have already drawn. |
-| **Drive** | The start point and direction, then where the vehicle goes next, click by click | Each click is a destination. The car turns at the turn radius (never tighter than the vehicle can steer) until it points at the destination, then drives straight to it; a click ahead goes forward, a click behind reverses. Every leg keeps its own swept path, so a three-point turn is three clicks. Type `U` to take back the last leg, Enter to finish. |
+| **Drive** | The start point and direction, then where the vehicle goes next, click by click | Each click is a destination. The car drives there on one arc when that arc is no tighter than the turn radius, so it arrives pointing along it; otherwise it turns at the turn radius until it points at the destination, then drives straight (the **Drive turns** option makes it always do the latter). A click ahead goes forward, a click behind reverses. A leg never turns more than a half turn: a point inside the turning circle can't be reached in one leg, so drive past and reverse. Every leg keeps its own swept path, so a three-point turn is three clicks. Type `U` to take back the last leg, Enter to finish. |
 
 While you pick the direction, or the next destination, the swept path, clearances, driven path and vehicle
 are previewed live under the cursor (at a coarser step than the final result), with the earlier legs kept on screen.
