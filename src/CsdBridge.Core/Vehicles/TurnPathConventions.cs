@@ -33,6 +33,12 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Straight travel after a template turn (m).</summary>
         public double LeadOut { get; set; } = 6;
 
+        /// <summary>Drive mode turns: "arc" (one arc to the destination where its radius allows) or "corner" (turn at the radius, then straight).</summary>
+        public string DriveTurns { get; set; } = "arc";
+
+        public TurnPathBuilder.DriveTurns DriveTurnsMode =>
+            string.Equals(DriveTurns, "corner", StringComparison.OrdinalIgnoreCase) ? TurnPathBuilder.DriveTurns.Corner : TurnPathBuilder.DriveTurns.Arc;
+
         /// <summary>Draw a vehicle outline every this many metres along the path (0 = only at the start and end).</summary>
         public double OutlineInterval { get; set; }
 

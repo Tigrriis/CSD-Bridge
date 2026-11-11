@@ -59,6 +59,7 @@ namespace CsdBridge.Core.Vehicles
                     "\"reverse\":{\"type\":\"boolean\",\"description\":\"Follow: travel backwards along the path. Points: force every leg forwards (false) or in reverse (true); default by where each point is.\"}," +
                     "\"points\":{\"type\":\"array\",\"items\":" + Point + ",\"minItems\":2,\"maxItems\":200}," +
                     "\"reference\":{\"type\":\"string\",\"enum\":[\"outer_front_wheel\",\"front_axle\",\"rear_axle\"],\"description\":\"Which point of the vehicle follows the path.\"}," +
+                    "\"turns\":{\"type\":\"string\",\"enum\":[\"arc\",\"corner\"],\"description\":\"Points: arc = one arc to each destination when its radius allows (default); corner = turn at 'radius' then straight. A leg never turns more than a half turn and a bit.\"}," +
                     "\"clearance_inside\":{\"type\":\"number\"},\"clearance_outside\":{\"type\":\"number\",\"description\":\"Metres; default the vehicle's (B99 0.3/0.6, B85 0.3/0.3).\"}," +
                     "\"label\":{\"type\":\"string\"}," +
                     "\"layers\":{\"type\":\"object\",\"description\":\"Layer per part: swept_path, clearance, vehicle, vehicle_intermediate, path, wheel_paths, labels, hatch, block.\",\"additionalProperties\":{\"type\":\"string\"}}," +
@@ -197,10 +198,15 @@ namespace CsdBridge.Core.Vehicles
                         for (int i = 1; i < pts.Count; i++)
                         {
                             bool? force = JsonArgs.TryGet(input, "reverse", out _) ? reverse : (bool?)null;
-                            TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(vehicle, pose, pts[i], radius, force);
+                            string? turnsName = JsonArgs.OptionalString(input, "turns", "");
+                            TurnPathBuilder.DriveTurns turns = string.IsNullOrWhiteSpace(turnsName) ? c.DriveTurnsMode
+                                : turnsName!.Trim().ToLowerInvariant() == "corner" ? TurnPathBuilder.DriveTurns.Corner
+                                : turnsName.Trim().ToLowerInvariant() == "arc" ? TurnPathBuilder.DriveTurns.Arc
+                                : throw new ArgumentException("turns must be arc or corner.");
+                            TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(vehicle, pose, pts[i], radius, force, turns);
                             if (leg == null)
                             {
-                                warnings.Add($"points[{i}] is too close to the vehicle to drive to; skipped.");
+                                warnings.Add($"points[{i}] can't be reached in one leg (too close, inside the turning circle, or more than a half turn away); skipped. Drive past it and reverse, or add a point in between.");
                                 continue;
                             }
 
@@ -215,7 +221,7 @@ namespace CsdBridge.Core.Vehicles
 
                         if (legs.Count == 0)
                         {
-                            throw new ArgumentException("No leg could be driven: every destination is too close to the vehicle.");
+                            throw new ArgumentException("No leg could be driven: every destination is too close, inside the turning circle, or more than a half turn away. Drive past and reverse, or add points in between.");
                         }
 
                         req = legs[0];

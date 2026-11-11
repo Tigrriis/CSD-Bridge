@@ -74,6 +74,10 @@
   "lead_in": 0,
   "lead_out": 6,
 
+  // Drive mode: "arc" = one arc to each destination when its radius allows (otherwise a turn at the
+  // radius then straight); "corner" = always a turn at the radius then straight.
+  "drive_turns": "arc",
+
   // Vehicle outlines every this many metres along the path (0 = only at the start and end).
   "outline_interval": 0,
 

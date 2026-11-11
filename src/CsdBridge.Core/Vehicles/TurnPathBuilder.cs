@@ -111,16 +111,31 @@ namespace CsdBridge.Core.Vehicles
             public double Length => Request.Path.Length;
         }
 
+        /// <summary>How a drive leg turns.</summary>
+        public enum DriveTurns
+        {
+            /// <summary>One arc to the destination when its radius allows; otherwise a minimum-radius turn then straight.</summary>
+            Arc,
+
+            /// <summary>Always a turn at the chosen radius, then straight to the destination.</summary>
+            Corner,
+        }
+
+        /// <summary>The most a leg may turn: a U-turn and a little, never a loop.</summary>
+        public const double MaxLegTurnDeg = 190;
+
         /// <summary>
         /// The leg that takes the vehicle from <paramref name="start"/> to <paramref name="target"/>
-        /// the way a car can: a turn at the given radius (never tighter than the vehicle can steer)
-        /// until it points at the destination, then straight to it. Forwards when the destination is
-        /// ahead of the rear axle, in reverse when it is behind, unless <paramref name="reverse"/> says.
-        /// Forwards the front axle centre arrives at the destination; in reverse the rear axle centre.
-        /// A destination inside one turning circle is reached by turning the other way, round as far
-        /// as it takes. Null when the destination is too close to move to.
+        /// the way a car can. With <see cref="DriveTurns.Arc"/>: a single arc, tangent to the way
+        /// the vehicle faces, when its radius is at least the turn radius; otherwise (and always with
+        /// <see cref="DriveTurns.Corner"/>) a turn at the turn radius until it points at the
+        /// destination, then straight to it. Forwards when the destination is ahead of the rear
+        /// axle, in reverse when it is behind, unless <paramref name="reverse"/> says. Forwards the
+        /// front axle centre arrives at the destination; in reverse the rear axle centre. A leg never
+        /// turns more than <see cref="MaxLegTurnDeg"/>: a destination inside the turning circle, or
+        /// one that would need a loop, gives null, as does one too close to move to.
         /// </summary>
-        public static DriveLeg? DriveTo(DesignVehicle v, VehiclePose start, Point2 target, double? outerWheelRadius = null, bool? reverse = null)
+        public static DriveLeg? DriveTo(DesignVehicle v, VehiclePose start, Point2 target, double? outerWheelRadius = null, bool? reverse = null, DriveTurns turns = DriveTurns.Arc)
         {
             double radius = outerWheelRadius ?? v.MinTurnRadius;
             if (radius < v.MinTurnRadius - 1e-9)
@@ -139,10 +154,34 @@ namespace CsdBridge.Core.Vehicles
             double travel = back ? start.Heading + Math.PI : start.Heading;
             double ux = Math.Cos(travel), uy = Math.Sin(travel);
             double nx = -uy, ny = ux;
-
-            if (Math.Sqrt((target.X - p0.X) * (target.X - p0.X) + (target.Y - p0.Y) * (target.Y - p0.Y)) < 0.05)
+            double dxT = target.X - p0.X, dyT = target.Y - p0.Y;
+            double along = dxT * ux + dyT * uy, lateral = dxT * nx + dyT * ny;
+            if (Math.Sqrt(dxT * dxT + dyT * dyT) < 0.05)
             {
                 return null;
+            }
+
+            double maxSweep = MaxLegTurnDeg * Math.PI / 180;
+
+            if (turns == DriveTurns.Arc && along > 1e-9)
+            {
+                // The one arc tangent to the direction of travel through the destination.
+                double d2 = along * along + lateral * lateral;
+                if (Math.Abs(lateral) < 1e-9)
+                {
+                    return Leg(v, start, back, reference, new Path2(new List<Segment> { new LineSegment(p0, target) }, false), left: true, sweep: 0, straight: along);
+                }
+
+                double arcRadius = d2 / (2 * Math.Abs(lateral));
+                if (arcRadius >= refRadius - 1e-9)
+                {
+                    double side = Math.Sign(lateral);
+                    var centre = new Point2(p0.X + nx * arcRadius * side, p0.Y + ny * arcRadius * side);
+                    double startAngle = Math.Atan2(p0.Y - centre.Y, p0.X - centre.X);
+                    double sweep = 2 * Math.Atan2(Math.Abs(lateral), along) * side; // the inscribed-angle relation: always under 180 degrees
+                    var arc = new ArcSegment(centre, arcRadius, startAngle, sweep);
+                    return Leg(v, start, back, reference, new Path2(new List<Segment> { arc }, false), left: back ? side < 0 : side > 0, sweep: Math.Abs(sweep), straight: 0);
+                }
             }
 
             DriveLeg? best = null;
@@ -154,7 +193,7 @@ namespace CsdBridge.Core.Vehicles
                 double d = Math.Sqrt(dx * dx + dy * dy);
                 if (d < refRadius + 1e-9)
                 {
-                    continue; // inside this circle: go round the other way
+                    continue; // inside this circle
                 }
 
                 double phi = Math.Atan2(dy, dx);
@@ -162,8 +201,12 @@ namespace CsdBridge.Core.Vehicles
                 double startAngle = Math.Atan2(p0.Y - centre.Y, p0.X - centre.X);
                 double exitAngle = side > 0 ? phi - beta : phi + beta;
                 double sweep = side > 0 ? Angles.Normalize(exitAngle - startAngle) : -Angles.Normalize(startAngle - exitAngle);
-                double straight = Math.Sqrt(Math.Max(0, d * d - refRadius * refRadius));
+                if (Math.Abs(sweep) > maxSweep)
+                {
+                    continue; // that would be a loop
+                }
 
+                double straight = Math.Sqrt(Math.Max(0, d * d - refRadius * refRadius));
                 var segments = new List<Segment>();
                 if (Math.Abs(sweep) > 1e-6)
                 {
@@ -181,22 +224,7 @@ namespace CsdBridge.Core.Vehicles
                     continue;
                 }
 
-                var leg = new DriveLeg
-                {
-                    Request = new TurnPathRequest
-                    {
-                        Vehicle = v,
-                        Path = new Path2(segments, false),
-                        Reference = reference,
-                        Reverse = back,
-                        InitialHeading = start.Heading,
-                    },
-                    Reverse = back,
-                    // In reverse the driver's left is the right of the direction of travel.
-                    Left = back ? side < 0 : side > 0,
-                    ArcDeg = Math.Abs(sweep) * 180 / Math.PI,
-                    StraightLength = straight,
-                };
+                DriveLeg leg = Leg(v, start, back, reference, new Path2(segments, false), left: back ? side < 0 : side > 0, sweep: Math.Abs(sweep), straight: straight);
                 if (best == null || leg.Length < best.Length)
                 {
                     best = leg;
@@ -205,6 +233,15 @@ namespace CsdBridge.Core.Vehicles
 
             return best;
         }
+
+        private static DriveLeg Leg(DesignVehicle v, VehiclePose start, bool back, VehiclePoint reference, Path2 path, bool left, double sweep, double straight) => new DriveLeg
+        {
+            Request = new TurnPathRequest { Vehicle = v, Path = path, Reference = reference, Reverse = back, InitialHeading = start.Heading },
+            Reverse = back,
+            Left = left,
+            ArcDeg = sweep * 180 / Math.PI,
+            StraightLength = straight,
+        };
 
         /// <summary>
         /// A path through points with a tangent arc at each corner. Corners that don't have room

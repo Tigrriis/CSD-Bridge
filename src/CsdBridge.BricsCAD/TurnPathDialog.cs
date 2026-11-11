@@ -31,6 +31,9 @@ namespace CsdBridge.BricsCAD
         public double LeadIn { get; set; }
         public double LeadOut { get; set; } = 6;
         public ReferencePoint Reference { get; set; } = ReferencePoint.OuterFrontWheel;
+
+        /// <summary>Drive mode: arc to the destination where possible, or always turn at the radius then straight.</summary>
+        public TurnPathBuilder.DriveTurns Turns { get; set; } = TurnPathBuilder.DriveTurns.Arc;
         public bool Reverse { get; set; }
         public double ClearanceInside { get; set; } = 0.3;
         public double ClearanceOutside { get; set; } = 0.3;
@@ -60,6 +63,7 @@ namespace CsdBridge.BricsCAD
         private readonly TextBox _leadIn;
         private readonly TextBox _leadOut;
         private readonly ComboBox _reference;
+        private readonly ComboBox _turns;
         private readonly CheckBox _reverse;
         private readonly TextBox _clearInside;
         private readonly TextBox _clearOutside;
@@ -140,6 +144,9 @@ namespace CsdBridge.BricsCAD
             _reference = new ComboBox { Width = 230, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
             _reference.Items.AddRange(new object[] { "Outer front wheel (AS 2890 radius)", "Front axle centre", "Rear axle centre" });
             Row(manoeuvre, Caption("Point following the path"), _reference, null);
+            _turns = new ComboBox { Width = 230, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            _turns.Items.AddRange(new object[] { "Arc to the point where the radius allows", "Turn at the radius, then straight" });
+            Row(manoeuvre, Caption("Drive turns"), _turns, null);
             _reverse = new CheckBox { Text = "Reverse (drive backwards along the path)", AutoSize = true };
             Row(manoeuvre, null, _reverse, null);
             manoeuvre.SetColumnSpan(_reverse, 2);
@@ -399,6 +406,7 @@ namespace CsdBridge.BricsCAD
 
             _leadIn.Text = Num(c.LeadIn);
             _leadOut.Text = Num(c.LeadOut);
+            _turns.SelectedIndex = c.DriveTurnsMode == TurnPathBuilder.DriveTurns.Corner ? 1 : 0;
             _drawSwept.Checked = c.Draw.SweptPath;
             _drawClearance.Checked = c.Draw.Clearance;
             _drawVehicle.Checked = c.Draw.Vehicle;
@@ -463,6 +471,7 @@ namespace CsdBridge.BricsCAD
             // Drive mode decides forward/reverse and the reference point from where you click.
             _reverse.Enabled = !template && !points;
             _reference.Enabled = !points;
+            _turns.Enabled = points;
             if (template || points)
             {
                 _reverse.Checked = false;
@@ -494,6 +503,7 @@ namespace CsdBridge.BricsCAD
                 Left = _left.Checked,
                 Reverse = _reverse.Checked,
                 Reference = _reference.SelectedIndex == 2 ? ReferencePoint.RearAxle : _reference.SelectedIndex == 1 ? ReferencePoint.FrontAxle : ReferencePoint.OuterFrontWheel,
+                Turns = _turns.SelectedIndex == 1 ? TurnPathBuilder.DriveTurns.Corner : TurnPathBuilder.DriveTurns.Arc,
                 Conventions = _conventions,
             };
 
@@ -625,6 +635,7 @@ namespace CsdBridge.BricsCAD
                 c.DefaultVehicle = choice.Vehicle.Name;
                 c.LeadIn = choice.LeadIn;
                 c.LeadOut = choice.LeadOut;
+                c.DriveTurns = choice.Turns == TurnPathBuilder.DriveTurns.Corner ? "corner" : "arc";
                 c.OutlineInterval = choice.Style.OutlineInterval;
                 c.TextHeight = choice.Style.TextHeight;
                 c.Draw = choice.Style.Draw.Clone();

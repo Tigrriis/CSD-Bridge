@@ -190,7 +190,7 @@ namespace CsdBridge.BricsCAD
                     legs.Count == 0 ? null : new[] { "Undo" },
                     cursor =>
                     {
-                        TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(v, from, cursor, c.Radius);
+                        TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(v, from, cursor, c.Radius, null, c.Turns);
                         return leg == null ? null : preview.Specs(leg.Request, startVehicle: false);
                     },
                     fixedGraphics);
@@ -216,17 +216,19 @@ namespace CsdBridge.BricsCAD
                     return null;
                 }
 
-                TurnPathBuilder.DriveLeg? chosen = TurnPathBuilder.DriveTo(v, from, jig.Point2, c.Radius);
+                TurnPathBuilder.DriveLeg? chosen = TurnPathBuilder.DriveTo(v, from, jig.Point2, c.Radius, null, c.Turns);
                 if (chosen == null)
                 {
-                    ed.WriteMessage("\nToo close to the vehicle to drive to; click further away.");
+                    ed.WriteMessage("\nThe vehicle can't get there in one leg: the point is too close, inside its turning circle, or more than a half turn away. Click further away, or drive past and reverse.");
                     continue;
                 }
 
                 // Simulate now so the next leg starts from the real end pose, and keep its graphics on screen.
                 TurnPathResult result = TurnPathSimulator.Simulate(CopyFor(chosen.Request, c));
                 pose = result.Poses[result.Poses.Count - 1];
-                string what = $"{(chosen.Reverse ? "reverse" : "forward")}, {(chosen.ArcDeg > 0.5 ? $"turn {(chosen.Left ? "left" : "right")} {chosen.ArcDeg:0}° then " : "")}{chosen.StraightLength:0.0} m straight";
+                string what = (chosen.Reverse ? "reverse" : "forward") +
+                              (chosen.ArcDeg > 0.5 ? $", turn {(chosen.Left ? "left" : "right")} {chosen.ArcDeg:0}°" : "") +
+                              (chosen.StraightLength > 0.005 ? $"{(chosen.ArcDeg > 0.5 ? " then " : ", ")}{chosen.StraightLength:0.0} m straight" : "");
                 ed.WriteMessage($"\n  Leg {legs.Count + 1}: {what}.");
                 legs.Add((new Leg(chosen.Request, v.Name, first: legs.Count == 0), pose, preview.Specs(CopyFor(chosen.Request, c), startVehicle: false)));
             }
