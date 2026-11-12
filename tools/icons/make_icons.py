@@ -169,6 +169,24 @@ def turn_edit():
     return img
 
 
+def turn_solve():
+    """A car turning round between two kerbs in three movements: forward, back, forward."""
+    img, d = canvas()
+    RED = (205, 55, 45, 255)
+    # the kerbs
+    d.line([(8, 22), (248, 22)], fill=GREY, width=18)
+    d.line([(8, 234), (248, 234)], fill=GREY, width=18)
+    # the three movements, the last with an arrow head
+    path = [(70, 176), (112, 70), (156, 190), (204, 86)]
+    d.line(path, fill=RED, width=20, joint="curve")
+    for (x, y) in path[:-1]:
+        d.ellipse((x - 10, y - 10, x + 10, y + 10), fill=RED)
+    d.polygon([(222, 44), (176, 84), (232, 104)], fill=RED)
+    # the car at the start
+    d.rounded_rectangle((14, 160, 84, 210), radius=16, fill=BLUE, outline=BLUE_DARK, width=OUTLINE)
+    return img
+
+
 def clearance():
     """A car in side view clearing a hump in the ground."""
     img, d = canvas()
@@ -212,6 +230,7 @@ ICONS = {
     "scalebar": scale_bar,
     "turnpath": turn_path,
     "turnedit": turn_edit,
+    "turnsolve": turn_solve,
     "clearance": clearance,
     "pipehatch": pipe_hatch,
 }

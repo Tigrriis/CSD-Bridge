@@ -45,6 +45,10 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
   swept path as the exact boundary of the union of the body over every pose, the clearance
   template, the `draw_turn_path` tool, a drive planner (turn at the radius, then straight, forwards or in
   reverse, leg by leg, optionally arriving on a set heading), conflict detection against obstruction linework,
+  a multi-point turn solver (`ManoeuvreSolver`: a hybrid A* search over position, heading and direction of
+  travel, stepping along full-lock arcs and straights, finishing with turn-straight-turn paths to the target or
+  to a straight run-in to it, and testing every step by sweeping the body's true outline, enlarged by the
+  clearance, against the obstruction linework),
   the saved manoeuvre record that `AITURNEDIT` regenerates from, and the Appendix C ground clearance check (`check_ground_clearance`) on a long
   section or along each side of the car on a surface. It has no CAD dependency, so the same code serves
   the `AITURN`/`AICLEARANCE` commands, Claude's tools and the tests.

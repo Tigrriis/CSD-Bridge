@@ -212,6 +212,16 @@ namespace CsdBridge.Core.Tests
             Assert.Equal(new[] { "1A", "1B" }, back.Handles);
             Assert.Equal("KERB*", back.ObstructionLayers.Single());
 
+            // Only what was set is saved: nothing worked out from it, and a path with no start point
+            // (one that follows a line) saves too.
+            Assert.DoesNotContain("start_point", r.ToJson());
+            Assert.DoesNotContain("turns_kind", r.ToJson());
+            var follow = new ManoeuvreRecord { Id = "f", Mode = "follow", FollowHandle = "2C", FollowNear = new[] { 1.0, 2 }, Reverse = true };
+            ManoeuvreRecord followed = ManoeuvreRecord.FromJson(follow.ToJson());
+            Assert.Equal("2C", followed.FollowHandle);
+            Assert.True(followed.Reverse);
+            Assert.Null(followed.Start);
+
             // The block was rotated 90 degrees about the start and moved 100 east.
             back.Transform(new Point2(0, 0), Math.PI / 2, 100, 0);
             Assert.Equal(100, back.Start![0], 9);

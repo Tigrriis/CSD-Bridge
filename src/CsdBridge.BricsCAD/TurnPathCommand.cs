@@ -13,9 +13,10 @@ namespace CsdBridge.BricsCAD
 {
     /// <summary>
     /// AITURN draws an AS/NZS 2890.1 B85/B99 swept path: the dialog collects the options, the
-    /// command prompts for the geometry (start point and direction, a curve to follow, or
-    /// destinations to drive to), and the result is drawn through the same drawing host as
-    /// Claude's tools, so it lands on the configured layers and is one UNDO step.
+    /// command prompts for the geometry (start point and direction, a curve to follow,
+    /// destinations to drive to, or a start and a target to solve the movements between), and
+    /// the result is drawn through the same drawing host as Claude's tools, so it lands on the
+    /// configured layers and is one UNDO step.
     ///
     /// Everything that defines the path is kept as a <see cref="ManoeuvreRecord"/> and saved in
     /// the drawing with the entities, so AITURNEDIT can change the settings or the geometry and
@@ -23,12 +24,13 @@ namespace CsdBridge.BricsCAD
     /// </summary>
     internal static class TurnPathCommand
     {
-        public static void Run(Document doc)
+        /// <param name="startIn">The manoeuvre the dialog opens on (AITURNSOLVE opens it on Solve).</param>
+        public static void Run(Document doc, TurnPathChoice.ManoeuvreMode? startIn = null)
         {
             Editor ed = doc.Editor;
             TurnPathConventions conventions = LoadConventions(ed, out string savePath);
             TurnPathChoice choice;
-            using (var dialog = new TurnPathDialog(conventions, savePath))
+            using (var dialog = new TurnPathDialog(conventions, savePath, null, startIn))
             {
                 if (dialog.ShowDialog() != DialogResult.OK)
                 {
@@ -47,7 +49,11 @@ namespace CsdBridge.BricsCAD
                     return;
                 }
 
-                PromptObstructions(doc, record);
+                if (!PromptObstructions(doc, record) || !Solve(doc, record, conventions, again: false))
+                {
+                    return;
+                }
+
                 Execute(doc, record, conventions, null, null);
             }
             catch (ArgumentException ex)
@@ -89,7 +95,9 @@ namespace CsdBridge.BricsCAD
                     if (Math.Abs(dx) + Math.Abs(dy) > 1e-6 || Math.Abs(block.Rotation) > 1e-9)
                     {
                         record.Transform(new Point2(record.BlockBase[0], record.BlockBase[1]), block.Rotation, dx, dy);
-                        ed.WriteMessage("\nThe block has been moved since it was drawn; the path is regenerated where it is now.");
+                        ed.WriteMessage(record.Mode == "solve"
+                            ? "\nThe block has been moved since it was drawn; the manoeuvre is solved again where it is now."
+                            : "\nThe block has been moved since it was drawn; the path is regenerated where it is now.");
                     }
                 }
 
@@ -112,12 +120,18 @@ namespace CsdBridge.BricsCAD
 
                 Apply(choice, record);
 
-                var options = new PromptKeywordOptions("\nKeep the geometry and regenerate, pick it again, or (drive) continue from the end");
+                var options = new PromptKeywordOptions(record.Mode == "solve"
+                    ? "\nKeep the positions and regenerate, pick them again, or solve again (if the surroundings have changed)"
+                    : "\nKeep the geometry and regenerate, pick it again, or (drive) continue from the end");
                 options.Keywords.Add("Regenerate");
                 options.Keywords.Add("Pick");
                 if (record.Mode == "drive")
                 {
                     options.Keywords.Add("Continue");
+                }
+                else if (record.Mode == "solve")
+                {
+                    options.Keywords.Add("Solve");
                 }
 
                 options.Keywords.Default = "Regenerate";
@@ -152,7 +166,12 @@ namespace CsdBridge.BricsCAD
                     }
                 }
 
-                PromptObstructions(doc, record);
+                if (!PromptObstructions(doc, record) || !Solve(doc, record, conventions, again: action == "Solve"))
+                {
+                    ed.WriteMessage("\n  The turning path was left as it was.\n");
+                    return;
+                }
+
                 Execute(doc, record, conventions, old, block);
             }
             catch (ArgumentException ex)
@@ -182,7 +201,8 @@ namespace CsdBridge.BricsCAD
         }
 
         private static string ModeName(TurnPathChoice.ManoeuvreMode mode) =>
-            mode == TurnPathChoice.ManoeuvreMode.Template ? "template" : mode == TurnPathChoice.ManoeuvreMode.Follow ? "follow" : "drive";
+            mode == TurnPathChoice.ManoeuvreMode.Template ? "template" : mode == TurnPathChoice.ManoeuvreMode.Follow ? "follow"
+            : mode == TurnPathChoice.ManoeuvreMode.Solve ? "solve" : "drive";
 
         /// <summary>Copies the dialog's settings onto a record, leaving its manoeuvre and geometry alone.</summary>
         private static void Apply(TurnPathChoice c, ManoeuvreRecord r)
@@ -208,6 +228,12 @@ namespace CsdBridge.BricsCAD
             r.TextHeight = c.Style.TextHeight;
             r.CheckConflicts = c.CheckConflicts;
             r.ObstructionLayers = c.ObstructionLayers.ToList();
+            if (r.Mode == "solve")
+            {
+                // One clearance, the same on both sides, and always checked against the layers it was solved between.
+                r.ClearanceOutside = r.ClearanceInside;
+                r.CheckConflicts = true;
+            }
         }
 
         // ---------------------------------------------------------------- geometry
@@ -262,6 +288,29 @@ namespace CsdBridge.BricsCAD
 
                 case "drive":
                     return Drive(ed, r, c, preview, continueDrive);
+
+                case "solve":
+                {
+                    List<EntitySpec>? Parked(Point2 at, Point2 cursor) => PreviewBuilder.Vehicle(v, new VehiclePose(at, Math.Atan2(cursor.Y - at.Y, cursor.X - at.X)));
+                    if (!PickStartAndHeading(ed, "\nStart position (centre of the rear axle of the vehicle): ", out Point2 from, out double facing, Parked))
+                    {
+                        return false;
+                    }
+
+                    // The vehicle at the start stays on screen while the target is placed.
+                    List<EntitySpec> atStart = PreviewBuilder.Vehicle(v, new VehiclePose(from, facing));
+                    if (!PickStartAndHeading(ed, "\nTarget position (centre of the rear axle where the vehicle ends up): ", out Point2 to, out double arriving, Parked,
+                        "\nDirection the vehicle faces at the target (pick a point ahead of it): ", atStart))
+                    {
+                        return false;
+                    }
+
+                    r.Start = new[] { from.X, from.Y };
+                    r.HeadingDeg = facing * 180 / Math.PI;
+                    r.Target = new[] { to.X, to.Y };
+                    r.TargetHeadingDeg = arriving * 180 / Math.PI;
+                    return true;
+                }
 
                 default:
                     return false;
@@ -408,7 +457,8 @@ namespace CsdBridge.BricsCAD
         }
 
         /// <summary>Start point, then the direction of travel from a second point, with a live preview.</summary>
-        private static bool PickStartAndHeading(Editor ed, string startPrompt, out Point2 start, out double heading, Func<Point2, Point2, List<EntitySpec>?> previewAt)
+        private static bool PickStartAndHeading(Editor ed, string startPrompt, out Point2 start, out double heading, Func<Point2, Point2, List<EntitySpec>?> previewAt,
+            string? headingPrompt = null, List<EntitySpec>? fixedGraphics = null)
         {
             start = default;
             heading = 0;
@@ -420,8 +470,8 @@ namespace CsdBridge.BricsCAD
 
             Point2 s = Wcs(ed, first.Value);
             Point3d startWcs = first.Value.TransformBy(ed.CurrentUserCoordinateSystem);
-            var jig = new TurnPathJig("\nDirection of travel (pick a point ahead of the vehicle): ", startWcs, null,
-                cursor => Distance(s, cursor) < 1e-6 ? null : previewAt(s, cursor));
+            var jig = new TurnPathJig(headingPrompt ?? "\nDirection of travel (pick a point ahead of the vehicle): ", startWcs, null,
+                cursor => Distance(s, cursor) < 1e-6 ? null : previewAt(s, cursor), fixedGraphics);
             PromptResult ahead = ed.Drag(jig);
             if (ahead.Status != PromptStatus.OK)
             {
@@ -439,25 +489,77 @@ namespace CsdBridge.BricsCAD
             return true;
         }
 
-        /// <summary>With the conflict check on and no layers given, asks for objects on the obstruction layers.</summary>
-        private static void PromptObstructions(Document doc, ManoeuvreRecord r)
+        /// <summary>
+        /// With the conflict check on and no layers given, asks for objects on the obstruction layers.
+        /// False only when a solve is left with nothing to manoeuvre between.
+        /// </summary>
+        private static bool PromptObstructions(Document doc, ManoeuvreRecord r)
         {
-            if (!r.CheckConflicts || r.ObstructionLayers.Count > 0)
+            bool solve = r.Mode == "solve";
+            if ((!r.CheckConflicts && !solve) || r.ObstructionLayers.Count > 0)
             {
-                return;
+                return true;
             }
 
             Editor ed = doc.Editor;
-            var options = new PromptSelectionOptions { MessageForAdding = "\nSelect objects on the obstruction layers (kerbs, walls, columns), or Enter to skip the conflict check: " };
+            var options = new PromptSelectionOptions
+            {
+                MessageForAdding = solve
+                    ? "\nSelect objects on the layers that bound the space (kerbs, walls, columns): "
+                    : "\nSelect objects on the obstruction layers (kerbs, walls, columns), or Enter to skip the conflict check: ",
+            };
             PromptSelectionResult res = ed.GetSelection(options);
             if (res.Status != PromptStatus.OK)
             {
-                ed.WriteMessage("\nNo obstruction layers, so conflicts aren't checked.");
-                return;
+                ed.WriteMessage(solve
+                    ? "\nCSD-Bridge: a manoeuvre is solved between the linework on the obstruction layers; none were given, so nothing was done.\n"
+                    : "\nNo obstruction layers, so conflicts aren't checked.");
+                return !solve;
             }
 
             r.ObstructionLayers = ObstructionScanner.LayersOf(doc, res.Value.GetObjectIds());
-            ed.WriteMessage($"\nChecking against: {string.Join(", ", r.ObstructionLayers)}. To keep these, type them in the dialog and use Save as defaults.");
+            ed.WriteMessage($"\n{(solve ? "Manoeuvring between" : "Checking against")}: {string.Join(", ", r.ObstructionLayers)}. To keep these, type them in the dialog and use Save as defaults.");
+            return true;
+        }
+
+        /// <summary>
+        /// Solve mode: finds the forward and reverse movements from the start to the target between
+        /// the linework on the obstruction layers, and keeps them with the record. Skipped when the
+        /// record is already solved for its settings (unless asked to solve <paramref name="again"/>).
+        /// False, with the reason printed, when there is no solution.
+        /// </summary>
+        private static bool Solve(Document doc, ManoeuvreRecord r, TurnPathConventions conv, bool again)
+        {
+            if (r.Mode != "solve" || (!again && !r.NeedsSolving))
+            {
+                return true;
+            }
+
+            Editor ed = doc.Editor;
+            var host = new BricsCadDrawingHost(doc);
+            ed.WriteMessage($"\nCSD-Bridge: solving the manoeuvre (up to {conv.SolverTimeLimit:0} s)...");
+            List<string> own = ManoeuvrePlanner.OwnLayers(r, conv);
+            SolveResult result = ManoeuvrePlanner.Solve(r, conv, (min, max) => host.Obstructions(r.ObstructionLayers, min, max, own));
+            ed.WriteMessage($"\n  {result.ObstructionsUsed} object(s) on the obstruction layers in range; {result.Expansions:N0} positions tried in {result.Seconds:0.0} s.");
+            if (result.ObstructionsUsed == 0)
+            {
+                ed.WriteMessage("\n  Nothing on those layers is near the start or the target, so the vehicle was free to go anywhere. Check the layer names.");
+            }
+
+            if (!result.Solved)
+            {
+                ed.WriteMessage($"\n  {result.Summary()}" +
+                                "\n  Check the start and target positions and which way the vehicle faces at each. For a larger area or a longer search, " +
+                                "raise solver_search_margin or solver_time_limit in turn-paths.json.\n");
+                return false;
+            }
+
+            if (result.Movements > 3 && r.SolveClearance > 0.05)
+            {
+                ed.WriteMessage("\n  That is a lot of shuffling: with a smaller clearance it may take fewer movements.");
+            }
+
+            return true;
         }
 
         // ------------------------------------------------------------------ drawing
@@ -547,6 +649,11 @@ namespace CsdBridge.BricsCAD
 
             ed.WriteMessage($"\nCSD-Bridge: {(old != null ? "regenerated" : "drew")} the {v.Name} turning path, {handles.Count} entities" +
                             (missing.Count > 0 ? $" (created layers: {string.Join(", ", missing.Select(m => m.Name))})" : "") + ".");
+            if (r.Mode == "solve" && r.SolvedSummary != null)
+            {
+                ed.WriteMessage("\n  " + r.SolvedSummary);
+            }
+
             int n = 0;
             foreach (PlannedLeg leg in plan.Legs)
             {

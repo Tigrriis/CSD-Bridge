@@ -32,14 +32,18 @@ namespace CsdBridge.Core.Vehicles
                     DrawTurnPath,
                     "Simulate an AS/NZS 2890.1 design vehicle (" + vehicles + ") through a manoeuvre and draw its swept path: the body " +
                     "envelope (solid), the envelope plus the standard's clearances (dashed design template), the vehicle outline at the " +
-                    "start and end, the driven path and a label; optionally wheel paths, outlines along the way and a hatch. Three modes: " +
+                    "start and end, the driven path and a label; optionally wheel paths, outlines along the way and a hatch. Four modes: " +
                     "'template' = a standard single turn from a start point (rear axle centre) and heading, at a radius measured at the " +
                     "outer front wheel (default the vehicle's minimum: B99 6.3 m, B85 5.8 m), through turn_angle_deg left or right, with " +
                     "straight lead_in/lead_out; 'follow' = drive the vehicle along an existing line, arc or polyline (handle), from the end " +
                     "nearest 'start' or the curve's start, forwards or in reverse; 'points' = drive like a car: points[0] is the rear axle " +
                     "at the start (heading_deg, default towards the next point), and each later point is a destination it turns to at " +
                     "'radius' (never tighter than it can steer) then drives straight to, forwards if ahead, in reverse if behind; each leg " +
-                    "keeps its own swept path, so a three-point turn is three points. The reference point that follows the path is the " +
+                    "keeps its own swept path, so a three-point turn is three points; 'solve' = work the manoeuvre out: give the rear axle " +
+                    "and heading at the start (start, heading_deg) and at the end (target, target_heading_deg) and the obstruction_layers that " +
+                    "bound the space, and it finds the forward and reverse movements between them (a three-point turn, a reverse into a " +
+                    "bay), keeping clearance_inside (default 300 mm) to everything on those layers, and reports how many movements it took " +
+                    "and whether the clearance had to be reduced. The reference point that follows the path is the " +
                     "outer front wheel for templates and the front axle centre otherwise (rear axle when reversing); the rear axle tracks " +
                     "in behind it. Returns " +
                     "the tightest radius used and whether it meets the vehicle's minimum, the net turn, the handles drawn by part and the " +
@@ -48,9 +52,11 @@ namespace CsdBridge.Core.Vehicles
                     "block layer). B99 is for access driveways, ramps and circulation roadways; B85 only for parking spaces and aisles.",
                     "{\"type\":\"object\",\"properties\":{" +
                     "\"vehicle\":{\"type\":\"string\",\"description\":\"" + vehicles + ". Default the conventions' default (B99).\"}," +
-                    "\"mode\":{\"type\":\"string\",\"enum\":[\"template\",\"follow\",\"points\"]}," +
+                    "\"mode\":{\"type\":\"string\",\"enum\":[\"template\",\"follow\",\"points\",\"solve\"]}," +
                     "\"start\":" + Point + "," +
-                    "\"heading_deg\":{\"type\":\"number\",\"description\":\"Template and points: direction the vehicle faces at the start, degrees anticlockwise from +X (points: default towards the second point).\"}," +
+                    "\"heading_deg\":{\"type\":\"number\",\"description\":\"Template, points and solve: direction the vehicle faces at the start, degrees anticlockwise from +X (points: default towards the second point).\"}," +
+                    "\"target\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2,\"description\":\"Solve: the rear axle centre at the end of the manoeuvre.\"}," +
+                    "\"target_heading_deg\":{\"type\":\"number\",\"description\":\"Solve: direction the vehicle faces at the end, degrees anticlockwise from +X.\"}," +
                     "\"radius\":{\"type\":\"number\",\"description\":\"Turn radius at the outer front wheel (template and points); default the vehicle's minimum, and points can't go below it.\"}," +
                     "\"turn_angle_deg\":{\"type\":\"number\",\"description\":\"Template: change of direction (default 90).\"}," +
                     "\"direction\":{\"type\":\"string\",\"enum\":[\"left\",\"right\"],\"description\":\"Template: which way it turns (default left).\"}," +
@@ -69,7 +75,7 @@ namespace CsdBridge.Core.Vehicles
                     "\"block\":{\"type\":\"boolean\",\"description\":\"Make the result one block.\"}," +
                     "\"outline_interval\":{\"type\":\"number\",\"description\":\"Vehicle outline every this many metres (0 = none).\"}}}," +
                     "\"arrival_headings_deg\":{\"type\":\"array\",\"items\":{\"type\":[\"number\",\"null\"]},\"description\":\"Points: the direction the vehicle faces on arriving at each destination (one entry per point after the first; null = free). With a heading the leg is turn, straight, turn.\"}," +
-                    "\"obstruction_layers\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Check for conflicts with linework on these layers (kerbs, walls, columns; * wildcards, xref layers match by the part after |). Reports where the body hits and where the clearance is encroached, and marks them.\"}," +
+                    "\"obstruction_layers\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Check for conflicts with linework on these layers (kerbs, walls, columns; * wildcards, xref layers match by the part after |). Reports where the body hits and where the clearance is encroached, and marks them. Solve: the linework the vehicle must manoeuvre between (required).\"}," +
                     "\"block_name\":{\"type\":\"string\",\"description\":\"Name for the block (default '<vehicle> turning path'; a number is added if taken).\"}," +
                     "\"dry_run\":{\"type\":\"boolean\"}" +
                     "},\"required\":[\"mode\"]}"),
@@ -88,6 +94,8 @@ namespace CsdBridge.Core.Vehicles
             "- The dashed template adds 300 mm manoeuvring clearance both sides, plus 300 mm circulation clearance on the outside for " +
             "B99 (600 mm outside in total) where vehicles travel above 10 km/h (B3.2).\n" +
             "- Aisle widths for parking manoeuvres come from Tables B2/B3 and Figure 2.2, not from swept paths (B4.4).\n" +
+            "- To find out whether, and in how many movements, a vehicle can turn round or get into a space, use mode 'solve' with the " +
+            "obstruction layers rather than guessing points: it reports the movements and any clearance it had to give up.\n" +
             (_conventions == null ? "" : "Vehicles and layers from turn-paths.json:\n" + _conventions.Describe());
 
         public bool RunsOnMainThread(string toolName) => true;
@@ -135,6 +143,9 @@ namespace CsdBridge.Core.Vehicles
                 double? nominated = null;
                 List<TurnPathRequest>? legs = null;
                 var legNotes = new List<string>();
+                SolveResult? solved = null;
+                List<string>? solveLayers = null;
+                double solveClearance = 0;
                 switch (mode)
                 {
                     case "template":
@@ -240,14 +251,85 @@ namespace CsdBridge.Core.Vehicles
                         break;
                     }
 
+                    case "solve":
+                    {
+                        // Solve: find the forward and reverse movements from the start pose to the target pose
+                        // between the linework on the obstruction layers.
+                        if (!(_host is IObstructionSource space))
+                        {
+                            throw new ArgumentException("This drawing host can't read obstruction linework, so it can't solve a manoeuvre.");
+                        }
+
+                        List<JsonElement>? layerItems = JsonArgs.OptionalArray(input, "obstruction_layers", "", 0, 100);
+                        solveLayers = layerItems == null ? new List<string>() : JsonArgs.ReadStringList(layerItems, "obstruction_layers");
+                        if (solveLayers.Count == 0)
+                        {
+                            solveLayers = c.ObstructionLayers.ToList();
+                        }
+
+                        if (solveLayers.Count == 0)
+                        {
+                            throw new ArgumentException("solve needs obstruction_layers: the layers with the kerbs, walls and columns the vehicle has to manoeuvre between.");
+                        }
+
+                        solveClearance = JsonArgs.OptionalNumber(input, "clearance_inside", "") ?? vehicle.ClearanceInside;
+                        if (solveClearance < 0)
+                        {
+                            throw new ArgumentException("Clearances can't be negative.");
+                        }
+
+                        var record = new ManoeuvreRecord
+                        {
+                            Vehicle = vehicle.Name,
+                            Mode = "solve",
+                            Start = JsonArgs.RequirePoint(input, "start", "").ToArray(),
+                            HeadingDeg = JsonArgs.RequireNumber(input, "heading_deg", ""),
+                            Target = JsonArgs.RequirePoint(input, "target", "").ToArray(),
+                            TargetHeadingDeg = JsonArgs.RequireNumber(input, "target_heading_deg", ""),
+                            Radius = JsonArgs.OptionalPositive(input, "radius", "") ?? vehicle.MinTurnRadius,
+                            ClearanceInside = solveClearance,
+                            ClearanceOutside = solveClearance,
+                            ObstructionLayers = solveLayers,
+                        };
+                        if (record.Radius < vehicle.MinTurnRadius - 1e-9)
+                        {
+                            throw new ArgumentException($"A {record.Radius:0.##} m radius is below the {vehicle.Name}'s minimum of {vehicle.MinTurnRadius:0.#} m (AS/NZS 2890.1 B3.1).");
+                        }
+
+                        // Never treat the tool's own layers (an earlier swept path) as an obstruction.
+                        TurnPathLayers ownLayers = TurnPathStyle.From(c).Layers;
+                        ApplyLayers(input, ownLayers);
+                        List<string> exclude = ManoeuvrePlanner.OwnLayers(new ManoeuvreRecord { Layers = ownLayers }, c);
+                        List<string> layers = solveLayers;
+                        solved = ManoeuvrePlanner.Solve(record, c, (min, max) => space.Obstructions(layers, min, max, exclude));
+                        if (!solved.Solved)
+                        {
+                            throw new ArgumentException($"{solved.Summary()} {solved.ObstructionsUsed} object(s) on the obstruction layers were in range. " +
+                                                        "Check the start and target positions and headings, or try a smaller clearance.");
+                        }
+
+                        legs = solved.Legs.Select(l => l.ToRequest(vehicle)).ToList();
+                        legNotes.AddRange(solved.Legs.Select((l, i) => $"movement {i + 1}: {(l.Reverse ? "reverse" : "forward")} {l.Length:0.0} m"));
+                        req = legs[0];
+                        nominated = record.Radius;
+                        label = legs.Count == 1 ? vehicle.Name : $"{vehicle.Name}, {legs.Count} movements";
+                        break;
+                    }
+
                     default:
-                        throw new ArgumentException("mode must be template, follow or points.");
+                        throw new ArgumentException("mode must be template, follow, points or solve.");
                 }
 
                 req.Step = c.Step;
                 req.Tolerance = c.Tolerance;
                 req.ClearanceInside = JsonArgs.OptionalNumber(input, "clearance_inside", "");
                 req.ClearanceOutside = JsonArgs.OptionalNumber(input, "clearance_outside", "");
+                if (solved != null)
+                {
+                    // The manoeuvring clearance, the same on both sides: which side is inside changes with every movement.
+                    req.ClearanceInside = req.ClearanceOutside = solveClearance;
+                }
+
                 if (req.ClearanceInside < 0 || req.ClearanceOutside < 0)
                 {
                     throw new ArgumentException("Clearances can't be negative.");
@@ -297,7 +379,22 @@ namespace CsdBridge.Core.Vehicles
 
                 ConflictReport? conflicts = null;
                 List<JsonElement>? obstructionItems = JsonArgs.OptionalArray(input, "obstruction_layers", "", 0, 100);
-                List<string> obstructionLayers = obstructionItems == null ? new List<string>() : JsonArgs.ReadStringList(obstructionItems, "obstruction_layers");
+                List<string> obstructionLayers = solveLayers ?? (obstructionItems == null ? new List<string>() : JsonArgs.ReadStringList(obstructionItems, "obstruction_layers"));
+                if (solved != null)
+                {
+                    report["solver"] = new
+                    {
+                        summary = solved.Summary(),
+                        movements = solved.Movements,
+                        clearance_asked_mm = Math.Round(solved.ClearanceAsked * 1000),
+                        clearance_kept_mm = Math.Round(solved.ClearanceUsed * 1000),
+                        clearance_reduced = solved.ClearanceReduced,
+                        tight_at_start_or_target = solved.TightAtEnds,
+                        obstructions_in_range = solved.ObstructionsUsed,
+                        positions_tried = solved.Expansions,
+                    };
+                }
+
                 if (obstructionLayers.Count > 0)
                 {
                     if (_host is IObstructionSource source)

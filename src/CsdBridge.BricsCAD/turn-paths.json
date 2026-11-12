@@ -86,6 +86,12 @@
   "check_conflicts": false,
   "obstruction_layers": [],
 
+  // Solve mode (multi-point turns between the obstruction layers): how long the search may take
+  // (seconds), and how far beyond the start and target positions the vehicle may go while
+  // manoeuvring (m). Linework further away than that is ignored.
+  "solver_time_limit": 10,
+  "solver_search_margin": 15,
+
   // Vehicle outlines every this many metres along the path (0 = only at the start and end).
   "outline_interval": 0,
 
