@@ -35,6 +35,14 @@ namespace CsdBridge.BricsCAD
         /// <summary>Drive mode: arc to the destination where possible, or always turn at the radius then straight.</summary>
         public TurnPathBuilder.DriveTurns Turns { get; set; } = TurnPathBuilder.DriveTurns.Arc;
         public bool Reverse { get; set; }
+
+        /// <summary>Drive mode: ask which way the vehicle faces at each destination.</summary>
+        public bool ArrivalHeading { get; set; }
+
+        /// <summary>Check the result against linework on the obstruction layers.</summary>
+        public bool CheckConflicts { get; set; }
+
+        public List<string> ObstructionLayers { get; set; } = new List<string>();
         public double ClearanceInside { get; set; } = 0.3;
         public double ClearanceOutside { get; set; } = 0.3;
         public TurnPathStyle Style { get; set; } = new TurnPathStyle();
@@ -65,6 +73,10 @@ namespace CsdBridge.BricsCAD
         private readonly ComboBox _reference;
         private readonly ComboBox _turns;
         private readonly CheckBox _reverse;
+        private readonly CheckBox _arrival;
+        private readonly CheckBox _checkConflicts;
+        private readonly TextBox _obstructions;
+        private readonly bool _editing;
         private readonly TextBox _clearInside;
         private readonly TextBox _clearOutside;
         private readonly CheckBox _drawSwept;
@@ -82,12 +94,14 @@ namespace CsdBridge.BricsCAD
         private readonly Label _status;
         private string _lastVehicle = "";
 
-        public TurnPathDialog(TurnPathConventions conventions, string savePath)
+        /// <param name="editing">A saved turning path to change: its settings fill the dialog and its manoeuvre can't be switched.</param>
+        public TurnPathDialog(TurnPathConventions conventions, string savePath, ManoeuvreRecord? editing = null)
         {
             _conventions = conventions;
             _savePath = savePath;
+            _editing = editing != null;
 
-            Text = "CSD-Bridge - Vehicle turning path (AS/NZS 2890.1)";
+            Text = _editing ? "CSD-Bridge - Edit vehicle turning path" : "CSD-Bridge - Vehicle turning path (AS/NZS 2890.1)";
             Font = new Font("Segoe UI", 9f);
             AutoScaleDimensions = new SizeF(7f, 15f);
             AutoScaleMode = AutoScaleMode.Font;
@@ -147,6 +161,9 @@ namespace CsdBridge.BricsCAD
             _turns = new ComboBox { Width = 230, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
             _turns.Items.AddRange(new object[] { "Arc to the point where the radius allows", "Turn at the radius, then straight" });
             Row(manoeuvre, Caption("Drive turns"), _turns, null);
+            _arrival = new CheckBox { Text = "Drive: also pick which way it faces at each destination", AutoSize = true };
+            Row(manoeuvre, null, _arrival, null);
+            manoeuvre.SetColumnSpan(_arrival, 2);
             _reverse = new CheckBox { Text = "Reverse (drive backwards along the path)", AutoSize = true };
             Row(manoeuvre, null, _reverse, null);
             manoeuvre.SetColumnSpan(_reverse, 2);
@@ -161,6 +178,19 @@ namespace CsdBridge.BricsCAD
             clearances.SetColumnSpan(clearanceNote, 2);
             clearances.RowCount++;
             left.Controls.Add(Group("Clearances added to the swept path (dashed template)", clearances));
+
+            TableLayoutPanel conflicts = Table(2);
+            _checkConflicts = new CheckBox { Text = "Check against kerbs, walls and columns on these layers", AutoSize = true };
+            conflicts.Controls.Add(_checkConflicts, 0, conflicts.RowCount);
+            conflicts.SetColumnSpan(_checkConflicts, 2);
+            conflicts.RowCount++;
+            _obstructions = Box(300);
+            Row(conflicts, Caption("Layers"), _obstructions, null);
+            Label conflictNote = Note("Separate with commas; * is a wildcard and matches xref layers too (A-WALL* finds arch|A-WALL-EXT). Leave blank to pick objects on the layers after OK. Frozen and off layers are ignored.", LeftWidth - 30);
+            conflicts.Controls.Add(conflictNote, 0, conflicts.RowCount);
+            conflicts.SetColumnSpan(conflictNote, 2);
+            conflicts.RowCount++;
+            left.Controls.Add(Group("Conflicts", conflicts));
 
             left.Controls.Add(Note(
                 "B99 is required for access driveways, ramps and circulation roadways; B85 only for parking spaces and aisles " +
@@ -205,7 +235,7 @@ namespace CsdBridge.BricsCAD
             {
                 ("swept_path", "Swept path"), ("clearance", "Clearances"), ("vehicle", "Vehicle outline"),
                 ("vehicle_intermediate", "Outlines along the path"), ("path", "Driven path"), ("wheel_paths", "Wheel paths"),
-                ("labels", "Label"), ("hatch", "Hatch"), ("block", "Block"),
+                ("labels", "Label"), ("hatch", "Hatch"), ("block", "Block"), ("conflict", "Conflicts"),
             })
             {
                 TextBox box = Box(260);
@@ -275,6 +305,66 @@ namespace CsdBridge.BricsCAD
             };
 
             LoadFrom(conventions, keepVehicle: false);
+            if (editing != null)
+            {
+                LoadRecord(editing);
+            }
+        }
+
+        /// <summary>Fills the dialog from a saved turning path.</summary>
+        private void LoadRecord(ManoeuvreRecord r)
+        {
+            int index = _vehicle.Items.IndexOf(_conventions.Vehicles.Keys.FirstOrDefault(k => string.Equals(k, r.Vehicle, StringComparison.OrdinalIgnoreCase)) ?? r.Vehicle);
+            if (index >= 0)
+            {
+                _vehicle.SelectedIndex = index;
+            }
+
+            string mode = (r.Mode ?? "").ToLowerInvariant();
+            _modeTemplate.Checked = mode == "template";
+            _modeFollow.Checked = mode == "follow";
+            _modePoints.Checked = mode == "drive";
+            OnModeChanged();
+            _modeTemplate.Enabled = _modeFollow.Enabled = _modePoints.Enabled = false;
+
+            if (r.Radius > 0)
+            {
+                _radius.Text = Num(r.Radius);
+            }
+
+            _angles.Text = string.Join(",", r.TurnAngles.Select(Num));
+            _left.Checked = r.Left;
+            _right.Checked = !r.Left;
+            _leadIn.Text = Num(r.LeadIn);
+            _leadOut.Text = Num(r.LeadOut);
+            _reverse.Checked = r.Reverse && mode == "follow";
+            _reference.SelectedIndex = r.Reference == "rear_axle" ? 2 : r.Reference == "front_axle" ? 1 : 0;
+            _turns.SelectedIndex = r.TurnsKind == TurnPathBuilder.DriveTurns.Corner ? 1 : 0;
+            _arrival.Checked = r.Stops.Any(s => s.HeadingDeg != null);
+            _clearInside.Text = Num(r.ClearanceInside);
+            _clearOutside.Text = Num(r.ClearanceOutside);
+            _drawSwept.Checked = r.Draw.SweptPath;
+            _drawClearance.Checked = r.Draw.Clearance;
+            _drawVehicle.Checked = r.Draw.Vehicle;
+            _drawPath.Checked = r.Draw.Path;
+            _drawWheels.Checked = r.Draw.WheelPaths;
+            _drawLabels.Checked = r.Draw.Labels;
+            _drawHatch.Checked = r.Draw.Hatch;
+            _closedOutline.Checked = r.Draw.ClosedOutline;
+            _block.Checked = r.Draw.Block;
+            _outlineInterval.Text = Num(r.OutlineInterval);
+            _textHeight.Text = r.TextHeight is double th ? Num(th) : "";
+            foreach (KeyValuePair<string, string> kv in r.Layers.All())
+            {
+                if (_layers.TryGetValue(kv.Key, out TextBox? box))
+                {
+                    box.Text = kv.Value;
+                }
+            }
+
+            _checkConflicts.Checked = r.CheckConflicts;
+            _obstructions.Text = string.Join(", ", r.ObstructionLayers);
+            _status.Text = "Settings of the selected turning path. OK regenerates it.";
         }
 
         /// <summary>What the user chose; valid once the dialog returned OK.</summary>
@@ -407,6 +497,9 @@ namespace CsdBridge.BricsCAD
             _leadIn.Text = Num(c.LeadIn);
             _leadOut.Text = Num(c.LeadOut);
             _turns.SelectedIndex = c.DriveTurnsMode == TurnPathBuilder.DriveTurns.Corner ? 1 : 0;
+            _arrival.Checked = c.DriveArrivalHeading;
+            _checkConflicts.Checked = c.CheckConflicts;
+            _obstructions.Text = string.Join(", ", c.ObstructionLayers);
             _drawSwept.Checked = c.Draw.SweptPath;
             _drawClearance.Checked = c.Draw.Clearance;
             _drawVehicle.Checked = c.Draw.Vehicle;
@@ -472,6 +565,7 @@ namespace CsdBridge.BricsCAD
             _reverse.Enabled = !template && !points;
             _reference.Enabled = !points;
             _turns.Enabled = points;
+            _arrival.Enabled = points;
             if (template || points)
             {
                 _reverse.Checked = false;
@@ -504,6 +598,9 @@ namespace CsdBridge.BricsCAD
                 Reverse = _reverse.Checked,
                 Reference = _reference.SelectedIndex == 2 ? ReferencePoint.RearAxle : _reference.SelectedIndex == 1 ? ReferencePoint.FrontAxle : ReferencePoint.OuterFrontWheel,
                 Turns = _turns.SelectedIndex == 1 ? TurnPathBuilder.DriveTurns.Corner : TurnPathBuilder.DriveTurns.Arc,
+                ArrivalHeading = _arrival.Checked,
+                CheckConflicts = _checkConflicts.Checked,
+                ObstructionLayers = LayerPattern.Parse(_obstructions.Text),
                 Conventions = _conventions,
             };
 
@@ -636,6 +733,9 @@ namespace CsdBridge.BricsCAD
                 c.LeadIn = choice.LeadIn;
                 c.LeadOut = choice.LeadOut;
                 c.DriveTurns = choice.Turns == TurnPathBuilder.DriveTurns.Corner ? "corner" : "arc";
+                c.DriveArrivalHeading = choice.ArrivalHeading;
+                c.CheckConflicts = choice.CheckConflicts;
+                c.ObstructionLayers = choice.ObstructionLayers.ToList();
                 c.OutlineInterval = choice.Style.OutlineInterval;
                 c.TextHeight = choice.Style.TextHeight;
                 c.Draw = choice.Style.Draw.Clone();

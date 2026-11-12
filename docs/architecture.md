@@ -44,7 +44,8 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
   B85, or any added to `turn-paths.json`), a kinematic bicycle-model simulation along a path, the
   swept path as the exact boundary of the union of the body over every pose, the clearance
   template, the `draw_turn_path` tool, a drive planner (turn at the radius, then straight, forwards or in
-  reverse, leg by leg) and the Appendix C ground clearance check (`check_ground_clearance`) on a long
+  reverse, leg by leg, optionally arriving on a set heading), conflict detection against obstruction linework,
+  the saved manoeuvre record that `AITURNEDIT` regenerates from, and the Appendix C ground clearance check (`check_ground_clearance`) on a long
   section or along each side of the car on a surface. It has no CAD dependency, so the same code serves
   the `AITURN`/`AICLEARANCE` commands, Claude's tools and the tests.
 - **CsdBridge.BricsCAD** is the add-in: commands, panel, settings, and the drawing host. `AITURN`

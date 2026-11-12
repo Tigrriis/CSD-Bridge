@@ -11,8 +11,38 @@ namespace CsdBridge.Core.Offline
     /// A drawing that lives in memory. Used by the CLI harness (to try prompts without
     /// BricsCAD, then preview the result as DXF) and by the unit tests.
     /// </summary>
-    public sealed class InMemoryDrawingHost : IDrawingHost
+    public sealed class InMemoryDrawingHost : IDrawingHost, Vehicles.IObstructionSource
     {
+        public IReadOnlyList<Vehicles.Obstruction> Obstructions(IReadOnlyList<string> layerPatterns, Point2 min, Point2 max, IReadOnlyCollection<string> excludeLayers)
+        {
+            var list = new List<Vehicles.Obstruction>();
+            foreach (StoredEntity e in _entities)
+            {
+                if (excludeLayers.Contains(e.Layer, StringComparer.OrdinalIgnoreCase) || !Vehicles.LayerPattern.MatchesAny(layerPatterns, e.Layer))
+                {
+                    continue;
+                }
+
+                Geometry.Path2? path = Geometry.Path2.From(e.Spec);
+                if (path == null)
+                {
+                    continue;
+                }
+
+                // Rough window test on the segment ends.
+                bool near = path.Segments.Any(s => Overlaps(s.Start, s.End, min, max));
+                if (near)
+                {
+                    list.Add(new Vehicles.Obstruction(e.Handle, e.Layer, path));
+                }
+            }
+
+            return list;
+        }
+
+        private static bool Overlaps(Point2 a, Point2 b, Point2 min, Point2 max) =>
+            Math.Max(a.X, b.X) >= min.X && Math.Min(a.X, b.X) <= max.X && Math.Max(a.Y, b.Y) >= min.Y && Math.Min(a.Y, b.Y) <= max.Y;
+
         private readonly List<StoredEntity> _entities = new List<StoredEntity>();
         private readonly Dictionary<string, LayerInfo> _layers = new Dictionary<string, LayerInfo>(StringComparer.OrdinalIgnoreCase);
         private int _nextHandle = 0x100;

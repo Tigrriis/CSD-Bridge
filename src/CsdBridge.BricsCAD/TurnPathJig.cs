@@ -157,6 +157,13 @@ namespace CsdBridge.BricsCAD
             }
         }
 
+        /// <summary>Preview graphics for a leg that has already been simulated.</summary>
+        public List<EntitySpec> Specs(TurnPathResult result, bool startVehicle)
+        {
+            _style.SkipStartVehicle = !startVehicle;
+            return TurnPathDrafter.Draw(result, _style).Select(d => d.Spec).ToList();
+        }
+
         /// <summary>The vehicle outline with wheels at a pose.</summary>
         public static List<EntitySpec> Vehicle(DesignVehicle v, VehiclePose pose) =>
             TurnPathDrafter.VehicleOutline(v, pose, Layers.Vehicle, wheels: true);

@@ -68,6 +68,8 @@ namespace CsdBridge.Core.Vehicles
                     "\"wheel_paths\":{\"type\":\"boolean\"},\"labels\":{\"type\":\"boolean\"},\"hatch\":{\"type\":\"boolean\"},\"closed_outline\":{\"type\":\"boolean\"}," +
                     "\"block\":{\"type\":\"boolean\",\"description\":\"Make the result one block.\"}," +
                     "\"outline_interval\":{\"type\":\"number\",\"description\":\"Vehicle outline every this many metres (0 = none).\"}}}," +
+                    "\"arrival_headings_deg\":{\"type\":\"array\",\"items\":{\"type\":[\"number\",\"null\"]},\"description\":\"Points: the direction the vehicle faces on arriving at each destination (one entry per point after the first; null = free). With a heading the leg is turn, straight, turn.\"}," +
+                    "\"obstruction_layers\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Check for conflicts with linework on these layers (kerbs, walls, columns; * wildcards, xref layers match by the part after |). Reports where the body hits and where the clearance is encroached, and marks them.\"}," +
                     "\"block_name\":{\"type\":\"string\",\"description\":\"Name for the block (default '<vehicle> turning path'; a number is added if taken).\"}," +
                     "\"dry_run\":{\"type\":\"boolean\"}" +
                     "},\"required\":[\"mode\"]}"),
@@ -203,7 +205,16 @@ namespace CsdBridge.Core.Vehicles
                                 : turnsName!.Trim().ToLowerInvariant() == "corner" ? TurnPathBuilder.DriveTurns.Corner
                                 : turnsName.Trim().ToLowerInvariant() == "arc" ? TurnPathBuilder.DriveTurns.Arc
                                 : throw new ArgumentException("turns must be arc or corner.");
-                            TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(vehicle, pose, pts[i], radius, force, turns);
+                            double? arrive = null;
+                            if (JsonArgs.TryGet(input, "arrival_headings_deg", out JsonElement arrivals) && arrivals.ValueKind == JsonValueKind.Array
+                                && i - 1 < arrivals.GetArrayLength() && arrivals[i - 1].ValueKind == JsonValueKind.Number)
+                            {
+                                arrive = arrivals[i - 1].GetDouble() * Math.PI / 180;
+                            }
+
+                            TurnPathBuilder.DriveLeg? leg = arrive is double facing
+                                ? TurnPathBuilder.DriveToPose(vehicle, pose, pts[i], facing, radius, force)
+                                : TurnPathBuilder.DriveTo(vehicle, pose, pts[i], radius, force, turns);
                             if (leg == null)
                             {
                                 warnings.Add($"points[{i}] can't be reached in one leg (too close, inside the turning circle, or more than a half turn away); skipped. Drive past it and reverse, or add a point in between.");
@@ -284,6 +295,41 @@ namespace CsdBridge.Core.Vehicles
                     ["extents"] = Extents(result),
                 };
 
+                ConflictReport? conflicts = null;
+                List<JsonElement>? obstructionItems = JsonArgs.OptionalArray(input, "obstruction_layers", "", 0, 100);
+                List<string> obstructionLayers = obstructionItems == null ? new List<string>() : JsonArgs.ReadStringList(obstructionItems, "obstruction_layers");
+                if (obstructionLayers.Count > 0)
+                {
+                    if (_host is IObstructionSource source)
+                    {
+                        var (min, max) = ConflictChecker.Window(results);
+                        var own = new ManoeuvreRecord { Layers = style.Layers };
+                        conflicts = ConflictChecker.Check(results, source.Obstructions(obstructionLayers, min, max, ManoeuvrePlanner.OwnLayers(own, c)));
+                        report["conflicts"] = new
+                        {
+                            summary = conflicts.Summary(),
+                            passes = conflicts.Passes,
+                            obstructions_checked = conflicts.ObstructionsChecked,
+                            closest_gap_mm = conflicts.ClosestGap is double g ? (object)Math.Round(g * 1000) : null,
+                            items = conflicts.Conflicts.Select(k => new
+                            {
+                                leg = k.Leg,
+                                layer = k.Layer,
+                                handle = k.Handle,
+                                kind = k.BodyHit ? "body_hit" : "clearance",
+                                depth_mm = k.BodyHit ? (object)Math.Round(k.Depth * 1000) : null,
+                                gap_mm = k.BodyHit ? null : (object)Math.Round(k.Gap * 1000),
+                                required_mm = Math.Round(k.Required * 1000),
+                                at = k.At.ToArray(),
+                            }).ToList(),
+                        };
+                    }
+                    else
+                    {
+                        warnings.Add("This drawing host can't read obstruction linework, so conflicts weren't checked.");
+                    }
+                }
+
                 if (dryRun)
                 {
                     report["dry_run"] = true;
@@ -291,6 +337,11 @@ namespace CsdBridge.Core.Vehicles
                 else
                 {
                     var drafted = new List<DraftedEntity>();
+                    if (conflicts != null)
+                    {
+                        drafted.AddRange(ConflictChecker.Draw(conflicts, style.Layers.Resolve(vehicle.Name).Conflict, style.TextHeight));
+                    }
+
                     for (int i = 0; i < results.Count; i++)
                     {
                         var legStyle = new TurnPathStyle
