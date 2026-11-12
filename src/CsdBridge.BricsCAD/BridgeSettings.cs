@@ -233,7 +233,24 @@ namespace CsdBridge.BricsCAD
                     return null;
                 }
 
-                return CsdBridge.Core.Vehicles.TurnPathConventions.Load(path);
+                CsdBridge.Core.Vehicles.TurnPathConventions conventions = CsdBridge.Core.Vehicles.TurnPathConventions.Load(path);
+
+                // A copy saved by "Save as defaults", or a shared one, may predate vehicles added to the
+                // file shipped with the add-in: take those from the shipped file.
+                string shipped = Path.Combine(Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".", "turn-paths.json");
+                if (!string.Equals(Path.GetFullPath(path), Path.GetFullPath(shipped), StringComparison.OrdinalIgnoreCase) && File.Exists(shipped))
+                {
+                    try
+                    {
+                        conventions.AddMissingVehicles(CsdBridge.Core.Vehicles.TurnPathConventions.Load(shipped));
+                    }
+                    catch (Exception)
+                    {
+                        // The user's own file is good: a problem with the shipped one is not theirs to see here.
+                    }
+                }
+
+                return conventions;
             }
             catch (Exception ex)
             {

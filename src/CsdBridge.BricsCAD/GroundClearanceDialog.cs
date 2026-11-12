@@ -411,6 +411,12 @@ namespace CsdBridge.BricsCAD
                 return false;
             }
 
+            if (vehicle.IsArticulated)
+            {
+                problem = $"The {vehicle.Name} tows a trailer. The ground clearance check is for rigid vehicles only.";
+                return false;
+            }
+
             // The template's angles live on the vehicle: use a copy with the dialog's values.
             DesignVehicle v = vehicle.Clone();
             v.GroundClearance = h;

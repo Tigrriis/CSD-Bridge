@@ -43,9 +43,14 @@ namespace CsdBridge.Core.Vehicles
                     "and heading at the start (start, heading_deg) and at the end (target, target_heading_deg) and the obstruction_layers that " +
                     "bound the space, and it finds the forward and reverse movements between them (a three-point turn, a reverse into a " +
                     "bay), keeping clearance_inside (default 300 mm) to everything on those layers, and reports how many movements it took " +
-                    "and whether the clearance had to be reduced. Points (start, points, target) are in the drawing's units; radii, " +
+                    "and whether the clearance had to be reduced. Add 'via' and 'via_heading_deg' (where it stops on the site: a dock, a bay) " +
+                    "to solve a visit that enters and leaves in a forward direction: forwards from start to via, any manoeuvring on site, " +
+                    "then out to target arriving forwards; 'boundary' is a line (the site boundary across the driveway) it may only cross " +
+                    "driving forwards. Points (start, points, target) are in the drawing's units; radii, " +
                     "clearances and every other length are metres whatever the drawing is drawn in, and a millimetre drawing is handled " +
                     "from its INSUNITS (pass drawing_units when that is unset or wrong: the result says which units it used). " +
+                    "A vehicle defined with trailers (a prime mover and semi-trailer, a B-double) is towed through the manoeuvre and the " +
+                    "swept path covers the whole combination; it drives forwards only, so reverse, and mode 'solve', are refused for it. " +
                     "The reference point that follows the path is the " +
                     "outer front wheel for templates and the front axle centre otherwise (rear axle when reversing); the rear axle tracks " +
                     "in behind it. Returns " +
@@ -60,6 +65,9 @@ namespace CsdBridge.Core.Vehicles
                     "\"heading_deg\":{\"type\":\"number\",\"description\":\"Template, points and solve: direction the vehicle faces at the start, degrees anticlockwise from +X (points: default towards the second point).\"}," +
                     "\"target\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2,\"description\":\"Solve: the rear axle centre at the end of the manoeuvre.\"}," +
                     "\"target_heading_deg\":{\"type\":\"number\",\"description\":\"Solve: direction the vehicle faces at the end, degrees anticlockwise from +X.\"}," +
+                    "\"via\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2,\"description\":\"Solve in and out: the rear axle centre where the vehicle stops on the site, between driving in from start and driving out to target.\"}," +
+                    "\"via_heading_deg\":{\"type\":\"number\",\"description\":\"Solve in and out: direction the vehicle faces at via.\"}," +
+                    "\"boundary\":{\"type\":\"array\",\"items\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2},\"minItems\":2,\"maxItems\":2,\"description\":\"Solve in and out: two points of a line the vehicle only crosses driving forwards (the site boundary across the driveway).\"}," +
                     "\"radius\":{\"type\":\"number\",\"description\":\"Turn radius at the outer front wheel (template and points); default the vehicle's minimum, and points can't go below it.\"}," +
                     "\"turn_angle_deg\":{\"type\":\"number\",\"description\":\"Template: change of direction (default 90).\"}," +
                     "\"direction\":{\"type\":\"string\",\"enum\":[\"left\",\"right\"],\"description\":\"Template: which way it turns (default left).\"}," +
@@ -98,6 +106,12 @@ namespace CsdBridge.Core.Vehicles
             "- The dashed template adds 300 mm manoeuvring clearance both sides, plus 300 mm circulation clearance on the outside for " +
             "B99 (600 mm outside in total) where vehicles travel above 10 km/h (B3.2).\n" +
             "- Aisle widths for parking manoeuvres come from Tables B2/B3 and Figure 2.2, not from swept paths (B4.4).\n" +
+            "- Trucks are the Austroads design vehicles (AP-G34-23): Service 8.8 m, Truck 12.5 m (single unit truck/bus), Semi 19 m " +
+            "(prime mover and semi-trailer) and B-double 25 m / 26 m. Their radius is also measured at the outer front wheel; the smallest " +
+            "template radius is 9 m for the service vehicle and 12.5 m for the others. Usual design vehicles and radii (Table 2.3): the " +
+            "19 m semi-trailer at 15 m for arterial and industrial intersections (12.5 m is the absolute minimum), the single unit truck " +
+            "at 12.5 m for collector streets, the service vehicle at 9 m for local residential streets; B-doubles are checking vehicles. " +
+            "Keep 0.5 m between the swept path and kerbs, edge lines and objects (3.4.1); that is their default clearance.\n" +
             "- To find out whether, and in how many movements, a vehicle can turn round or get into a space, use mode 'solve' with the " +
             "obstruction layers rather than guessing points: it reports the movements and any clearance it had to give up.\n" +
             (_conventions == null ? "" : "Vehicles and layers from turn-paths.json:\n" + _conventions.Describe());
@@ -217,9 +231,11 @@ namespace CsdBridge.Core.Vehicles
                         double radius = JsonArgs.OptionalPositive(input, "radius", "") ?? vehicle.MinTurnRadius;
                         var pose = new VehiclePose(pts[0], heading);
                         legs = new List<TurnPathRequest>();
+                        IReadOnlyList<double>? trailers = null;   // where the last leg left the trailers
                         for (int i = 1; i < pts.Count; i++)
                         {
-                            bool? force = JsonArgs.TryGet(input, "reverse", out _) ? reverse : (bool?)null;
+                            // A vehicle with a trailer only drives forwards.
+                            bool? force = vehicle.IsArticulated ? false : JsonArgs.TryGet(input, "reverse", out _) ? reverse : (bool?)null;
                             string? turnsName = JsonArgs.OptionalString(input, "turns", "");
                             TurnPathBuilder.DriveTurns turns = string.IsNullOrWhiteSpace(turnsName) ? c.DriveTurnsMode
                                 : turnsName!.Trim().ToLowerInvariant() == "corner" ? TurnPathBuilder.DriveTurns.Corner
@@ -243,7 +259,9 @@ namespace CsdBridge.Core.Vehicles
 
                             leg.Request.Step = c.Step;
                             leg.Request.Tolerance = c.Tolerance;
+                            leg.Request.InitialTrailerHeadings = trailers;
                             TurnPathResult legResult = TurnPathSimulator.Simulate(leg.Request);
+                            trailers = legResult.Trailers.Count > 0 ? legResult.EndTrailerHeadings : null;
                             pose = legResult.Poses[legResult.Poses.Count - 1];
                             legs.Add(leg.Request);
                             legNotes.Add($"leg {legs.Count}: {(leg.Reverse ? "reverse" : "forward")}, " +
@@ -273,7 +291,7 @@ namespace CsdBridge.Core.Vehicles
                         solveLayers = layerItems == null ? new List<string>() : JsonArgs.ReadStringList(layerItems, "obstruction_layers");
                         if (solveLayers.Count == 0)
                         {
-                            solveLayers = c.ObstructionLayers.ToList();
+                            solveLayers = c.SolveBoundaryLayers;   // the standard solve layers, else the obstruction layers
                         }
 
                         if (solveLayers.Count == 0)
@@ -306,6 +324,24 @@ namespace CsdBridge.Core.Vehicles
                             throw new ArgumentException($"A {record.Radius:0.##} m radius is below the {vehicle.Name}'s minimum of {vehicle.MinTurnRadius:0.#} m (AS/NZS 2890.1 B3.1).");
                         }
 
+                        // In and out: a stop on the site, and optionally the boundary it only crosses forwards.
+                        if (JsonArgs.OptionalPoint(input, "via", "") is Point2 stopAt)
+                        {
+                            record.Via = units.ToModel(stopAt).ToArray();
+                            record.ViaHeadingDeg = JsonArgs.RequireNumber(input, "via_heading_deg", "");
+                            List<JsonElement>? line = JsonArgs.OptionalArray(input, "boundary", "", 2, 2);
+                            if (line != null)
+                            {
+                                Point2 a = units.ToModel(JsonArgs.ReadPoint(line[0], JsonArgs.Index("boundary", 0)));
+                                Point2 b = units.ToModel(JsonArgs.ReadPoint(line[1], JsonArgs.Index("boundary", 1)));
+                                record.Boundary = new[] { a.X, a.Y, b.X, b.Y };
+                            }
+                        }
+                        else if (JsonArgs.TryGet(input, "boundary", out _))
+                        {
+                            throw new ArgumentException("boundary only applies with via (a solve in and out of a site).");
+                        }
+
                         // Never treat the tool's own layers (an earlier swept path) as an obstruction.
                         TurnPathLayers ownLayers = TurnPathStyle.From(c).Layers;
                         ApplyLayers(input, ownLayers);
@@ -319,10 +355,10 @@ namespace CsdBridge.Core.Vehicles
                         }
 
                         legs = solved.Legs.Select(l => l.ToRequest(vehicle)).ToList();
-                        legNotes.AddRange(solved.Legs.Select((l, i) => $"movement {i + 1}: {(l.Reverse ? "reverse" : "forward")} {l.Length:0.0} m"));
+                        legNotes.AddRange(solved.Legs.Select((l, i) => $"movement {i + 1}: {(l.Stage != null ? l.Stage + ", " : "")}{(l.Reverse ? "reverse" : "forward")} {l.Length:0.0} m"));
                         req = legs[0];
                         nominated = record.Radius;
-                        label = legs.Count == 1 ? vehicle.Name : $"{vehicle.Name}, {legs.Count} movements";
+                        label = record.Via != null ? $"{vehicle.Name}, in and out" : legs.Count == 1 ? vehicle.Name : $"{vehicle.Name}, {legs.Count} movements";
                         break;
                     }
 
@@ -387,6 +423,11 @@ namespace CsdBridge.Core.Vehicles
                     ["legs"] = legNotes.Count > 0 ? legNotes : null,
                     ["extents"] = Extents(result, units),
                 };
+                if (vehicle.IsArticulated)
+                {
+                    report["trailers"] = vehicle.Trailers.Select(t => t.Name).ToList();
+                    report["max_articulation_deg"] = Math.Round(results.Max(x => x.MaxArticulationDeg), 1);
+                }
 
                 ConflictReport? conflicts = null;
                 List<JsonElement>? obstructionItems = JsonArgs.OptionalArray(input, "obstruction_layers", "", 0, 100);

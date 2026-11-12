@@ -23,6 +23,12 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Heading at the start, radians. Null: the path's start tangent (plus 180 degrees when reversing).</summary>
         public double? InitialHeading { get; set; }
 
+        /// <summary>
+        /// Which way each trailer faces at the start (radians), front to back. Null: straight behind
+        /// the vehicle. A manoeuvre drawn leg by leg passes on where the last leg left them.
+        /// </summary>
+        public IReadOnlyList<double>? InitialTrailerHeadings { get; set; }
+
         /// <summary>Distance the reference point moves per step (m).</summary>
         public double Step { get; set; } = 0.02;
 
@@ -34,6 +40,25 @@ namespace CsdBridge.Core.Vehicles
 
         /// <summary>Points closer than this are merged, and the output polylines are simplified to this (m).</summary>
         public double Tolerance { get; set; } = 0.001;
+    }
+
+    /// <summary>One trailer through a manoeuvre: where its axle group was, and which way it faced, at every pose of the vehicle.</summary>
+    public sealed class TrailerTrack
+    {
+        public TrailerTrack(TrailerUnit unit)
+        {
+            Unit = unit;
+            Body = unit.Body();
+        }
+
+        public TrailerUnit Unit { get; }
+
+        /// <summary>The trailer as a body: origin at the centre of its axle group, its coupling at (wheelbase, 0).</summary>
+        public DesignVehicle Body { get; }
+
+        public List<VehiclePose> Poses { get; } = new List<VehiclePose>();
+
+        public List<double> Curvatures { get; } = new List<double>();
     }
 
     /// <summary>The simulated manoeuvre: poses, swept path and clearance envelopes, wheel paths, checks.</summary>
@@ -84,13 +109,27 @@ namespace CsdBridge.Core.Vehicles
 
         public List<string> Warnings { get; } = new List<string>();
 
+        /// <summary>The trailers, front to back. Empty for a rigid vehicle.</summary>
+        public List<TrailerTrack> Trailers { get; } = new List<TrailerTrack>();
+
+        /// <summary>The sharpest angle between two coupled units during the manoeuvre, degrees. 0 for a rigid vehicle.</summary>
+        public double MaxArticulationDeg { get; set; }
+
+        /// <summary>Which way each trailer faces at the end (radians): where the next leg of a manoeuvre starts them.</summary>
+        public List<double> EndTrailerHeadings => Trailers.Select(t => t.Poses[t.Poses.Count - 1].Heading).ToList();
+
         /// <summary>Overall length of the reference point's path.</summary>
         public double PathLength => Path.Length;
 
         /// <summary>The pose when the reference point has travelled <paramref name="chainage"/> along the path.</summary>
-        public VehiclePose PoseAt(double chainage)
+        public VehiclePose PoseAt(double chainage) => PoseAt(Poses, chainage);
+
+        /// <summary>Where each trailer's axle group is when the reference point has travelled <paramref name="chainage"/> along the path.</summary>
+        public List<VehiclePose> TrailerPosesAt(double chainage) => Trailers.Select(t => PoseAt(t.Poses, chainage)).ToList();
+
+        private VehiclePose PoseAt(List<VehiclePose> poses, double chainage)
         {
-            if (Poses.Count == 0)
+            if (poses.Count == 0)
             {
                 throw new InvalidOperationException("No poses.");
             }
@@ -98,22 +137,22 @@ namespace CsdBridge.Core.Vehicles
             int i = Chainages.BinarySearch(chainage);
             if (i >= 0)
             {
-                return Poses[i];
+                return poses[i];
             }
 
             i = ~i;
             if (i <= 0)
             {
-                return Poses[0];
+                return poses[0];
             }
 
-            if (i >= Poses.Count)
+            if (i >= poses.Count)
             {
-                return Poses[Poses.Count - 1];
+                return poses[poses.Count - 1];
             }
 
             double t = (chainage - Chainages[i - 1]) / Math.Max(1e-12, Chainages[i] - Chainages[i - 1]);
-            VehiclePose a = Poses[i - 1], b = Poses[i];
+            VehiclePose a = poses[i - 1], b = poses[i];
             double dh = Angles.Wrap(b.Heading - a.Heading);
             return new VehiclePose(
                 new Point2(a.RearAxle.X + (b.RearAxle.X - a.RearAxle.X) * t, a.RearAxle.Y + (b.RearAxle.Y - a.RearAxle.Y) * t),
@@ -148,8 +187,8 @@ namespace CsdBridge.Core.Vehicles
                 bulges.Add(0);
             }
 
-            // Trailing end closes the loop back to the first left point.
-            bulges[bulges.Count - 1] = forward ? -rearBulge : frontBulge;
+            // Trailing end closes the loop back to the first left point. Behind a trailer it is square.
+            bulges[bulges.Count - 1] = Trailers.Count > 0 ? 0 : forward ? -rearBulge : frontBulge;
             return new PolylineSpec { Points = pts, Bulges = bulges, Closed = true };
         }
     }
@@ -185,6 +224,11 @@ namespace CsdBridge.Core.Vehicles
                 throw new ArgumentException($"Vehicle {v.Name}: {string.Join("; ", problems)}.");
             }
 
+            if (v.IsArticulated && req.Reverse)
+            {
+                throw new ArgumentException($"The {v.Name} tows a trailer, and reversing with a trailer isn't supported: a trailer pushed backwards doesn't follow a path without being steered into it.");
+            }
+
             double step = req.Step > 0 ? Math.Min(req.Step, 0.5) : 0.02;
             if (req.Path.Length < step)
             {
@@ -193,7 +237,8 @@ namespace CsdBridge.Core.Vehicles
 
             var result = new TurnPathResult { Vehicle = v, Path = req.Path, Reference = req.Reference, Reverse = req.Reverse };
             Integrate(req, step, result);
-            Curvatures(result);
+            result.Curvatures.AddRange(CurvaturesOf(result.Poses, result.Reverse));
+            Tow(req, result);
             Envelopes(req, result);
             Checks(result);
             return result;
@@ -247,10 +292,57 @@ namespace CsdBridge.Core.Vehicles
             r.NetTurnDeg = net * 180 / Math.PI;
         }
 
-        /// <summary>Curvature of the rear axle path at each pose, from neighbouring headings.</summary>
-        private static void Curvatures(TurnPathResult r)
+        /// <summary>
+        /// Tows the trailers. Each is dragged by its coupling: its axle group can't slip sideways,
+        /// so when the coupling moves by dP the trailer turns by (dP . n) / wheelbase, n being the
+        /// trailer's left normal. That is the same law that makes the vehicle's rear axle follow its
+        /// front, applied again for every trailer down the line.
+        /// </summary>
+        private static void Tow(TurnPathRequest req, TurnPathResult r)
         {
-            int n = r.Poses.Count;
+            DesignVehicle v = r.Vehicle;
+            List<VehiclePose> towing = r.Poses;
+            double hitch = v.Hitch;
+            double sharpest = 0;
+            for (int t = 0; t < v.Trailers.Count; t++)
+            {
+                TrailerUnit unit = v.Trailers[t];
+                var track = new TrailerTrack(unit);
+                double length = unit.Wheelbase;
+                double heading = req.InitialTrailerHeadings != null && t < req.InitialTrailerHeadings.Count ? req.InitialTrailerHeadings[t] : towing[0].Heading;
+                Point2 prev = towing[0].ToWorld(hitch, 0);
+                for (int i = 0; i < towing.Count; i++)
+                {
+                    Point2 coupling = towing[i].ToWorld(hitch, 0);
+                    if (i > 0)
+                    {
+                        double dx = coupling.X - prev.X, dy = coupling.Y - prev.Y;
+                        // Heun's method, as for the vehicle itself.
+                        double d1 = (-dx * Math.Sin(heading) + dy * Math.Cos(heading)) / length;
+                        double mid = heading + d1 / 2;
+                        heading += (-dx * Math.Sin(mid) + dy * Math.Cos(mid)) / length;
+                    }
+
+                    heading = Angles.Normalize(heading);
+                    track.Poses.Add(new VehiclePose(new Point2(coupling.X - length * Math.Cos(heading), coupling.Y - length * Math.Sin(heading)), heading));
+                    sharpest = Math.Max(sharpest, Math.Abs(Angles.Wrap(towing[i].Heading - heading)));
+                    prev = coupling;
+                }
+
+                track.Curvatures.AddRange(CurvaturesOf(track.Poses, false));
+                r.Trailers.Add(track);
+                towing = track.Poses;
+                hitch = unit.Hitch;
+            }
+
+            r.MaxArticulationDeg = sharpest * 180 / Math.PI;
+        }
+
+        /// <summary>Curvature of an axle's path at each pose, from neighbouring headings.</summary>
+        private static List<double> CurvaturesOf(List<VehiclePose> poses, bool reverse)
+        {
+            int n = poses.Count;
+            var curvatures = new List<double>(n);
             double last = 0;
             for (int i = 0; i < n; i++)
             {
@@ -258,23 +350,25 @@ namespace CsdBridge.Core.Vehicles
                 double ds = 0;
                 for (int k = i0; k < i1; k++)
                 {
-                    ds += Segment.Dist(r.Poses[k].RearAxle, r.Poses[k + 1].RearAxle);
+                    ds += Segment.Dist(poses[k].RearAxle, poses[k + 1].RearAxle);
                 }
 
-                double dth = Angles.Wrap(r.Poses[i1].Heading - r.Poses[i0].Heading);
-                // ds is a chord of the rear axle's path; on a circle chord = 2 R sin(dθ/2).
+                double dth = Angles.Wrap(poses[i1].Heading - poses[i0].Heading);
+                // ds is a chord of the axle's path; on a circle chord = 2 R sin(dθ/2).
                 double k2 = ds > 1e-9 ? (Math.Abs(dth) < 1e-6 ? dth / ds : 2 * Math.Sin(dth / 2) / ds) : last;
                 // Reversing: the rear axle moves backwards, so a left turn of the body shows as a
                 // negative heading rate per metre travelled. Curvature is about the geometry of the
                 // turn (which side the centre is on), so use the sign of the heading change.
-                if (ds > 1e-9 && r.Reverse)
+                if (ds > 1e-9 && reverse)
                 {
                     k2 = -k2;
                 }
 
-                r.Curvatures.Add(k2);
+                curvatures.Add(k2);
                 last = k2;
             }
+
+            return curvatures;
         }
 
         // -------------------------------------------------------------- envelope
@@ -286,6 +380,11 @@ namespace CsdBridge.Core.Vehicles
         // those traces, keep the points that no other pose's body covers, and order them along
         // the path. Picking a single "extreme" point per pose would miss, for example, the rear of
         // the car swinging out at the start of a turn.
+        //
+        // A vehicle with trailers is several such bodies moving together. The swept path is the
+        // union over all of them, so every body's traces are candidates and a point is dropped when
+        // any body covers it at any pose: the prime mover's inner trace disappears under the
+        // trailer that cuts inside it.
 
         /// <summary>
         /// A part of the body's outline that can bound the swept path: a vertex, or a rounded corner.
@@ -431,12 +530,14 @@ namespace CsdBridge.Core.Vehicles
             r.ClearanceRight = rightTurn ? inside : leftTurn ? outside : inside;
 
             double tol = req.Tolerance > 0 ? req.Tolerance : 0.001;
-            double maxLoop = 2 * v.Length;
+            double maxLoop = 2 * v.OverallLength;
             bool forward = !r.Reverse;
-            var coverage = new Coverage(r);
+            var units = new List<SweptUnit> { new SweptUnit(v, r.Poses, r.Curvatures) };
+            units.AddRange(r.Trailers.Select(t => new SweptUnit(t.Body, t.Poses, t.Curvatures)));
+            var coverage = new Coverage(r, units);
 
-            List<Point2> leftLine = Boundary(r, coverage, Chain(v, true), side: 1, forward, tol);
-            List<Point2> rightLine = Boundary(r, coverage, Chain(v, false), side: -1, forward, tol);
+            List<Point2> leftLine = Boundary(units, coverage, left: true, forward, tol);
+            List<Point2> rightLine = Boundary(units, coverage, left: false, forward, tol);
 
             r.LeftBody = Clean(leftLine, tol, maxLoop);
             r.RightBody = Clean(rightLine, tol, maxLoop);
@@ -444,76 +545,94 @@ namespace CsdBridge.Core.Vehicles
             r.LeftClearance = Clean(OffsetChain(r.LeftBody, r.ClearanceLeft, leftSide: forward), tol, maxLoop);
             r.RightClearance = Clean(OffsetChain(r.RightBody, r.ClearanceRight, leftSide: !forward), tol, maxLoop);
 
-            foreach (var (x, y) in new[] { (v.Wheelbase, v.Track / 2), (v.Wheelbase, -v.Track / 2), (0.0, v.Track / 2), (0.0, -v.Track / 2) })
+            // Front wheels, then the rear group (at its centre: where the vehicle pivots), then each trailer's.
+            foreach (var (x, y) in new[] { (v.Wheelbase, v.Track / 2), (v.Wheelbase, -v.Track / 2), (0.0, v.RearTrackWidth / 2), (0.0, -v.RearTrackWidth / 2) })
             {
                 r.WheelPaths.Add(Simplify(r.Poses.Select(p => p.ToWorld(x, y)).ToList(), tol));
+            }
+
+            foreach (TrailerTrack t in r.Trailers)
+            {
+                foreach (double y in new[] { t.Body.Track / 2, -t.Body.Track / 2 })
+                {
+                    r.WheelPaths.Add(Simplify(t.Poses.Select(p => p.ToWorld(0, y)).ToList(), tol));
+                }
             }
         }
 
         /// <summary>
-        /// The swept path's edge on one side: every outline part's trace (with the body's trailing
-        /// end at the first pose and leading end at the last), minus points inside the body at any
-        /// other pose, ordered along the path.
+        /// The swept path's edge on one side: every outline part's trace, for every body (with each
+        /// body's trailing end at the first pose and leading end at the last), minus points inside
+        /// a body at any other pose, ordered along the path.
         /// </summary>
-        private static List<Point2> Boundary(TurnPathResult r, Coverage coverage, ChainElement[] chain, double side, bool forward, double tol)
+        private static List<Point2> Boundary(IReadOnlyList<SweptUnit> units, Coverage coverage, bool left, bool forward, double tol)
         {
-            var candidates = new List<(Point2 Point, int Pose)>();
-            int n = r.Poses.Count;
-
-            void Add(VehiclePose pose, int index, VehiclePoint p) => candidates.Add((pose.ToWorld(p), index));
-
-            // Trailing end of the body at the start: from the trailing corner to the side at the rear axle.
-            void Walk(VehiclePose pose, int index, int from, int to)
+            double side = left ? 1 : -1;
+            var candidates = new List<(Point2 Point, int Unit, int Pose)>();
+            for (int u = 0; u < units.Count; u++)
             {
-                int dir = Math.Sign(to - from);
-                for (int i = from; i != to; i += dir)
+                SweptUnit unit = units[u];
+                ChainElement[] chain = Chain(unit.Body, left);
+                List<VehiclePose> poses = unit.Poses;
+                int n = poses.Count;
+                int index = u;
+
+                void Add(VehiclePose pose, int at, VehiclePoint p) => candidates.Add((pose.ToWorld(p), index, at));
+
+                // An end of the body: from a corner to the side at the axle, or back.
+                void Walk(VehiclePose pose, int at, int from, int to)
                 {
-                    ChainElement e = chain[i];
-                    Add(pose, index, e.At(dir > 0 ? 0 : 1));
-                    foreach (VehiclePoint p in e.Between(dir > 0 ? 0 : 1, dir > 0 ? 1 : 0))
+                    int dir = Math.Sign(to - from);
+                    for (int i = from; i != to; i += dir)
                     {
-                        Add(pose, index, p);
-                    }
-                }
-
-                Add(pose, index, chain[to].At(dir > 0 ? 0 : 1));
-            }
-
-            Walk(r.Poses[0], 0, forward ? RearCorner : FrontCorner, RearAxleSide);
-
-            var lastT = new double[chain.Length];
-            for (int i = 0; i < n; i++)
-            {
-                VehiclePose pose = r.Poses[i];
-                double k = r.Curvatures[i];
-                for (int e = 0; e < chain.Length; e++)
-                {
-                    double t = chain[e].Best(k, side);
-                    if (i > 0 && chain[e].IsArc && Math.Abs(t - lastT[e]) > 1e-9)
-                    {
-                        // The extreme point moved along the arc: fill in the arc between.
-                        foreach (VehiclePoint p in chain[e].Between(lastT[e], t))
+                        ChainElement e = chain[i];
+                        Add(pose, at, e.At(dir > 0 ? 0 : 1));
+                        foreach (VehiclePoint p in e.Between(dir > 0 ? 0 : 1, dir > 0 ? 1 : 0))
                         {
-                            Add(pose, i, p);
+                            Add(pose, at, p);
                         }
                     }
-                    else
-                    {
-                        Add(pose, i, chain[e].At(t));
-                    }
 
-                    lastT[e] = t;
+                    Add(pose, at, chain[to].At(dir > 0 ? 0 : 1));
                 }
-            }
 
-            // Leading end of the body at the finish: from the side at the rear axle to the leading corner.
-            Walk(r.Poses[n - 1], n - 1, RearAxleSide, forward ? FrontCorner : RearCorner);
+                // Trailing end of the body at the start: from the trailing corner to the side at the axle.
+                Walk(poses[0], 0, forward ? RearCorner : FrontCorner, RearAxleSide);
+
+                var lastT = new double[chain.Length];
+                for (int i = 0; i < n; i++)
+                {
+                    VehiclePose pose = poses[i];
+                    double k = unit.Curvatures[i];
+                    for (int e = 0; e < chain.Length; e++)
+                    {
+                        double t = chain[e].Best(k, side);
+                        if (i > 0 && chain[e].IsArc && Math.Abs(t - lastT[e]) > 1e-9)
+                        {
+                            // The extreme point moved along the arc: fill in the arc between.
+                            foreach (VehiclePoint p in chain[e].Between(lastT[e], t))
+                            {
+                                Add(pose, i, p);
+                            }
+                        }
+                        else
+                        {
+                            Add(pose, i, chain[e].At(t));
+                        }
+
+                        lastT[e] = t;
+                    }
+                }
+
+                // Leading end of the body at the finish: from the side at the axle to the leading corner.
+                Walk(poses[n - 1], n - 1, RearAxleSide, forward ? FrontCorner : RearCorner);
+            }
 
             var kept = new List<(double Key, int Order, Point2 Point)>();
             for (int i = 0; i < candidates.Count; i++)
             {
-                var (p, pose) = candidates[i];
-                if (!coverage.Covered(p, pose, 0.5 * tol))
+                var (p, unit, pose) = candidates[i];
+                if (!coverage.Covered(p, unit, pose, 0.5 * tol))
                 {
                     kept.Add((coverage.Key(p), i, p));
                 }
@@ -522,91 +641,40 @@ namespace CsdBridge.Core.Vehicles
             return kept.OrderBy(x => x.Key).ThenBy(x => x.Order).Select(x => x.Point).ToList();
         }
 
-        /// <summary>Answers "is this point inside the body at some other pose?" and orders points along the path.</summary>
-        private sealed class Coverage
+        /// <summary>One body of the vehicle (the vehicle itself, or a trailer) and where it was at every pose.</summary>
+        private sealed class SweptUnit
         {
-            private readonly TurnPathResult _r;
-            private readonly DesignVehicle _v;
-            private readonly double _reach;        // farthest any body point is from the rear axle
             private readonly double[] _cos;
             private readonly double[] _sin;
-            private readonly Point2 _start;
-            private readonly Point2 _end;
-            private readonly double _tStart;
-            private readonly double _tEnd;
 
-            public Coverage(TurnPathResult r)
+            public SweptUnit(DesignVehicle body, List<VehiclePose> poses, List<double> curvatures)
             {
-                _r = r;
-                _v = r.Vehicle;
-                double xMax = Math.Max(_v.Wheelbase + _v.FrontOverhang, _v.RearOverhang);
-                _reach = Math.Sqrt(xMax * xMax + _v.Width * _v.Width / 4) + 1e-6;
-                _cos = r.Poses.Select(p => Math.Cos(p.Heading)).ToArray();
-                _sin = r.Poses.Select(p => Math.Sin(p.Heading)).ToArray();
-                _start = r.Path.Start;
-                _end = r.Path.End;
-                _tStart = r.Path.TangentAt(0);
-                _tEnd = r.Path.TangentAt(r.Path.Length);
+                Body = body;
+                Poses = poses;
+                Curvatures = curvatures;
+                double xMax = Math.Max(Math.Abs(body.Wheelbase + body.FrontOverhang), Math.Abs(body.RearOverhang));
+                Reach = Math.Sqrt(xMax * xMax + body.Width * body.Width / 4) + 1e-6;
+                _cos = poses.Select(p => Math.Cos(p.Heading)).ToArray();
+                _sin = poses.Select(p => Math.Sin(p.Heading)).ToArray();
             }
 
-            /// <summary>Distance along the path of the point's nearest path point, extended straight beyond the ends.</summary>
-            public double Key(Point2 p)
-            {
-                var (_, along, _) = _r.Path.Closest(p);
-                if (along <= 1e-9)
-                {
-                    return Math.Min(0, (p.X - _start.X) * Math.Cos(_tStart) + (p.Y - _start.Y) * Math.Sin(_tStart));
-                }
+            public DesignVehicle Body { get; }
 
-                if (along >= _r.Path.Length - 1e-9)
-                {
-                    return _r.Path.Length + Math.Max(0, (p.X - _end.X) * Math.Cos(_tEnd) + (p.Y - _end.Y) * Math.Sin(_tEnd));
-                }
+            public List<VehiclePose> Poses { get; }
 
-                return along;
-            }
+            public List<double> Curvatures { get; }
 
-            /// <summary>True when the body at some pose other than <paramref name="ownPose"/> contains the point by more than <paramref name="margin"/>.</summary>
-            public bool Covered(Point2 p, int ownPose, double margin)
-            {
-                List<VehiclePose> poses = _r.Poses;
-                // Only poses whose rear axle is within reach can cover the point. Walk outwards from the
-                // point's own pose and stop once the rear axle has moved out of reach for good.
-                for (int dir = -1; dir <= 1; dir += 2)
-                {
-                    int misses = 0;
-                    for (int j = ownPose + dir; j >= 0 && j < poses.Count; j += dir)
-                    {
-                        Point2 rear = poses[j].RearAxle;
-                        double dx = p.X - rear.X, dy = p.Y - rear.Y;
-                        if (dx * dx + dy * dy > _reach * _reach)
-                        {
-                            // The rear axle can wander back within reach (a tight loop), so allow a run of misses.
-                            if (++misses > 400)
-                            {
-                                break;
-                            }
+            /// <summary>The farthest any point of the body is from its axle.</summary>
+            public double Reach { get; }
 
-                            continue;
-                        }
+            /// <summary>Is the point (given relative to the axle at pose <paramref name="j"/>) inside the body there, by more than the margin?</summary>
+            public bool Covers(int j, double dx, double dy, double margin) =>
+                Inside(dx * _cos[j] + dy * _sin[j], -dx * _sin[j] + dy * _cos[j], margin);
 
-                        misses = 0;
-                        double x = dx * _cos[j] + dy * _sin[j];
-                        double y = -dx * _sin[j] + dy * _cos[j];
-                        if (Inside(x, y, margin))
-                        {
-                            return true;
-                        }
-                    }
-                }
-
-                return false;
-            }
-
-            /// <summary>Is (x, y) in the vehicle frame inside the body shrunk by <paramref name="m"/>?</summary>
+            /// <summary>Is (x, y) in the body's frame inside the body shrunk by <paramref name="m"/>?</summary>
             private bool Inside(double x, double y, double m)
             {
-                DesignVehicle v = _v;
+                DesignVehicle v = Body;
                 double xf = v.Wheelbase + v.EffectiveFrontOverhang, xr = -v.EffectiveRearOverhang;
                 double xfo = v.Wheelbase + v.FrontOverhang, xro = -v.RearOverhang;
                 if (x < xro + m || x > xfo - m)
@@ -655,6 +723,111 @@ namespace CsdBridge.Core.Vehicles
                 double radius = (he * he + sag * sag) / (2 * sag);
                 double dx = d + radius - sag;
                 return Math.Sqrt(Math.Max(0, radius * radius - dx * dx));
+            }
+        }
+
+        /// <summary>Answers "is this point inside a body at some other pose?" and orders points along the path.</summary>
+        private sealed class Coverage
+        {
+            private readonly TurnPathResult _r;
+            private readonly IReadOnlyList<SweptUnit> _units;
+            private readonly double _stride;       // more than any axle moves between two poses
+            private readonly int _every;           // poses between the ones tested
+            private readonly Point2 _start;
+            private readonly Point2 _end;
+            private readonly double _tStart;
+            private readonly double _tEnd;
+
+            public Coverage(TurnPathResult r, IReadOnlyList<SweptUnit> units)
+            {
+                _r = r;
+                _units = units;
+                double step = 0;
+                for (int i = 1; i < r.Chainages.Count; i++)
+                {
+                    step = Math.Max(step, r.Chainages[i] - r.Chainages[i - 1]);
+                }
+
+                // An axle moves no further than the point that leads it, bar a little for a coupling
+                // that swings wide behind an axle: twice the step is a safe bound.
+                _stride = Math.Max(1e-6, 2 * step);
+
+                // A vehicle with trailers has several times the bodies and the length to test. A point
+                // more than a fraction of a millimetre inside the swept path is under a body for at
+                // least 80 mm of travel, so testing a pose every 80 mm finds it; what slips through
+                // is closer to the edge than the tolerance the edge is drawn to.
+                _every = units.Count > 1 && step > 0 ? Math.Max(1, (int)(0.08 / step)) : 1;
+                _start = r.Path.Start;
+                _end = r.Path.End;
+                _tStart = r.Path.TangentAt(0);
+                _tEnd = r.Path.TangentAt(r.Path.Length);
+            }
+
+            /// <summary>Distance along the path of the point's nearest path point, extended straight beyond the ends.</summary>
+            public double Key(Point2 p)
+            {
+                var (_, along, _) = _r.Path.Closest(p);
+                if (along <= 1e-9)
+                {
+                    return Math.Min(0, (p.X - _start.X) * Math.Cos(_tStart) + (p.Y - _start.Y) * Math.Sin(_tStart));
+                }
+
+                if (along >= _r.Path.Length - 1e-9)
+                {
+                    return _r.Path.Length + Math.Max(0, (p.X - _end.X) * Math.Cos(_tEnd) + (p.Y - _end.Y) * Math.Sin(_tEnd));
+                }
+
+                return along;
+            }
+
+            /// <summary>
+            /// True when some body contains the point by more than <paramref name="margin"/>: its own
+            /// body at any pose but <paramref name="ownPose"/>, or another body at any pose at all.
+            /// </summary>
+            public bool Covered(Point2 p, int ownUnit, int ownPose, double margin)
+            {
+                for (int u = 0; u < _units.Count; u++)
+                {
+                    SweptUnit unit = _units[u];
+                    List<VehiclePose> poses = unit.Poses;
+                    double reach2 = unit.Reach * unit.Reach;
+                    if (u != ownUnit)
+                    {
+                        Point2 at = poses[ownPose].RearAxle;
+                        double ox = p.X - at.X, oy = p.Y - at.Y;
+                        if (ox * ox + oy * oy <= reach2 && unit.Covers(ownPose, ox, oy, margin))
+                        {
+                            return true;
+                        }
+                    }
+
+                    // Walk outwards from the point's own pose. Only poses whose axle is within reach can
+                    // cover it; while the axle is further off than that, skip the poses it needs to get back.
+                    for (int dir = -1; dir <= 1; dir += 2)
+                    {
+                        int j = ownPose + dir;
+                        while (j >= 0 && j < poses.Count)
+                        {
+                            Point2 axle = poses[j].RearAxle;
+                            double dx = p.X - axle.X, dy = p.Y - axle.Y;
+                            double d2 = dx * dx + dy * dy;
+                            if (d2 > reach2)
+                            {
+                                j += dir * Math.Max(_every, (int)((Math.Sqrt(d2) - unit.Reach) / _stride));
+                                continue;
+                            }
+
+                            if (unit.Covers(j, dx, dy, margin))
+                            {
+                                return true;
+                            }
+
+                            j += dir * _every;
+                        }
+                    }
+                }
+
+                return false;
             }
         }
 
@@ -935,6 +1108,11 @@ namespace CsdBridge.Core.Vehicles
             if (!r.WithinMinimumRadius)
             {
                 r.Warnings.Add($"The manoeuvre needs a {r.TightestRadius:0.00} m turn (outer front wheel), tighter than the {v.Name}'s minimum of {v.MinTurnRadius:0.0} m.");
+            }
+
+            if (r.MaxArticulationDeg > v.MaxArticulationDeg + 0.05)
+            {
+                r.Warnings.Add($"A trailer folds to {r.MaxArticulationDeg:0} degrees against the unit towing it, past the {v.MaxArticulationDeg:0} degree limit for the {v.Name}: it would jackknife. Use a larger radius or a smaller angle of turn.");
             }
         }
     }

@@ -201,6 +201,11 @@ namespace CsdBridge.Core.Vehicles
         /// </summary>
         public static GroundClearanceResult CheckProfile(GroundProfile profile, DesignVehicle v, double step = 0.05, bool bothDirections = true, double? groundClearance = null)
         {
+            if (v.IsArticulated)
+            {
+                throw new ArgumentException($"The {v.Name} tows a trailer; the ground clearance check is for rigid vehicles only.");
+            }
+
             if (step <= 0)
             {
                 throw new ArgumentException("The step must be positive.");
@@ -510,6 +515,11 @@ namespace CsdBridge.Core.Vehicles
             double poseInterval = 0.1,
             double? groundClearance = null)
         {
+            if (path.Vehicle.IsArticulated)
+            {
+                throw new ArgumentException($"The {path.Vehicle.Name} tows a trailer; the ground clearance check is for rigid vehicles only.");
+            }
+
             DesignVehicle v = path.Vehicle;
             double h = groundClearance ?? v.GroundClearance;
             var result = new PathClearanceResult { Vehicle = v, Path = path, GroundClearance = h };

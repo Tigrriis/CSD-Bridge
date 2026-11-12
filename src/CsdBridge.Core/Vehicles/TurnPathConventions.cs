@@ -51,6 +51,17 @@ namespace CsdBridge.Core.Vehicles
         /// </summary>
         public string DrawingUnits { get; set; } = "auto";
 
+        /// <summary>
+        /// Solve mode: the layers whose linework bounds the space the vehicle manoeuvres in (kerbs,
+        /// walls, columns, boundaries); wildcards as for the obstruction layers. Empty: the
+        /// obstruction layers are used.
+        /// </summary>
+        public List<string> SolveLayers { get; set; } = new List<string>();
+
+        /// <summary>The layers a solve works between: the solve layers, or the obstruction layers when none are set.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public List<string> SolveBoundaryLayers => SolveLayers.Count > 0 ? SolveLayers.ToList() : ObstructionLayers.ToList();
+
         /// <summary>Solve mode: how long the search for a multi-point turn may take, seconds.</summary>
         public double SolverTimeLimit { get; set; } = 10;
 
@@ -132,6 +143,7 @@ namespace CsdBridge.Core.Vehicles
                     kv.Value.Name = kv.Key;
                 }
 
+                kv.Value.FillDefaults();
                 List<string> problems = kv.Value.Validate();
                 if (problems.Count > 0)
                 {
@@ -145,6 +157,26 @@ namespace CsdBridge.Core.Vehicles
             }
 
             return c;
+        }
+
+        /// <summary>
+        /// Adds the vehicles of <paramref name="other"/> that this set doesn't have (by name), and
+        /// returns their names. A copy of the conventions saved before new vehicles were shipped
+        /// picks them up this way; vehicles it already has, edited or not, are left alone.
+        /// </summary>
+        public List<string> AddMissingVehicles(TurnPathConventions other)
+        {
+            var added = new List<string>();
+            foreach (KeyValuePair<string, DesignVehicle> kv in other.Vehicles)
+            {
+                if (!Vehicles.ContainsKey(kv.Key))
+                {
+                    Vehicles[kv.Key] = kv.Value.Clone();
+                    added.Add(kv.Key);
+                }
+            }
+
+            return added;
         }
 
         public void Save(string path)
@@ -185,6 +217,12 @@ namespace CsdBridge.Core.Vehicles
                   .Append(" m, wheelbase ").Append(v.Wheelbase.ToString("0.##")).Append(" m, min turn radius ").Append(v.MinTurnRadius.ToString("0.#"))
                   .Append(" m (outer front wheel), clearances ").Append((v.ClearanceInside * 1000).ToString("0")).Append(" mm inside / ")
                   .Append((v.ClearanceOutside * 1000).ToString("0")).Append(" mm outside");
+                if (v.IsArticulated)
+                {
+                    sb.Append(", towing ").Append(string.Join(" and ", v.Trailers.Select(t => $"a {t.Length:0.##} m {t.Name}")))
+                      .Append(" (").Append(v.OverallLength.ToString("0.##")).Append(" m overall; forwards only)");
+                }
+
                 if (!string.IsNullOrWhiteSpace(v.Description))
                 {
                     sb.Append(". ").Append(v.Description);

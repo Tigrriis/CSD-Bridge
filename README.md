@@ -45,12 +45,14 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
 - Objects you select *before* asking are passed in as context ("dimension these").
 - Conversations are per drawing, so follow-ups work ("make it 300 wider").
 - The whole request is **one UNDO step**. Esc or Stop cancels.
-- **Vehicle turning paths (AS/NZS 2890.1).** **AITURN**, or the **Turn path** ribbon button,
-  simulates a B99 or B85 design vehicle and draws its swept path and the standard's clearance
+- **Vehicle turning paths (AS/NZS 2890.1 and Austroads).** **AITURN**, or the **Turn path** ribbon button,
+  simulates a B99 or B85 car, or an Austroads truck (8.8 m service vehicle, 12.5 m truck, 19 m
+  semi-trailer, 25 m and 26 m B-doubles), and draws its swept path and the standard's clearance
   template: a standard turn from a picked start point, a vehicle driven along a line or polyline
   you select (forwards or in reverse), or through points you click. **Solve turn** works a
   multi-point turn out for you: pick where the car starts and where it ends up, and it finds the
-  forward and reverse movements between the kerbs, walls and columns. It works in drawings in
+  forward and reverse movements between the kerbs, walls and columns. **In and out** does the same
+  through a stop on a site, so the vehicle enters forwards and leaves forwards. It works in drawings in
   metres or millimetres. Layers, clearances, what is drawn and the vehicles themselves are
   configurable (`turn-paths.json`). Claude has the same
   simulator as the `draw_turn_path` tool. See [Vehicle turning paths](#vehicle-turning-paths-asnzs-28901) below.
@@ -65,7 +67,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 239 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 260 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -194,7 +196,8 @@ with `-Remove`.
 | `AIHISTORY` | Open the history window: every request and what Claude did |
 | `AITURN` | Draw an AS/NZS 2890.1 B85 or B99 vehicle swept path: a turning template, a vehicle driven along a selected line/polyline, or driven click by click (forward and reverse legs). Opens a dialog for the vehicle, radius, clearances, what to draw and the layers. |
 | `AITURNEDIT` | Change a turning path drawn by `AITURN`: pick any part of it, adjust the vehicle, radius, clearances, layers or conflict layers in the dialog, then regenerate it as it was, pick its geometry again, or (drive) continue from where it ended. |
-| `AITURNSOLVE` | Work out a multi-point turn: pick where the vehicle starts and where it ends up (position and direction at each), and the forward and reverse movements between the linework on the obstruction layers are found and drawn. The same as `AITURN` with **Solve** chosen. See [Solving a multi-point turn](#solving-a-multi-point-turn). |
+| `AITURNSOLVE` | Work out a multi-point turn: pick where the vehicle starts and where it ends up (position and direction at each), and the forward and reverse movements between the linework on the solve boundary layers are found and drawn. The same as `AITURN` with **Solve (2 points)** chosen. See [Solving a multi-point turn](#solving-a-multi-point-turn). |
+| `AITURNINOUT` | Show forward entry and exit from a site: pick where the vehicle arrives, where it stops on the site and where it leaves, and the movements are found so that it drives in forwards and out forwards, with any reversing done on the site. The same as `AITURN` with **Solve in and out (3 points)** chosen. See [In and out of a site](#in-and-out-of-a-site-the-3-point-solve). |
 | `AICLEARANCE` | Check a B85 or B99 car's ground clearance (AS/NZS 2890.1 Appendix C): slide the template along a plotted long section, or drive along a path and check each side of the car against a BricsCAD TIN surface, with wheel path long sections plotted. |
 | `AIEFFORT` | Choose how hard Claude works: Auto, Quick, Normal or Thorough (also the Effort box in the chat panel) |
 | `AIMODEL` | Choose the model: Opus, Sonnet or Haiku (also the Model box in the chat panel) |
@@ -209,7 +212,7 @@ with `-Remove`.
 | `AISCALEBARS` | Add a scale bar block to every layout for each viewport scale on it. Runs in the add-in, so it doesn't call Claude or cost anything. See [Scale bars](#scale-bars). |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft, Routines and History buttons, small New chat,
-Status and API key buttons, a Scale Bars button in the Sheets panel, and **Turn path** (`AITURN`), **Solve turn** (`AITURNSOLVE`),
+Status and API key buttons, a Scale Bars button in the Sheets panel, and **Turn path** (`AITURN`), **Solve turn** (`AITURNSOLVE`), **In and out** (`AITURNINOUT`),
 **Edit path** (`AITURNEDIT`) and **Clearance** (`AICLEARANCE`) buttons in the Vehicles panel. It's added when the add-in loads. If your workspace hides the
 ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
@@ -389,7 +392,8 @@ vehicles. `AITURN` (ribbon: **Vehicles > Turn path**) opens a dialog, then promp
 | **Follow a line, arc or polyline** | The curve, near the end the vehicle starts from | Drives the vehicle along it, forwards (the front axle centre follows the line, the rear axle tracks in behind) or in reverse (the rear axle follows the line). Use it to check a driveway, ramp or aisle you have already drawn. |
 | **Drive** | The start point and direction, then where the vehicle goes next, click by click | Each click is a destination. The car drives there on one arc when that arc is no tighter than the turn radius; otherwise it turns at the turn radius until it points at the destination, then drives straight (the **Drive turns** option makes it always do the latter). A click ahead goes forward, a click behind reverses. With **arrival direction** on (a dialog tick box, or `D` while driving), a second pick sets which way the car faces at the destination, and the leg becomes turn, straight, turn so it arrives exactly on that heading: square into a bay, parallel to an aisle. A leg never turns more than a half turn, so a point inside the turning circle can't be reached in one leg: drive past and reverse. Every leg keeps its own swept path, so a three-point turn is three clicks. `U` takes back the last leg, Enter finishes. |
 
-| **Solve** | The start position and direction, then the target position and direction | Finds the movements for you: forward and reverse legs from the start to the target that keep the clearance to everything on the obstruction layers. See [Solving a multi-point turn](#solving-a-multi-point-turn). |
+| **Solve (2 points)** | The start position and direction, then the target position and direction | Finds the movements for you: forward and reverse legs from the start to the target that keep the clearance to everything on the solve boundary layers. See [Solving a multi-point turn](#solving-a-multi-point-turn). |
+| **Solve in and out (3 points)** | The entry, the stop on the site and the exit (position and direction at each), then optionally the site boundary across the driveway | Finds the way in to the stop and the way out again, so the vehicle enters forwards and leaves forwards. See [In and out of a site](#in-and-out-of-a-site-the-3-point-solve). |
 
 While you pick the direction, or the next destination, the swept path, clearances, driven path and vehicle
 are previewed live under the cursor (at a coarser step than the final result), with the earlier legs kept on screen.
@@ -441,13 +445,66 @@ same fields), the drawing units, the default clearances, lead-in/lead-out, text 
 each part (`{vehicle}` in a layer name is replaced by the vehicle's name). Layer styles apply only
 when a layer doesn't exist yet. The dialog can change all of it per run; **Save as defaults** writes
 `%APPDATA%\CsdBridge\turn-paths.json`, which is then used instead of the shipped file (or point
-`turn_paths_file` in `settings.json` at a shared copy).
+`turn_paths_file` in `settings.json` at a shared copy). Vehicles that a saved or shared copy doesn't
+have are still taken from the shipped file, so new vehicles appear after an update.
 
 **In chat.** Claude has the same simulator as `draw_turn_path`: *"check a B99 can get into the
 driveway on the kerb return I just drew"* or *"add B85 turning templates at 5.8 m for each aisle
 end"*. It can also run it as a dry run and report the tightest radius without drawing, and solve a
 manoeuvre between obstruction layers: *"can a B99 turn round at the end of this aisle? The kerbs
-are on C-KERB"*.
+are on C-KERB"*, or in and out of a site through a stop on it: *"show the 8.8 m service vehicle
+entering forwards, reversing onto the dock and leaving forwards"*.
+
+### Trucks and trailers
+
+The Austroads design vehicles for roads and commercial sites are included, from the dimension drawings of
+the *Design Vehicles and Turning Path Templates Guide* (AP-G34-23, Edition 4.0):
+
+| Vehicle | Guide | Dimensions (m) | Smallest template radius |
+|---|---|---|---|
+| **Service 8.8 m** | Figure 2.3, service vehicle | 2.3 rear overhang, 5.0 wheelbase, 1.5 front overhang | 9 m |
+| **Truck 12.5 m** | Figure 2.4, single unit truck/bus | 3.45, 6.85, 2.2; two rear axles | 12.5 m |
+| **Semi 19 m** | Figure 2.7, prime mover and semi-trailer | prime mover 5.3 wheelbase, 1.6 front overhang, kingpin 0.2 ahead of the drive axles; trailer 1.4 ahead of the kingpin, 9.5 to its axles, 2.8 behind them | 12.5 m |
+| **B-double 25 m** | Figure 2.9 | prime mover 4.0, 1.0, kingpin 0.4 ahead; A-trailer 0.9 and 8.1; B-trailer 0.2, 9.4 and 2.9 | 12.5 m |
+| **B-double 26 m** | Figure 2.10 | prime mover 4.5, 1.4, kingpin over the drive axles; A-trailer 1.4 and 8.05; B-trailer 0.45, 9.15 and 2.9 | 12.5 m |
+
+All are 2.5 m wide. As for the cars, the radius is measured at the outer front wheel, which is how the guide
+measures its templates. They default to 0.5 m clearance on both sides (Section 3.4.1: 0.5 m from the swept
+path to kerbs, edge lines and objects) and a 70° limit on the angle between coupled units (Section 3.5). The
+guide's usual choices (Table 2.3): the 19 m semi-trailer at 15 m radius for arterial and industrial
+intersections, the single unit truck at 12.5 m for collector streets, the service vehicle at 9 m for local
+residential streets, with B-doubles as checking vehicles. A few things the guide's figures don't dimension
+are scaled from them and don't move the swept path: the track widths, and how far a prime mover and an
+A-trailer reach behind their axles under the trailer that sits on them.
+
+Any other vehicle can be added to `turn-paths.json`:
+
+- **Rigid trucks.** Give the real body; the `effective_*` fields can be left out, because a square body
+  sweeps with its real corners. With a group of rear axles, measure the wheelbase and overhangs from the
+  centre of the group.
+- **Trailers.** Give the towing vehicle a `hitch` (its fifth wheel, in metres ahead of the centre of its
+  rear axles) and a list of `trailers`, front to back. Each trailer has its `width`, its `front_overhang`
+  (the kingpin's setback from the front of the trailer), its `wheelbase` (kingpin to the centre of its axle
+  group), its `rear_overhang` and, when another trailer follows, its own `hitch`. The comments at the top
+  of `turn-paths.json` show the layout.
+
+A trailer is towed the way a real one is: its axles can't slip sideways, so it is dragged round behind its
+coupling and cuts inside the path of the vehicle ahead. The swept path covers the whole combination: the
+trailer's inner side on the inside of the turn, the prime mover's front corner on the outside. Every unit is
+drawn at the start and end (and along the way, with an outline interval), and the report gives the sharpest
+angle the combination folds to, with a warning if it goes past the vehicle's limit.
+
+Limits for a vehicle with trailers:
+
+- It drives **forwards only**. Reversing a trailer isn't modelled, so a reversed follow, a drive destination
+  behind the vehicle and **Solve** are refused for it.
+- The ground clearance check is for rigid vehicles.
+- Trailer axles are fixed: steerable and self-tracking axles aren't modelled.
+- Turns are tangential, as the guide's templates are: the vehicle arrives straight and the front wheel
+  follows the arc. There is no limit on how fast the steering is wound on.
+
+The other vehicles in the guide (the buses, the long semi-trailer and the road trains) and the AS 2890.2
+vehicles aren't included; they can be added the same way from their dimension drawings.
 
 ### Conflicts with kerbs, walls and columns
 
@@ -466,12 +523,13 @@ point and a note (`HIT 120 mm`, or `215 mm (needs 300)`).
 
 ### Solving a multi-point turn
 
-`AITURNSOLVE` (ribbon: **Vehicles > Solve turn**, or **Solve** in the `AITURN` dialog) answers "can it turn round
-here, and in how many movements?" without you driving it click by click.
+`AITURNSOLVE` (ribbon: **Vehicles > Solve turn**, or **Solve (2 points)** in the `AITURN` dialog) answers "can it
+turn round here, and in how many movements?" without you driving it click by click.
 
 1. In the dialog, choose the vehicle, the turn radius (default its minimum) and the clearance, and name the
-   **obstruction layers**: the kerbs, walls, columns and bay lines that bound the space. Leave the layers blank
-   to pick objects on them after OK.
+   **solve boundary layers**: the kerbs, walls, columns and bay lines that bound the space. Leave the layers
+   blank to pick objects on them after OK. See [Solve boundary layers](#solve-boundary-layers) for setting the
+   office's standard list once.
 2. Pick the **start**: the centre of the rear axle, then a point ahead of the car for the way it faces.
 3. Pick the **target** the same way: where the rear axle ends up, and the way the car faces there.
 
@@ -499,12 +557,54 @@ so if the answer looks excessive, try a smaller clearance.
 If there is no solution the command says why (the car overlaps an obstruction at the start or target, or no
 route was found) and draws nothing. Things to know:
 
-- Only lines, arcs, circles and polylines on the obstruction layers count (in blocks and xrefs too). Anything
+- Only lines, arcs, circles and polylines on the solve boundary layers count (in blocks and xrefs too). Anything
   not on those layers is ignored, so an open side of the space needs a line across it, or the car will use it.
 - The car may go up to `solver_search_margin` (15 m) beyond the start and target, and the search stops after
   `solver_time_limit` (10 s); both are in `turn-paths.json`. Most manoeuvres solve in under a second.
 - The movements are made of full-lock turns and straights, as a careful driver would make them. It finds a
   good manoeuvre, not always the one with the very fewest movements.
+
+### In and out of a site (the 3-point solve)
+
+`AITURNINOUT` (ribbon: **Vehicles > In and out**, or **Solve in and out (3 points)** in the `AITURN` dialog)
+shows that a vehicle can enter a site forwards and leave it forwards, which is what most councils ask of a
+service or waste vehicle. Left to itself, the 2-point solve will happily drive past a driveway and reverse in
+off the street. This one will not.
+
+1. Pick the **entry**: where the vehicle arrives on the street, and the way it is travelling.
+2. Pick the **stop on the site**: the loading dock, bin store or bay, and the way the vehicle faces there.
+3. Pick the **exit**: where the vehicle ends up back on the street, and the way it is travelling.
+4. Optionally pick the **site boundary** across the driveway, as two points. Enter skips it.
+
+It then solves two manoeuvres, the way in to the stop and the way out from it, and draws them as one path.
+The rules it keeps:
+
+- the first movement on the way in is forwards, and the last movement on the way out is forwards;
+- with a boundary line picked, no part of the body is over that line while the vehicle is reversing, so all
+  the shunting happens on the site.
+
+Without the boundary line the first and last movements are still forwards, but a long reverse in the middle
+could reach back over the boundary, so pick the line whenever the driveway is short. The report gives both
+parts, for example `Way in: 2 movements (forward 21.3 m, reverse 7.5 m). Way out: 1 movement (forward 23.3 m).
+It drives in forwards and out forwards.` Each movement in the command line report is marked `in` or `out`
+(`Leg 2 (in, reverse 7.5 m)`). If either
+part can't be done, nothing is drawn and the message says which (`on the way in, ...`).
+
+The clearance, the search limits and the things to know above apply to both parts. Like the 2-point solve it
+is for cars and rigid trucks; a vehicle with a trailer is refused.
+
+### Solve boundary layers
+
+Both solves stay between the linework on the **solve boundary layers**, which are set apart from the conflict
+check's layers so the office's standard list can be set once:
+
+- In the dialog, **Solve boundary layers** (under Conflicts) takes the list, separated by commas, with `*` and
+  `?` as wildcards: `C-KERB*, A-WALL*, A-COLS, C-BDY*`. **Save as defaults** keeps it.
+- Or set `solve_layers` in `turn-paths.json`, which is the place for a shared office copy.
+
+Leave the list empty and a solve uses the conflict check's **Layers** instead, as it did before. Leave both
+empty and you are asked to pick objects on the layers after OK. A solved manoeuvre remembers the layers it
+was solved between.
 
 ### Editing a turning path
 
@@ -517,8 +617,8 @@ the layers or the conflict layers, then choose:
 - **Continue** (drive): add more legs from where the drive ended;
 - **Solve** (solved manoeuvres): solve it again, for when the kerbs or walls around it have changed.
 
-A solved manoeuvre is also solved again by itself when you change its vehicle, radius, clearance or obstruction
-layers, pick new positions, or regenerate a block that has been moved.
+A solved manoeuvre is also solved again by itself when you change its vehicle, radius, clearance or solve
+boundary layers, pick new positions, or regenerate a block that has been moved.
 
 The old version is only erased once the new one has been worked out, so a change that can't be driven (a bigger
 vehicle that can't reach a destination, say) leaves the path as it was and says which destination failed. A path

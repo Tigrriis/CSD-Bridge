@@ -187,6 +187,22 @@ def turn_solve():
     return img
 
 
+def turn_in_out():
+    """A site with a driveway in its boundary: the path comes in forwards, stops, and goes out forwards."""
+    img, d = canvas()
+    RED = (205, 55, 45, 255)
+    # the site boundary, with the driveway gap
+    d.line([(8, 78), (52, 78)], fill=GREY, width=18)
+    d.line([(204, 78), (248, 78)], fill=GREY, width=18)
+    # in down the left, round the site, out up the right
+    path = [(88, 14), (88, 150), (106, 196), (128, 206), (150, 196), (168, 150), (168, 64)]
+    d.line(path, fill=RED, width=20, joint="curve")
+    d.polygon([(168, 10), (136, 66), (200, 66)], fill=RED)
+    # the car stopped on the site
+    d.rounded_rectangle((94, 186, 164, 236), radius=16, fill=BLUE, outline=BLUE_DARK, width=OUTLINE)
+    return img
+
+
 def clearance():
     """A car in side view clearing a hump in the ground."""
     img, d = canvas()
@@ -231,6 +247,7 @@ ICONS = {
     "turnpath": turn_path,
     "turnedit": turn_edit,
     "turnsolve": turn_solve,
+    "turninout": turn_in_out,
     "clearance": clearance,
     "pipehatch": pipe_hatch,
 }

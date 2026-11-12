@@ -117,20 +117,20 @@ namespace CsdBridge.Core.Vehicles
 
             if (draw.Vehicle)
             {
-                VehiclePose start = r.Poses[0], end = r.Poses[r.Poses.Count - 1];
+                int last = r.Poses.Count - 1;
                 if (!style.SkipStartVehicle)
                 {
-                    AddVehicle(list, "vehicle", v, start, layers.Vehicle, wheels: true);
+                    AddVehicle(list, "vehicle", v, r.Poses[0], r.Trailers.Select(t => t.Poses[0]).ToList(), layers.Vehicle, wheels: true);
                 }
 
-                AddVehicle(list, "vehicle", v, end, layers.Vehicle, wheels: true);
+                AddVehicle(list, "vehicle", v, r.Poses[last], r.Trailers.Select(t => t.Poses[last]).ToList(), layers.Vehicle, wheels: true);
             }
 
             if (style.OutlineInterval > 0.05)
             {
                 for (double ch = style.OutlineInterval; ch < r.PathLength - 0.05; ch += style.OutlineInterval)
                 {
-                    AddVehicle(list, "vehicle_intermediate", v, r.PoseAt(ch), layers.VehicleIntermediate, wheels: false);
+                    AddVehicle(list, "vehicle_intermediate", v, r.PoseAt(ch), r.TrailerPosesAt(ch), layers.VehicleIntermediate, wheels: false);
                 }
             }
 
@@ -206,15 +206,69 @@ namespace CsdBridge.Core.Vehicles
             }
         }
 
-        /// <summary>The vehicle outline (and wheels and axles) at a pose, as entities on a layer.</summary>
-        public static List<EntitySpec> VehicleOutline(DesignVehicle v, VehiclePose pose, string layer, bool wheels)
+        /// <summary>
+        /// The vehicle outline (and wheels and axles) at a pose, as entities on a layer. Trailers are
+        /// drawn where <paramref name="trailerPoses"/> puts their axles, or straight behind the vehicle.
+        /// </summary>
+        public static List<EntitySpec> VehicleOutline(DesignVehicle v, VehiclePose pose, string layer, bool wheels, IReadOnlyList<VehiclePose>? trailerPoses = null)
         {
             var list = new List<DraftedEntity>();
-            AddVehicle(list, "vehicle", v, pose, layer, wheels);
+            AddVehicle(list, "vehicle", v, pose, trailerPoses ?? v.StraightTrailerPoses(pose), layer, wheels);
             return list.Select(d => d.Spec).ToList();
         }
 
-        private static void AddVehicle(List<DraftedEntity> list, string group, DesignVehicle v, VehiclePose pose, string layer, bool wheels)
+        private static void AddVehicle(List<DraftedEntity> list, string group, DesignVehicle v, VehiclePose pose, IReadOnlyList<VehiclePose> trailerPoses, string layer, bool wheels)
+        {
+            AddBody(list, group, v, pose, layer);
+            if (wheels)
+            {
+                foreach (List<VehiclePoint> wheel in v.Wheels())
+                {
+                    list.Add(new DraftedEntity(group, new PolylineSpec { Points = wheel.Select(pose.ToWorld).ToList(), Closed = true, Layer = layer }));
+                }
+
+                // Axle centre lines, as on the standard's vehicle drawings.
+                double half = v.Track / 2 + v.WheelWidth / 2, rearHalf = v.RearTrackWidth / 2 + v.WheelWidth / 2;
+                foreach (double axle in v.RearAxlePositions)
+                {
+                    list.Add(new DraftedEntity(group, new LineSpec { Start = pose.ToWorld(axle, -rearHalf), End = pose.ToWorld(axle, rearHalf), Layer = layer }));
+                }
+
+                list.Add(new DraftedEntity(group, new LineSpec { Start = pose.ToWorld(v.Wheelbase, -half), End = pose.ToWorld(v.Wheelbase, half), Layer = layer }));
+            }
+
+            for (int t = 0; t < v.Trailers.Count && t < trailerPoses.Count; t++)
+            {
+                DesignVehicle body = v.Trailers[t].Body();
+                VehiclePose at = trailerPoses[t];
+                AddBody(list, group, body, at, layer);
+                if (!wheels)
+                {
+                    continue;
+                }
+
+                // The trailer's axle group (drawn with the towing vehicle's tyres), and its coupling.
+                double hl = v.WheelLength / 2, hw = v.WheelWidth / 2, half = body.Track / 2 + hw;
+                foreach (double axle in body.RearAxlePositions)
+                {
+                    foreach (double y in new[] { body.Track / 2, -body.Track / 2 })
+                    {
+                        list.Add(new DraftedEntity(group, new PolylineSpec
+                        {
+                            Points = new List<Point2> { at.ToWorld(axle - hl, y - hw), at.ToWorld(axle + hl, y - hw), at.ToWorld(axle + hl, y + hw), at.ToWorld(axle - hl, y + hw) },
+                            Closed = true,
+                            Layer = layer,
+                        }));
+                    }
+
+                    list.Add(new DraftedEntity(group, new LineSpec { Start = at.ToWorld(axle, -half), End = at.ToWorld(axle, half), Layer = layer }));
+                }
+
+                list.Add(new DraftedEntity(group, new CircleSpec { Center = at.ToWorld(body.Wheelbase, 0), Radius = 0.1, Layer = layer }));
+            }
+        }
+
+        private static void AddBody(List<DraftedEntity> list, string group, DesignVehicle v, VehiclePose pose, string layer)
         {
             var (pts, bulges) = v.BodyOutline();
             list.Add(new DraftedEntity(group, new PolylineSpec
@@ -224,21 +278,6 @@ namespace CsdBridge.Core.Vehicles
                 Closed = true,
                 Layer = layer,
             }));
-
-            if (!wheels)
-            {
-                return;
-            }
-
-            foreach (List<VehiclePoint> wheel in v.Wheels())
-            {
-                list.Add(new DraftedEntity(group, new PolylineSpec { Points = wheel.Select(pose.ToWorld).ToList(), Closed = true, Layer = layer }));
-            }
-
-            // Axle centre lines, as on the standard's vehicle drawings.
-            double half = v.Track / 2 + v.WheelWidth / 2;
-            list.Add(new DraftedEntity(group, new LineSpec { Start = pose.ToWorld(0, -half), End = pose.ToWorld(0, half), Layer = layer }));
-            list.Add(new DraftedEntity(group, new LineSpec { Start = pose.ToWorld(v.Wheelbase, -half), End = pose.ToWorld(v.Wheelbase, half), Layer = layer }));
         }
     }
 }
