@@ -148,6 +148,26 @@ namespace CsdBridge.Core.Vehicles
             return c;
         }
 
+        /// <summary>
+        /// Adds the vehicles of <paramref name="other"/> that this set doesn't have (by name), and
+        /// returns their names. A copy of the conventions saved before new vehicles were shipped
+        /// picks them up this way; vehicles it already has, edited or not, are left alone.
+        /// </summary>
+        public List<string> AddMissingVehicles(TurnPathConventions other)
+        {
+            var added = new List<string>();
+            foreach (KeyValuePair<string, DesignVehicle> kv in other.Vehicles)
+            {
+                if (!Vehicles.ContainsKey(kv.Key))
+                {
+                    Vehicles[kv.Key] = kv.Value.Clone();
+                    added.Add(kv.Key);
+                }
+            }
+
+            return added;
+        }
+
         public void Save(string path)
         {
             string? dir = Path.GetDirectoryName(path);

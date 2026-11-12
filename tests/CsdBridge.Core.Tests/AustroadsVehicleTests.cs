@@ -231,6 +231,27 @@ namespace CsdBridge.Core.Tests
         }
 
         [Fact]
+        public void ASavedCopyOfTheSettingsPicksUpVehiclesItDoesNotHave()
+        {
+            // "Save as defaults" writes a copy that is used from then on. One saved before the trucks
+            // were added has only the cars, perhaps edited.
+            TurnPathConventions saved = TurnPathConventions.Default();
+            saved.Vehicles["B99"].ClearanceOutside = 0.45;
+            Assert.Equal(2, saved.Vehicles.Count);
+
+            List<string> added = saved.AddMissingVehicles(Conventions());
+            Assert.Equal(new[] { "Service 8.8 m", "Truck 12.5 m", "Semi 19 m", "B-double 25 m", "B-double 26 m" }, added);
+            Assert.Equal(7, saved.Vehicles.Count);
+            Assert.Equal(0.45, saved.Vehicles["B99"].ClearanceOutside);      // their own edits stay
+            Assert.Equal(19.0, saved.Vehicle("semi 19 m").OverallLength, 9);
+
+            // Nothing to add the second time, and the copies are their own.
+            Assert.Empty(saved.AddMissingVehicles(Conventions()));
+            saved.Vehicles["Semi 19 m"].Trailers[0].Wheelbase = 1;
+            Assert.Equal(9.5, Conventions().Vehicle("Semi 19 m").Trailers[0].Wheelbase);
+        }
+
+        [Fact]
         public void TheToolKnowsThem()
         {
             var host = new InMemoryDrawingHost("Meters");

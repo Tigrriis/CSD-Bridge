@@ -66,7 +66,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 254 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 255 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -442,7 +442,8 @@ same fields), the drawing units, the default clearances, lead-in/lead-out, text 
 each part (`{vehicle}` in a layer name is replaced by the vehicle's name). Layer styles apply only
 when a layer doesn't exist yet. The dialog can change all of it per run; **Save as defaults** writes
 `%APPDATA%\CsdBridge\turn-paths.json`, which is then used instead of the shipped file (or point
-`turn_paths_file` in `settings.json` at a shared copy).
+`turn_paths_file` in `settings.json` at a shared copy). Vehicles that a saved or shared copy doesn't
+have are still taken from the shipped file, so new vehicles appear after an update.
 
 **In chat.** Claude has the same simulator as `draw_turn_path`: *"check a B99 can get into the
 driveway on the kerb return I just drew"* or *"add B85 turning templates at 5.8 m for each aisle
