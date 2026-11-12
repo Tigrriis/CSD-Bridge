@@ -45,6 +45,12 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Layers holding kerbs, walls, columns and so on; * and ? wildcards; xref layers match by the part after '|'.</summary>
         public List<string> ObstructionLayers { get; set; } = new List<string>();
 
+        /// <summary>Solve mode: how long the search for a multi-point turn may take, seconds.</summary>
+        public double SolverTimeLimit { get; set; } = 10;
+
+        /// <summary>Solve mode: how far beyond the start and target positions the vehicle may go while manoeuvring, metres.</summary>
+        public double SolverSearchMargin { get; set; } = 15;
+
         [System.Text.Json.Serialization.JsonIgnore]
         public TurnPathBuilder.DriveTurns DriveTurnsMode =>
             string.Equals(DriveTurns, "corner", StringComparison.OrdinalIgnoreCase) ? TurnPathBuilder.DriveTurns.Corner : TurnPathBuilder.DriveTurns.Arc;

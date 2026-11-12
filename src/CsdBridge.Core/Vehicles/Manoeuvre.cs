@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using CsdBridge.Core.Drawing;
 using CsdBridge.Core.Geometry;
 
@@ -16,6 +18,18 @@ namespace CsdBridge.Core.Vehicles
         public double? HeadingDeg { get; set; }
     }
 
+    /// <summary>One movement of a solved manoeuvre, as saved: the rear axle's path as lines and arcs.</summary>
+    public sealed class SolvedMove
+    {
+        public bool Reverse { get; set; }
+
+        /// <summary>The way the vehicle faces at the start of the movement, degrees anticlockwise from +X.</summary>
+        public double HeadingDeg { get; set; }
+
+        /// <summary>A line is [x1, y1, x2, y2]; an arc is [centre x, centre y, radius, start angle, sweep] (radians).</summary>
+        public List<double[]> Segments { get; set; } = new List<double[]>();
+    }
+
     /// <summary>
     /// Everything needed to draw a turning path again: the vehicle, the manoeuvre and its geometry,
     /// the clearances and how it is drawn. Saved in the drawing with the entities it produced, so
@@ -27,10 +41,10 @@ namespace CsdBridge.Core.Vehicles
         public string Id { get; set; } = "";
         public string Vehicle { get; set; } = "B99";
 
-        /// <summary>template, follow or drive.</summary>
+        /// <summary>template, follow, drive or solve.</summary>
         public string Mode { get; set; } = "template";
 
-        /// <summary>Rear axle centre at the start (template and drive).</summary>
+        /// <summary>Rear axle centre at the start (template, drive and solve).</summary>
         public double[]? Start { get; set; }
 
         public double HeadingDeg { get; set; }
@@ -58,6 +72,18 @@ namespace CsdBridge.Core.Vehicles
 
         public double[]? FollowNear { get; set; }
 
+        /// <summary>Solve: the rear axle centre and the way the vehicle faces at the end.</summary>
+        public double[]? Target { get; set; }
+
+        public double TargetHeadingDeg { get; set; }
+
+        /// <summary>Solve: the movements the solver found, what they were solved for, and what it said.</summary>
+        public List<SolvedMove>? Solved { get; set; }
+
+        public string? SolvedFor { get; set; }
+
+        public string? SolvedSummary { get; set; }
+
         public double ClearanceInside { get; set; } = 0.3;
         public double ClearanceOutside { get; set; } = 0.3;
         public TurnPathLayers Layers { get; set; } = new TurnPathLayers();
@@ -81,7 +107,7 @@ namespace CsdBridge.Core.Vehicles
         private static readonly JsonSerializerOptions Json = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         };
 
         public string ToJson() => JsonSerializer.Serialize(this, Json);
@@ -89,11 +115,86 @@ namespace CsdBridge.Core.Vehicles
         public static ManoeuvreRecord FromJson(string json) =>
             JsonSerializer.Deserialize<ManoeuvreRecord>(json, Json) ?? throw new ArgumentException("The saved manoeuvre is empty.");
 
+        [JsonIgnore]
         public Point2 StartPoint => Start != null && Start.Length >= 2 ? new Point2(Start[0], Start[1]) : throw new ArgumentException("The manoeuvre has no start point.");
 
+        [JsonIgnore]
+        public Point2 TargetPoint => Target != null && Target.Length >= 2 ? new Point2(Target[0], Target[1]) : throw new ArgumentException("The manoeuvre has no target position.");
+
+        /// <summary>Solve: the clearance kept to obstructions (the manoeuvring clearance, the same on both sides).</summary>
+        [JsonIgnore]
+        public double SolveClearance => Math.Min(ClearanceInside, ClearanceOutside);
+
+        /// <summary>What a solution depends on. When this no longer matches <see cref="SolvedFor"/> the manoeuvre must be solved again.</summary>
+        public string SolveSignature()
+        {
+            string N(double v) => Math.Round(v, 3).ToString("0.###", CultureInfo.InvariantCulture);
+            string P(double[]? p) => p == null || p.Length < 2 ? "-" : N(p[0]) + "," + N(p[1]);
+            return string.Join("|", Vehicle, N(Radius), N(SolveClearance), P(Start), N(HeadingDeg), P(Target), N(TargetHeadingDeg),
+                string.Join(",", ObstructionLayers.Select(l => l.Trim().ToUpperInvariant())));
+        }
+
+        [JsonIgnore]
+        public bool NeedsSolving => Solved == null || Solved.Count == 0 || SolvedFor != SolveSignature();
+
+        /// <summary>Keeps a solution with the record.</summary>
+        public void SetSolution(SolveResult result)
+        {
+            Solved = new List<SolvedMove>();
+            foreach (SolvedLeg leg in result.Legs)
+            {
+                var move = new SolvedMove { Reverse = leg.Reverse, HeadingDeg = Math.Round(leg.StartHeading * 180 / Math.PI, 7) };
+                foreach (Segment s in leg.Path.Segments)
+                {
+                    move.Segments.Add(s is ArcSegment arc
+                        ? new[] { Math.Round(arc.Center.X, 6), Math.Round(arc.Center.Y, 6), Math.Round(arc.Radius, 6), Math.Round(arc.StartAngle, 9), Math.Round(arc.Sweep, 9) }
+                        : new[] { Math.Round(s.Start.X, 6), Math.Round(s.Start.Y, 6), Math.Round(s.End.X, 6), Math.Round(s.End.Y, 6) });
+                }
+
+                Solved.Add(move);
+            }
+
+            SolvedFor = SolveSignature();
+            SolvedSummary = result.Summary();
+        }
+
+        /// <summary>The saved solution as movements to simulate.</summary>
+        public List<SolvedLeg> SolvedLegs()
+        {
+            var legs = new List<SolvedLeg>();
+            foreach (SolvedMove move in Solved ?? new List<SolvedMove>())
+            {
+                var segments = new List<Segment>();
+                foreach (double[] n in move.Segments)
+                {
+                    if (n.Length == 5)
+                    {
+                        segments.Add(new ArcSegment(new Point2(n[0], n[1]), n[2], n[3], n[4]));
+                    }
+                    else if (n.Length == 4)
+                    {
+                        segments.Add(new LineSegment(new Point2(n[0], n[1]), new Point2(n[2], n[3])));
+                    }
+                    else
+                    {
+                        throw new ArgumentException("The saved solution can't be read.");
+                    }
+                }
+
+                if (segments.Count > 0)
+                {
+                    legs.Add(new SolvedLeg { Reverse = move.Reverse, StartHeading = move.HeadingDeg * Math.PI / 180, Path = new Path2(segments, false) });
+                }
+            }
+
+            return legs;
+        }
+
+        [JsonIgnore]
         public ReferencePoint ReferencePointKind =>
             Reference == "rear_axle" ? ReferencePoint.RearAxle : Reference == "front_axle" ? ReferencePoint.FrontAxle : ReferencePoint.OuterFrontWheel;
 
+        [JsonIgnore]
         public TurnPathBuilder.DriveTurns TurnsKind =>
             string.Equals(Turns, "corner", StringComparison.OrdinalIgnoreCase) ? TurnPathBuilder.DriveTurns.Corner : TurnPathBuilder.DriveTurns.Arc;
 
@@ -129,6 +230,17 @@ namespace CsdBridge.Core.Vehicles
             if (FollowNear != null)
             {
                 FollowNear = Move(FollowNear);
+            }
+
+            if (Target != null)
+            {
+                Target = Move(Target);
+                TargetHeadingDeg += deg;
+
+                // The obstructions haven't moved with it: what was solved no longer holds.
+                Solved = null;
+                SolvedFor = null;
+                SolvedSummary = null;
             }
         }
     }
@@ -254,6 +366,31 @@ namespace CsdBridge.Core.Vehicles
                     return plan;
                 }
 
+                case "solve":
+                {
+                    List<SolvedLeg> legs = r.SolvedLegs();
+                    if (legs.Count == 0)
+                    {
+                        throw new ArgumentException("The manoeuvre hasn't been solved yet.");
+                    }
+
+                    string label = legs.Count == 1 ? v.Name : $"{v.Name}, {legs.Count} movements";
+                    for (int i = 0; i < legs.Count; i++)
+                    {
+                        TurnPathResult result = Run(legs[i].ToRequest(v));
+                        plan.Warnings.AddRange(result.Warnings.Select(w => $"Movement {i + 1}: {w}"));
+                        plan.Legs.Add(new PlannedLeg
+                        {
+                            Result = result,
+                            Label = label,
+                            First = i == 0,
+                            Description = $"{(legs[i].Reverse ? "reverse" : "forward")} {legs[i].Length:0.0} m",
+                        });
+                    }
+
+                    return plan;
+                }
+
                 default:
                     throw new ArgumentException($"Unknown manoeuvre mode '{r.Mode}'.");
             }
@@ -264,6 +401,42 @@ namespace CsdBridge.Core.Vehicles
             }
 
             return plan;
+        }
+
+        /// <summary>
+        /// Solves a "solve" manoeuvre: finds the forward and reverse movements from its start to its
+        /// target between the obstructions, and keeps them with the record when there is a solution.
+        /// </summary>
+        /// <param name="obstructions">The linework to stay clear of inside a window (min, max).</param>
+        public static SolveResult Solve(ManoeuvreRecord r, TurnPathConventions c, Func<Point2, Point2, IReadOnlyList<Obstruction>> obstructions)
+        {
+            DesignVehicle v = c.Vehicle(r.Vehicle);
+            var start = new VehiclePose(r.StartPoint, r.HeadingDeg * Math.PI / 180);
+            var goal = new VehiclePose(r.TargetPoint, r.TargetHeadingDeg * Math.PI / 180);
+            double margin = Math.Max(v.Length, c.SolverSearchMargin);
+            var min = new Point2(Math.Min(start.RearAxle.X, goal.RearAxle.X) - margin, Math.Min(start.RearAxle.Y, goal.RearAxle.Y) - margin);
+            var max = new Point2(Math.Max(start.RearAxle.X, goal.RearAxle.X) + margin, Math.Max(start.RearAxle.Y, goal.RearAxle.Y) + margin);
+            double reach = v.Length + 2;
+            var q = new SolveRequest
+            {
+                Vehicle = v,
+                Start = start,
+                Goal = goal,
+                Radius = r.Radius > 0 ? r.Radius : (double?)null,
+                Clearance = r.SolveClearance,
+                Obstructions = obstructions(new Point2(min.X - reach, min.Y - reach), new Point2(max.X + reach, max.Y + reach)),
+                Min = min,
+                Max = max,
+                TimeLimitSeconds = c.SolverTimeLimit,
+            };
+            SolveResult result = ManoeuvreSolver.SolveWithFallback(q);
+            result.ObstructionsUsed = q.Obstructions.Count;
+            if (result.Solved)
+            {
+                r.SetSolution(result);
+            }
+
+            return result;
         }
 
         /// <summary>The leg to one stop: to a pose when the stop has a heading, otherwise to the point.</summary>

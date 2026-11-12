@@ -16,6 +16,7 @@ namespace CsdBridge.BricsCAD
             Template,
             Follow,
             Drive,
+            Solve,
         }
 
         public DesignVehicle Vehicle { get; set; } = DesignVehicle.B99;
@@ -63,6 +64,7 @@ namespace CsdBridge.BricsCAD
         private readonly RadioButton _modeTemplate;
         private readonly RadioButton _modeFollow;
         private readonly RadioButton _modePoints;
+        private readonly RadioButton _modeSolve;
         private readonly TextBox _radius;
         private readonly Label _radiusLabel;
         private readonly TextBox _angles;
@@ -95,7 +97,7 @@ namespace CsdBridge.BricsCAD
         private string _lastVehicle = "";
 
         /// <param name="editing">A saved turning path to change: its settings fill the dialog and its manoeuvre can't be switched.</param>
-        public TurnPathDialog(TurnPathConventions conventions, string savePath, ManoeuvreRecord? editing = null)
+        public TurnPathDialog(TurnPathConventions conventions, string savePath, ManoeuvreRecord? editing = null, TurnPathChoice.ManoeuvreMode? startIn = null)
         {
             _conventions = conventions;
             _savePath = savePath;
@@ -135,7 +137,8 @@ namespace CsdBridge.BricsCAD
             _modeTemplate = new RadioButton { Text = "Standard turn template: pick the start point and direction", AutoSize = true, Checked = true };
             _modeFollow = new RadioButton { Text = "Follow a line, arc or polyline you select", AutoSize = true };
             _modePoints = new RadioButton { Text = "Drive: click where it goes next (turns at the radius; behind = reverse; each leg kept)", AutoSize = true };
-            foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints })
+            _modeSolve = new RadioButton { Text = "Solve: pick where it starts and ends up; finds the movements between the obstruction layers", AutoSize = true };
+            foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints, _modeSolve })
             {
                 rb.Margin = new Padding(3, 2, 3, 2);
                 manoeuvre.Controls.Add(rb, 0, manoeuvre.RowCount);
@@ -186,7 +189,7 @@ namespace CsdBridge.BricsCAD
             conflicts.RowCount++;
             _obstructions = Box(300);
             Row(conflicts, Caption("Layers"), _obstructions, null);
-            Label conflictNote = Note("Separate with commas; * is a wildcard and matches xref layers too (A-WALL* finds arch|A-WALL-EXT). Leave blank to pick objects on the layers after OK. Frozen and off layers are ignored.", LeftWidth - 30);
+            Label conflictNote = Note("Separate with commas; * is a wildcard and matches xref layers too (A-WALL* finds arch|A-WALL-EXT). Leave blank to pick objects on the layers after OK. Frozen and off layers are ignored. Solve manoeuvres between the linework on these layers.", LeftWidth - 30);
             conflicts.Controls.Add(conflictNote, 0, conflicts.RowCount);
             conflicts.SetColumnSpan(conflictNote, 2);
             conflicts.RowCount++;
@@ -283,7 +286,7 @@ namespace CsdBridge.BricsCAD
             Controls.Add(root);
 
             _vehicle.SelectedIndexChanged += (s, e) => OnVehicleChanged();
-            foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints })
+            foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints, _modeSolve })
             {
                 rb.CheckedChanged += (s, e) =>
                 {
@@ -309,6 +312,10 @@ namespace CsdBridge.BricsCAD
             {
                 LoadRecord(editing);
             }
+            else if (startIn == TurnPathChoice.ManoeuvreMode.Solve)
+            {
+                _modeSolve.Checked = true;
+            }
         }
 
         /// <summary>Fills the dialog from a saved turning path.</summary>
@@ -324,8 +331,9 @@ namespace CsdBridge.BricsCAD
             _modeTemplate.Checked = mode == "template";
             _modeFollow.Checked = mode == "follow";
             _modePoints.Checked = mode == "drive";
+            _modeSolve.Checked = mode == "solve";
             OnModeChanged();
-            _modeTemplate.Enabled = _modeFollow.Enabled = _modePoints.Enabled = false;
+            _modeTemplate.Enabled = _modeFollow.Enabled = _modePoints.Enabled = _modeSolve.Enabled = false;
 
             if (r.Radius > 0)
             {
@@ -362,9 +370,11 @@ namespace CsdBridge.BricsCAD
                 }
             }
 
-            _checkConflicts.Checked = r.CheckConflicts;
+            _checkConflicts.Checked = r.CheckConflicts || mode == "solve";
             _obstructions.Text = string.Join(", ", r.ObstructionLayers);
-            _status.Text = "Settings of the selected turning path. OK regenerates it.";
+            _status.Text = mode == "solve"
+                ? "Settings of the selected manoeuvre. OK regenerates it; a change of vehicle, radius, clearance or layers solves it again."
+                : "Settings of the selected turning path. OK regenerates it.";
         }
 
         /// <summary>What the user chose; valid once the dialog returned OK.</summary>
@@ -555,20 +565,29 @@ namespace CsdBridge.BricsCAD
 
         private void OnModeChanged()
         {
-            bool template = _modeTemplate.Checked, points = _modePoints.Checked;
-            _radius.Enabled = template || points;
+            bool template = _modeTemplate.Checked, points = _modePoints.Checked, solve = _modeSolve.Checked;
+            _radius.Enabled = template || points || solve;
             _radiusLabel.Text = "Turn radius (m)";
             _angles.Enabled = template;
             _left.Enabled = _right.Enabled = template;
             _leadIn.Enabled = _leadOut.Enabled = template;
             // Drive mode decides forward/reverse and the reference point from where you click.
-            _reverse.Enabled = !template && !points;
-            _reference.Enabled = !points;
+            _reverse.Enabled = !template && !points && !solve;
+            _reference.Enabled = !points && !solve;
             _turns.Enabled = points;
             _arrival.Enabled = points;
-            if (template || points)
+            if (template || points || solve)
             {
                 _reverse.Checked = false;
+            }
+
+            // Solve works between the obstruction layers, keeping one clearance to them on both sides.
+            _clearOutside.Enabled = !solve;
+            _checkConflicts.Enabled = !solve;
+            if (solve)
+            {
+                _checkConflicts.Checked = true;
+                _status.Text = "Solve keeps the inside clearance on both sides, to everything on the obstruction layers.";
             }
 
             _reference.SelectedIndex = template ? 0 : _reverse.Checked ? 2 : 1;
@@ -593,7 +612,8 @@ namespace CsdBridge.BricsCAD
             var c = new TurnPathChoice
             {
                 Vehicle = vehicle,
-                Mode = _modeTemplate.Checked ? TurnPathChoice.ManoeuvreMode.Template : _modeFollow.Checked ? TurnPathChoice.ManoeuvreMode.Follow : TurnPathChoice.ManoeuvreMode.Drive,
+                Mode = _modeTemplate.Checked ? TurnPathChoice.ManoeuvreMode.Template : _modeFollow.Checked ? TurnPathChoice.ManoeuvreMode.Follow
+                    : _modeSolve.Checked ? TurnPathChoice.ManoeuvreMode.Solve : TurnPathChoice.ManoeuvreMode.Drive,
                 Left = _left.Checked,
                 Reverse = _reverse.Checked,
                 Reference = _reference.SelectedIndex == 2 ? ReferencePoint.RearAxle : _reference.SelectedIndex == 1 ? ReferencePoint.FrontAxle : ReferencePoint.OuterFrontWheel,
@@ -612,7 +632,7 @@ namespace CsdBridge.BricsCAD
                     return false;
                 }
 
-                if (c.Mode == TurnPathChoice.ManoeuvreMode.Drive && radius < vehicle.MinTurnRadius - 1e-9)
+                if ((c.Mode == TurnPathChoice.ManoeuvreMode.Drive || c.Mode == TurnPathChoice.ManoeuvreMode.Solve) && radius < vehicle.MinTurnRadius - 1e-9)
                 {
                     problem = $"The {vehicle.Name} can't turn tighter than {Num(vehicle.MinTurnRadius)} m (outer front wheel, AS/NZS 2890.1 B3.1).";
                     return false;
@@ -664,6 +684,12 @@ namespace CsdBridge.BricsCAD
 
             c.ClearanceInside = ci;
             c.ClearanceOutside = co;
+            if (c.Mode == TurnPathChoice.ManoeuvreMode.Solve)
+            {
+                // Which side is inside changes with every movement: one clearance, both sides, always checked.
+                c.ClearanceOutside = ci;
+                c.CheckConflicts = true;
+            }
 
             if (!TryNum(_outlineInterval.Text, out double interval) || interval < 0)
             {

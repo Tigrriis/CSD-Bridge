@@ -17,6 +17,7 @@ namespace CsdBridge.BricsCAD
     /// AIROUTINES open the routines: saved procedures to run, create, edit, rename or delete
     /// AITURN     draw an AS/NZS 2890.1 B85/B99 vehicle swept path (turning template, along a path, or driven)
     /// AITURNEDIT change a turning path drawn by AITURN (settings or geometry) and regenerate it
+    /// AITURNSOLVE work out a multi-point turn: the movements from a start to a target between the obstruction layers
     /// AICLEARANCE check a design vehicle's ground clearance (Appendix C) on a long section or a surface
     /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
     /// AIEFFORT   choose how hard Claude works: Auto, Quick, Normal or Thorough
@@ -243,6 +244,9 @@ namespace CsdBridge.BricsCAD
 
         [CommandMethod(Group, "AITURNEDIT", CommandFlags.Modal)]
         public void AiTurnEdit() => TurnPathCommand.Edit(CadApp.DocumentManager.MdiActiveDocument);
+
+        [CommandMethod(Group, "AITURNSOLVE", CommandFlags.Modal)]
+        public void AiTurnSolve() => TurnPathCommand.Run(CadApp.DocumentManager.MdiActiveDocument, TurnPathChoice.ManoeuvreMode.Solve);
 
         [CommandMethod(Group, "AICLEARANCE", CommandFlags.Modal)]
         public void AiClearance() => GroundClearanceCommand.Run(CadApp.DocumentManager.MdiActiveDocument);
