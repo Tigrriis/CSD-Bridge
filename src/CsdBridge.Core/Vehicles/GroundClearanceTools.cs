@@ -61,7 +61,8 @@ namespace CsdBridge.Core.Vehicles
                     "\"ground_id\":{\"type\":\"string\"}," +
                     "\"points\":{\"type\":\"array\",\"items\":" + Point + ",\"minItems\":2,\"maxItems\":2000,\"description\":\"Section: [chainage, level] pairs. Surface: plan points of the path.\"}," +
                     "\"vertical_exaggeration\":{\"type\":\"number\",\"description\":\"Of the plotted section (default 1), also used for plots made at plot_at.\"}," +
-                    "\"horizontal_scale\":{\"type\":\"number\",\"description\":\"Drawing units per metre of chainage on the plot (default 1).\"}," +
+                    "\"horizontal_scale\":{\"type\":\"number\",\"description\":\"Horizontal scale of the plot: 1 (default) = natural scale, 1 m of chainage drawn 1 m long. The drawing's units are allowed for separately.\"}," +
+                    "\"drawing_units\":{\"type\":\"string\",\"enum\":[\"auto\",\"m\",\"mm\"],\"description\":\"What the drawing is drawn in. Default auto: its INSUNITS, or metres when that isn't set. Chainages, levels and gaps are always metres.\"}," +
                     "\"both_directions\":{\"type\":\"boolean\",\"description\":\"Section: also run facing down chainage (default true).\"}," +
                     "\"surface\":{\"type\":\"string\",\"description\":\"Surface name; default the only one.\"}," +
                     "\"radius\":{\"type\":\"number\",\"description\":\"Surface with points: corner radius of the path.\"}," +
@@ -107,12 +108,21 @@ namespace CsdBridge.Core.Vehicles
                 bool draw = JsonArgs.OptionalBool(input, "draw", "", true);
                 double ve = JsonArgs.OptionalPositive(input, "vertical_exaggeration", "") ?? c.SectionVerticalExaggeration;
                 double hs = JsonArgs.OptionalPositive(input, "horizontal_scale", "") ?? 1;
-                Point2? plotAt = JsonArgs.OptionalPoint(input, "plot_at", "");
+
+                // The checker works in metres: curves and points from the drawing are converted on the
+                // way in, and what is drawn is converted back on the way out.
+                DrawingUnits units = DrawingUnits.Resolve(JsonArgs.OptionalString(input, "drawing_units", "") ?? c.DrawingUnits, _host.GetDrawingInfo().Units);
+                Point2? plotAt = JsonArgs.OptionalPoint(input, "plot_at", "") is Point2 corner ? units.ToModel(corner) : (Point2?)null;
                 TurnPathLayers layers = c.Layers.Clone();
                 ApplyLayers(input, layers);
                 var warnings = new List<string>();
                 var drafted = new List<DraftedEntity>();
                 var report = new Dictionary<string, object?> { ["vehicle"] = vehicle.Name, ["mode"] = mode, ["ground_clearance"] = clearance ?? vehicle.GroundClearance };
+                if (!units.IsMetres)
+                {
+                    report["drawing_units"] = $"{units.Name}: points here are in drawing units; chainages, levels and gaps are in metres";
+                }
+
 
                 switch (mode)
                 {
@@ -131,7 +141,7 @@ namespace CsdBridge.Core.Vehicles
                                 throw new ArgumentException($"{handle} is not a line, arc or polyline in this drawing.");
                             }
 
-                            Path2 plot = Path2.From(curves.Values.First()) ?? throw new ArgumentException("That entity has no curve geometry.");
+                            Path2 plot = Path2.From(units.ToModel(curves.Values.First())) ?? throw new ArgumentException("That entity has no curve geometry.");
                             profile = GroundClearanceChecker.ProfileFromPlot(plot, ve, hs);
                             frame = SectionFrame.OfPlot(ve, hs);
                         }
@@ -194,7 +204,7 @@ namespace CsdBridge.Core.Vehicles
                             throw new ArgumentException("This drawing host has no terrain surfaces. In BricsCAD, make a BricsCAD copy of a CSD surface with Surface Exchange first; or sample along the wheel paths with sample_csd_ground and check the ground_id in section mode.");
                         }
 
-                        Func<IReadOnlyList<Point2>, IReadOnlyList<double?>> sampler = surfaces.Sampler(JsonArgs.OptionalString(input, "surface", ""), out string surfaceName);
+                        Func<IReadOnlyList<Point2>, IReadOnlyList<double?>> sampler = units.ToModel(surfaces.Sampler(JsonArgs.OptionalString(input, "surface", ""), out string surfaceName));
                         bool reverse = JsonArgs.OptionalBool(input, "reverse", "", false);
                         VehiclePoint reference = vehicle.Resolve(reverse ? ReferencePoint.RearAxle : ReferencePoint.FrontAxle, leftTurn: true);
                         Path2 path;
@@ -207,12 +217,12 @@ namespace CsdBridge.Core.Vehicles
                                 throw new ArgumentException($"{handle} is not a line, arc or polyline in this drawing.");
                             }
 
-                            path = TurnPathBuilder.FromCurve(curves.Values.First(), null);
+                            path = TurnPathBuilder.FromCurve(units.ToModel(curves.Values.First()), null);
                         }
                         else
                         {
                             List<JsonElement> items = JsonArgs.RequireArray(input, "points", "", 2, 200);
-                            var pts = items.Select((e, i) => JsonArgs.ReadPoint(e, JsonArgs.Index("points", i))).ToList();
+                            var pts = items.Select((e, i) => units.ToModel(JsonArgs.ReadPoint(e, JsonArgs.Index("points", i)))).ToList();
                             double radius = JsonArgs.OptionalPositive(input, "radius", "") ?? vehicle.RadiusOfPoint(vehicle.MinTurnRadius, reference, left: true);
                             path = TurnPathBuilder.FromPoints(pts, radius, warnings);
                         }
@@ -228,7 +238,7 @@ namespace CsdBridge.Core.Vehicles
                         report["sides"] = r.Sides.Select(s => new
                         {
                             side = s.Name,
-                            worst = s.Worst == null ? null : new { chainage = Math.Round(s.Worst.Chainage, 2), gap_mm = Math.Round(s.Worst.MinGap * 1000), part = s.Worst.Part, at = s.Worst.GapPoint.ToArray() },
+                            worst = s.Worst == null ? null : new { chainage = Math.Round(s.Worst.Chainage, 2), gap_mm = Math.Round(s.Worst.MinGap * 1000), part = s.Worst.Part, at = units.ToDrawing(s.Worst.GapPoint).ToArray() },
                             groundings = s.Groundings.Select(g => new { from = Math.Round(g.From, 2), to = Math.Round(g.To, 2), worst_gap_mm = Math.Round(g.WorstGap * 1000) }).ToList(),
                             positions_checked = s.Samples.Count - s.OffSurfaceCount,
                         }).ToList();
@@ -251,6 +261,7 @@ namespace CsdBridge.Core.Vehicles
 
                 if (drafted.Count > 0)
                 {
+                    drafted = units.ToDrawing(drafted);
                     DrawingInfo info = _host.GetDrawingInfo();
                     List<LayerSpec> missing = TurnPathDrafter.MissingLayers(drafted.Select(d => d.Spec.Layer).Where(l => l != null).Select(l => l!), info.Layers.Select(l => l.Name), c.LayerStyles);
                     if (missing.Count > 0)

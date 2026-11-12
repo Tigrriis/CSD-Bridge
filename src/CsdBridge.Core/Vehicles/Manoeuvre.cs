@@ -84,6 +84,12 @@ namespace CsdBridge.Core.Vehicles
 
         public string? SolvedSummary { get; set; }
 
+        /// <summary>
+        /// Drawing units in a metre when this was drawn (1000 in a millimetre drawing). Everything
+        /// else in the record is in metres: positions are the drawing's divided by this.
+        /// </summary>
+        public double UnitsPerMetre { get; set; } = 1;
+
         public double ClearanceInside { get; set; } = 0.3;
         public double ClearanceOutside { get; set; } = 0.3;
         public TurnPathLayers Layers { get; set; } = new TurnPathLayers();
@@ -197,6 +203,51 @@ namespace CsdBridge.Core.Vehicles
         [JsonIgnore]
         public TurnPathBuilder.DriveTurns TurnsKind =>
             string.Equals(Turns, "corner", StringComparison.OrdinalIgnoreCase) ? TurnPathBuilder.DriveTurns.Corner : TurnPathBuilder.DriveTurns.Arc;
+
+        /// <summary>
+        /// Changes the units the drawing is taken to be in, keeping the manoeuvre where it is in the
+        /// drawing: its positions (in metres) are rescaled to match. The vehicle doesn't change size
+        /// in metres, so a solved manoeuvre has to be solved again.
+        /// </summary>
+        public void SetUnits(double unitsPerMetre)
+        {
+            if (!(unitsPerMetre > 0) || Math.Abs(unitsPerMetre - UnitsPerMetre) <= 1e-12 * unitsPerMetre)
+            {
+                return;
+            }
+
+            double factor = UnitsPerMetre / unitsPerMetre;
+            double[] Times(double[] p) => p.Select(v => v * factor).ToArray();
+            if (Start != null)
+            {
+                Start = Times(Start);
+            }
+
+            foreach (DriveStop stop in Stops)
+            {
+                stop.Point = Times(stop.Point);
+            }
+
+            if (FollowNear != null)
+            {
+                FollowNear = Times(FollowNear);
+            }
+
+            if (Target != null)
+            {
+                Target = Times(Target);
+            }
+
+            if (BlockBase != null)
+            {
+                BlockBase = Times(BlockBase);
+            }
+
+            UnitsPerMetre = unitsPerMetre;
+            Solved = null;
+            SolvedFor = null;
+            SolvedSummary = null;
+        }
 
         /// <summary>
         /// Moves the geometry: rotate by <paramref name="rotation"/> (radians) about <paramref name="about"/>,

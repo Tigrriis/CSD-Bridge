@@ -49,6 +49,9 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
   travel, stepping along full-lock arcs and straights, finishing with turn-straight-turn paths to the target or
   to a straight run-in to it, and testing every step by sweeping the body's true outline, enlarged by the
   clearance, against the obstruction linework),
+  unit conversion at the edges (`DrawingUnits`: the simulator always works in metres, so points, curves,
+  obstructions and surface levels from a millimetre drawing are scaled on the way in and everything drawn
+  on the way out),
   the saved manoeuvre record that `AITURNEDIT` regenerates from, and the Appendix C ground clearance check (`check_ground_clearance`) on a long
   section or along each side of the car on a surface. It has no CAD dependency, so the same code serves
   the `AITURN`/`AICLEARANCE` commands, Claude's tools and the tests.

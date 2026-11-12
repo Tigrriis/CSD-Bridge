@@ -48,6 +48,11 @@ namespace CsdBridge.BricsCAD
         public double ClearanceOutside { get; set; } = 0.3;
         public TurnPathStyle Style { get; set; } = new TurnPathStyle();
         public TurnPathConventions Conventions { get; set; } = TurnPathConventions.Default();
+
+        /// <summary>What the drawing is drawn in, and the setting that gave it (auto, m or mm).</summary>
+        public DrawingUnits Units { get; set; } = DrawingUnits.Metres;
+
+        public string UnitsSetting { get; set; } = "auto";
     }
 
     /// <summary>
@@ -60,6 +65,10 @@ namespace CsdBridge.BricsCAD
         private readonly TurnPathConventions _conventions;
         private readonly string _savePath;
         private readonly ComboBox _vehicle;
+        private readonly ComboBox _units;
+        private readonly Label _unitsNote;
+        private readonly DrawingUnits _drawingSays;
+        private readonly double? _drawingExtent;
         private readonly Label _vehicleInfo;
         private readonly RadioButton _modeTemplate;
         private readonly RadioButton _modeFollow;
@@ -96,11 +105,16 @@ namespace CsdBridge.BricsCAD
         private readonly Label _status;
         private string _lastVehicle = "";
 
+        /// <param name="insunits">The drawing's INSUNITS, by name ("Millimeters", "Meters", "Undefined"...).</param>
+        /// <param name="drawingExtent">How big the drawing is (the larger of its width and height, in drawing units), if known.</param>
         /// <param name="editing">A saved turning path to change: its settings fill the dialog and its manoeuvre can't be switched.</param>
-        public TurnPathDialog(TurnPathConventions conventions, string savePath, ManoeuvreRecord? editing = null, TurnPathChoice.ManoeuvreMode? startIn = null)
+        public TurnPathDialog(TurnPathConventions conventions, string savePath, string? insunits, double? drawingExtent, ManoeuvreRecord? editing = null, TurnPathChoice.ManoeuvreMode? startIn = null)
         {
             _conventions = conventions;
             _savePath = savePath;
+            _drawingExtent = drawingExtent;
+            DrawingUnits? known = DrawingUnits.FromInsunits(insunits);
+            _drawingSays = known ?? DrawingUnits.Metres;
             _editing = editing != null;
 
             Text = _editing ? "CSD-Bridge - Edit vehicle turning path" : "CSD-Bridge - Vehicle turning path (AS/NZS 2890.1)";
@@ -129,9 +143,14 @@ namespace CsdBridge.BricsCAD
             }
 
             vehicleRow.Controls.Add(_vehicle, 1, 0);
+            vehicleRow.Controls.Add(Caption("Drawing units"), 0, 1);
+            _units = UnitsBox(known);
+            vehicleRow.Controls.Add(_units, 1, 1);
             left.Controls.Add(vehicleRow);
             _vehicleInfo = Note("", LeftWidth);
             left.Controls.Add(_vehicleInfo);
+            _unitsNote = Note("", LeftWidth);
+            left.Controls.Add(_unitsNote);
 
             TableLayoutPanel manoeuvre = Table(3);
             _modeTemplate = new RadioButton { Text = "Standard turn template: pick the start point and direction", AutoSize = true, Checked = true };
@@ -286,6 +305,7 @@ namespace CsdBridge.BricsCAD
             Controls.Add(root);
 
             _vehicle.SelectedIndexChanged += (s, e) => OnVehicleChanged();
+            _units.SelectedIndexChanged += (s, e) => OnUnitsChanged();
             foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints, _modeSolve })
             {
                 rb.CheckedChanged += (s, e) =>
@@ -300,9 +320,20 @@ namespace CsdBridge.BricsCAD
             _drawSwept.CheckedChanged += (s, e) => _closedOutline.Enabled = _drawSwept.Checked;
             FormClosing += (s, e) =>
             {
-                if (DialogResult == DialogResult.OK && !TryBuildChoice(out _, out string? problem))
+                if (DialogResult != DialogResult.OK)
+                {
+                    return;
+                }
+
+                if (!TryBuildChoice(out _, out string? problem))
                 {
                     MessageBox.Show(this, problem, "Turning path", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    e.Cancel = true;
+                }
+                else if (SelectedUnits.Doubt(_drawingExtent) is string doubt
+                    && MessageBox.Show(this, doubt + "\n\nCarry on in " + SelectedUnits.Name + "?", "Drawing units", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                {
+                    // The wrong units would draw the vehicle a thousand times too big or too small.
                     e.Cancel = true;
                 }
             };
@@ -316,6 +347,8 @@ namespace CsdBridge.BricsCAD
             {
                 _modeSolve.Checked = true;
             }
+
+            OnUnitsChanged();
         }
 
         /// <summary>Fills the dialog from a saved turning path.</summary>
@@ -326,6 +359,11 @@ namespace CsdBridge.BricsCAD
             {
                 _vehicle.SelectedIndex = index;
             }
+
+            // The units it was drawn with: "Automatic" when that is still what the drawing says.
+            DrawingUnits drawnIn = DrawingUnits.Of(r.UnitsPerMetre);
+            _units.SelectedIndex = Math.Abs(drawnIn.PerMetre - _drawingSays.PerMetre) <= 1e-9 * drawnIn.PerMetre ? 0
+                : drawnIn.IsMetres ? 1 : Math.Abs(drawnIn.PerMetre - 1000) < 1e-6 ? 2 : 0;
 
             string mode = (r.Mode ?? "").ToLowerInvariant();
             _modeTemplate.Checked = mode == "template";
@@ -454,6 +492,29 @@ namespace CsdBridge.BricsCAD
         private static Label Hint(string text) => new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = SystemColors.GrayText, Margin = new Padding(3, 0, 3, 0) };
 
         /// <summary>A grey note that wraps at the given design width.</summary>
+        /// <summary>The choices for the drawing's units: what the drawing says (or metres when it doesn't), metres, millimetres.</summary>
+        private static ComboBox UnitsBox(DrawingUnits? drawingSays)
+        {
+            var box = new ComboBox { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            box.Items.Add(drawingSays != null ? $"Automatic: {drawingSays.Name} (from the drawing)" : "Automatic: metres (the drawing doesn't say)");
+            box.Items.Add("Metres");
+            box.Items.Add("Millimetres");
+            return box;
+        }
+
+        private static int UnitsIndex(string? setting)
+        {
+            try
+            {
+                string s = DrawingUnits.Setting(setting);
+                return s == "m" ? 1 : s == "mm" ? 2 : 0;
+            }
+            catch (ArgumentException)
+            {
+                return 0;
+            }
+        }
+
         private static Label Note(string text, int width) => new Label
         {
             Text = text,
@@ -504,6 +565,7 @@ namespace CsdBridge.BricsCAD
             _lastVehicle = "";
             OnVehicleChanged();
 
+            _units.SelectedIndex = UnitsIndex(c.DrawingUnits);
             _leadIn.Text = Num(c.LeadIn);
             _leadOut.Text = Num(c.LeadOut);
             _turns.SelectedIndex = c.DriveTurnsMode == TurnPathBuilder.DriveTurns.Corner ? 1 : 0;
@@ -561,6 +623,20 @@ namespace CsdBridge.BricsCAD
             _vehicleInfo.Text = $"{v.Length:0.##} x {v.Width:0.##} m, wheelbase {v.Wheelbase:0.##} m, overhangs {v.FrontOverhang:0.##} / {v.RearOverhang:0.##} m, " +
                                 $"minimum turn radius {v.MinTurnRadius:0.#} m. {v.Description}";
             _lastVehicle = name;
+        }
+
+        private DrawingUnits SelectedUnits =>
+            _units.SelectedIndex == 1 ? DrawingUnits.Metres : _units.SelectedIndex == 2 ? DrawingUnits.Millimetres : _drawingSays;
+
+        /// <summary>Says what the units mean here, or warns when the drawing's size makes them unlikely.</summary>
+        private void OnUnitsChanged()
+        {
+            DrawingUnits units = SelectedUnits;
+            string? doubt = units.Doubt(_drawingExtent);
+            _unitsNote.Text = doubt ?? (units.IsMetres
+                ? "Sizes, radii and clearances here are in metres."
+                : $"Sizes, radii and clearances here stay in metres; the path is drawn in {units.Name}.");
+            _unitsNote.ForeColor = doubt != null ? Color.Firebrick : SystemColors.GrayText;
         }
 
         private void OnModeChanged()
@@ -622,6 +698,8 @@ namespace CsdBridge.BricsCAD
                 CheckConflicts = _checkConflicts.Checked,
                 ObstructionLayers = LayerPattern.Parse(_obstructions.Text),
                 Conventions = _conventions,
+                Units = SelectedUnits,
+                UnitsSetting = _units.SelectedIndex == 1 ? "m" : _units.SelectedIndex == 2 ? "mm" : "auto",
             };
 
             if (c.Mode != TurnPathChoice.ManoeuvreMode.Follow)
@@ -756,6 +834,7 @@ namespace CsdBridge.BricsCAD
             {
                 TurnPathConventions c = _conventions;
                 c.DefaultVehicle = choice.Vehicle.Name;
+                c.DrawingUnits = choice.UnitsSetting;
                 c.LeadIn = choice.LeadIn;
                 c.LeadOut = choice.LeadOut;
                 c.DriveTurns = choice.Turns == TurnPathBuilder.DriveTurns.Corner ? "corner" : "arc";

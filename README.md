@@ -50,8 +50,9 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
   template: a standard turn from a picked start point, a vehicle driven along a line or polyline
   you select (forwards or in reverse), or through points you click. **Solve turn** works a
   multi-point turn out for you: pick where the car starts and where it ends up, and it finds the
-  forward and reverse movements between the kerbs, walls and columns. Layers, clearances, what
-  is drawn and the vehicles themselves are configurable (`turn-paths.json`). Claude has the same
+  forward and reverse movements between the kerbs, walls and columns. It works in drawings in
+  metres or millimetres. Layers, clearances, what is drawn and the vehicles themselves are
+  configurable (`turn-paths.json`). Claude has the same
   simulator as the `draw_turn_path` tool. See [Vehicle turning paths](#vehicle-turning-paths-asnzs-28901) below.
 - **Civil Site Design.** Claude can drive CSD's dialogs from inside BricsCAD (see
   [Civil Site Design](#civil-site-design) below), and design vertical profiles with exact
@@ -64,7 +65,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 232 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 239 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -423,8 +424,20 @@ the car straight and the inner line only gradually tightens, as in the standard'
 path is the boundary of the union of the body over every position: every corner's and side's trace,
 minus whatever another position of the body covers.
 
+**Drawing units.** The tools work in drawings in metres, millimetres or any other unit. The dialogs
+have a **Drawing units** box: *Automatic* reads the drawing's `INSUNITS` (and takes metres when that
+isn't set), or choose *Metres* or *Millimetres* yourself; **Save as defaults** keeps the choice.
+Everything you type stays in metres whatever the drawing: vehicle sizes, radii, clearances, outline
+intervals and the label text height (0.3 is 300 in a millimetre drawing). Points you pick, the kerbs
+and walls on the obstruction layers, a line the vehicle follows and surface levels are read in the
+drawing's units, and the result is drawn at the drawing's scale. If the units look wrong for the
+size of the drawing (a "millimetre" drawing only 300 units across, say) the dialog says so in red
+and asks before carrying on.
+A path remembers the units it was drawn with; changing them in `AITURNEDIT` keeps it where it is and
+redraws the vehicle at the new scale.
+
 **Configuration.** `turn-paths.json` next to the add-in holds the vehicles (add your own with the
-same fields), the default clearances, lead-in/lead-out, text height, what to draw and the layer for
+same fields), the drawing units, the default clearances, lead-in/lead-out, text height, what to draw and the layer for
 each part (`{vehicle}` in a layer name is replaced by the vehicle's name). Layer styles apply only
 when a layer doesn't exist yet. The dialog can change all of it per run; **Save as defaults** writes
 `%APPDATA%\CsdBridge\turn-paths.json`, which is then used instead of the shipped file (or point
@@ -520,7 +533,8 @@ and an underside rising at the 10° approach and departure angles over the overh
 placed with both wheels on the ground and slid along in small steps; it must never fall below the ground.
 
 - **2D, on a plotted long section**: select the plotted profile polyline and give its vertical exaggeration
-  (and horizontal scale if the plot isn't 1 drawing unit per metre). The template is run both ways along the
+  (and its horizontal scale, if it isn't plotted at natural scale: 1 m of chainage drawn 1 m long in the
+  drawing's units). The template is run both ways along the
   section, since the two overhangs differ. One line shows the lowest the underside ever gets along the whole
   section (it must stay above the ground everywhere); the template is drawn at its worst position in each
   direction, the ground it touches is marked, and a label gives the smallest gap (or how far it grounds).
