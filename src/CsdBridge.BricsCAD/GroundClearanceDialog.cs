@@ -39,6 +39,11 @@ namespace CsdBridge.BricsCAD
         public TurnPathLayers Layers { get; set; } = new TurnPathLayers();
         public double? TextHeight { get; set; }
         public TurnPathConventions Conventions { get; set; } = TurnPathConventions.Default();
+
+        /// <summary>What the drawing is drawn in, and the setting that gave it (auto, m or mm).</summary>
+        public DrawingUnits Units { get; set; } = DrawingUnits.Metres;
+
+        public string UnitsSetting { get; set; } = "auto";
     }
 
     /// <summary>Options for the ground clearance check (AS/NZS 2890.1 Appendix C).</summary>
@@ -47,6 +52,10 @@ namespace CsdBridge.BricsCAD
         private readonly TurnPathConventions _conventions;
         private readonly string _savePath;
         private readonly ComboBox _vehicle;
+        private readonly ComboBox _units;
+        private readonly Label _unitsNote;
+        private readonly DrawingUnits _drawingSays;
+        private readonly double? _drawingExtent;
         private readonly Label _vehicleInfo;
         private readonly RadioButton _modeSection;
         private readonly RadioButton _modeSurface;
@@ -71,10 +80,15 @@ namespace CsdBridge.BricsCAD
         private readonly Label _status;
         private string _lastVehicle = "";
 
-        public GroundClearanceDialog(TurnPathConventions conventions, string savePath, IReadOnlyList<string> surfaces)
+        /// <param name="insunits">The drawing's INSUNITS, by name ("Millimeters", "Meters", "Undefined"...).</param>
+        /// <param name="drawingExtent">How big the drawing is (the larger of its width and height, in drawing units), if known.</param>
+        public GroundClearanceDialog(TurnPathConventions conventions, string savePath, IReadOnlyList<string> surfaces, string? insunits, double? drawingExtent)
         {
             _conventions = conventions;
             _savePath = savePath;
+            _drawingExtent = drawingExtent;
+            DrawingUnits? known = DrawingUnits.FromInsunits(insunits);
+            _drawingSays = known ?? DrawingUnits.Metres;
 
             Text = "CSD-Bridge - Ground clearance check (AS/NZS 2890.1 Appendix C)";
             Font = new Font("Segoe UI", 9f);
@@ -100,9 +114,14 @@ namespace CsdBridge.BricsCAD
             }
 
             vehicleRow.Controls.Add(_vehicle, 1, 0);
+            vehicleRow.Controls.Add(Caption("Drawing units"), 0, 1);
+            _units = UnitsBox(known);
+            vehicleRow.Controls.Add(_units, 1, 1);
             left.Controls.Add(vehicleRow);
             _vehicleInfo = Note("", 420);
             left.Controls.Add(_vehicleInfo);
+            _unitsNote = Note("", 420);
+            left.Controls.Add(_unitsNote);
 
             TableLayoutPanel check = Table(3);
             _modeSection = new RadioButton { Text = "2D: slide the template along a plotted long section you select", AutoSize = true, Checked = true };
@@ -118,7 +137,7 @@ namespace CsdBridge.BricsCAD
             _ve = Box(55);
             Row(check, Caption("Section vertical exaggeration"), _ve, Hint("1 = natural scale"));
             _hs = Box(55);
-            Row(check, Caption("Section horizontal scale"), _hs, Hint("drawing units per metre"));
+            Row(check, Caption("Section horizontal scale"), _hs, Hint("1 = natural scale"));
             _both = new CheckBox { Text = "Check both directions of travel", AutoSize = true };
             Row(check, null, _both, null);
             check.SetColumnSpan(_both, 2);
@@ -228,14 +247,26 @@ namespace CsdBridge.BricsCAD
             _modeSurface.CheckedChanged += (s, e) => OnModeChanged();
             FormClosing += (s, e) =>
             {
-                if (DialogResult == DialogResult.OK && !TryBuild(out _, out string? problem))
+                if (DialogResult != DialogResult.OK)
+                {
+                    return;
+                }
+
+                if (!TryBuild(out _, out string? problem))
                 {
                     MessageBox.Show(this, problem, "Ground clearance", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     e.Cancel = true;
                 }
+                else if (SelectedUnits.Doubt(_drawingExtent) is string doubt
+                    && MessageBox.Show(this, doubt + "\n\nCarry on in " + SelectedUnits.Name + "?", "Drawing units", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                {
+                    e.Cancel = true;
+                }
             };
 
+            _units.SelectedIndexChanged += (s, e) => OnUnitsChanged();
             LoadFrom(conventions);
+            OnUnitsChanged();
             if (surfaces.Count == 0)
             {
                 _modeSurface.Enabled = false;
@@ -251,12 +282,27 @@ namespace CsdBridge.BricsCAD
             }
         }
 
+        private DrawingUnits SelectedUnits =>
+            _units.SelectedIndex == 1 ? DrawingUnits.Metres : _units.SelectedIndex == 2 ? DrawingUnits.Millimetres : _drawingSays;
+
+        /// <summary>Says what the units mean here, or warns when the drawing's size makes them unlikely.</summary>
+        private void OnUnitsChanged()
+        {
+            DrawingUnits units = SelectedUnits;
+            string? doubt = units.Doubt(_drawingExtent);
+            _unitsNote.Text = doubt ?? (units.IsMetres
+                ? "Sizes, chainages and levels here are in metres."
+                : $"Sizes, chainages and levels here stay in metres; the drawing is read and drawn on in {units.Name}.");
+            _unitsNote.ForeColor = doubt != null ? Color.Firebrick : SystemColors.GrayText;
+        }
+
         private void LoadFrom(TurnPathConventions c)
         {
             int index = _vehicle.Items.IndexOf(c.DefaultVehicle);
             _vehicle.SelectedIndex = index >= 0 ? index : 0;
             _lastVehicle = "";
             OnVehicleChanged();
+            _units.SelectedIndex = UnitsIndex(c.DrawingUnits);
             _ve.Text = Num(c.SectionVerticalExaggeration);
             _hs.Text = "1";
             _both.Checked = true;
@@ -405,6 +451,8 @@ namespace CsdBridge.BricsCAD
                 Layers = layers,
                 TextHeight = textHeight,
                 Conventions = _conventions,
+                Units = SelectedUnits,
+                UnitsSetting = _units.SelectedIndex == 1 ? "m" : _units.SelectedIndex == 2 ? "mm" : "auto",
             };
             return true;
         }
@@ -427,6 +475,7 @@ namespace CsdBridge.BricsCAD
                     stored.DepartureAngleDeg = c.Vehicle.DepartureAngleDeg;
                 }
 
+                conv.DrawingUnits = c.UnitsSetting;
                 conv.ClearanceStep = c.Step;
                 conv.ClearancePoseInterval = c.PoseInterval;
                 conv.SectionVerticalExaggeration = c.VerticalExaggeration;
@@ -495,6 +544,29 @@ namespace CsdBridge.BricsCAD
         private static Label Caption(string text) => new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 0, 8, 0) };
 
         private static Label Hint(string text) => new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = SystemColors.GrayText, Margin = new Padding(3, 0, 3, 0) };
+
+        /// <summary>The choices for the drawing's units: what the drawing says (or metres when it doesn't), metres, millimetres.</summary>
+        private static ComboBox UnitsBox(DrawingUnits? drawingSays)
+        {
+            var box = new ComboBox { Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left };
+            box.Items.Add(drawingSays != null ? $"Automatic: {drawingSays.Name} (from the drawing)" : "Automatic: metres (the drawing doesn't say)");
+            box.Items.Add("Metres");
+            box.Items.Add("Millimetres");
+            return box;
+        }
+
+        private static int UnitsIndex(string? setting)
+        {
+            try
+            {
+                string s = DrawingUnits.Setting(setting);
+                return s == "m" ? 1 : s == "mm" ? 2 : 0;
+            }
+            catch (ArgumentException)
+            {
+                return 0;
+            }
+        }
 
         private static Label Note(string text, int width) => new Label { Text = text, AutoSize = true, MaximumSize = new Size(width, 0), ForeColor = SystemColors.GrayText, Anchor = AnchorStyles.Left, Margin = new Padding(3, 2, 3, 6) };
 

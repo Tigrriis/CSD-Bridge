@@ -45,7 +45,7 @@ namespace CsdBridge.BricsCAD
             }
 
             GroundClearanceChoice choice;
-            using (var dialog = new GroundClearanceDialog(conventions, savePath, surfaces))
+            using (var dialog = new GroundClearanceDialog(conventions, savePath, surfaces, doc.Database.Insunits.ToString(), TurnPathCommand.DrawingExtent(doc)))
             {
                 if (dialog.ShowDialog() != DialogResult.OK)
                 {
@@ -110,7 +110,8 @@ namespace CsdBridge.BricsCAD
                         host.EnsureLayers(missing);
                     }
 
-                    ok = host.CreateEntities(drafted.Select(d => d.Spec).ToList()).Count(x => x.Ok);
+                    // The check works in metres: what it draws goes back into the drawing's units.
+                    ok = host.CreateEntities(choice.Units.ToDrawing(drafted).Select(d => d.Spec).ToList()).Count(x => x.Ok);
                 }
 
                 ed.WriteMessage($"\nCSD-Bridge: {summary}" + (ok > 0 ? $" Drew {ok} entities." : "") + "\n");
@@ -146,7 +147,7 @@ namespace CsdBridge.BricsCAD
                 throw new ArgumentException("That entity's geometry can't be read as a 2D curve.");
             }
 
-            Path2 plot = Path2.From(curves.Values.First()) ?? throw new ArgumentException("That entity has no curve geometry.");
+            Path2 plot = Path2.From(c.Units.ToModel(curves.Values.First())) ?? throw new ArgumentException("That entity has no curve geometry.");
             GroundProfile profile = GroundClearanceChecker.ProfileFromPlot(plot, c.VerticalExaggeration, c.HorizontalScale);
             GroundClearanceResult r = GroundClearanceChecker.CheckProfile(profile, c.Vehicle, c.Step, c.BothDirections, c.GroundClearance);
             if (c.DrawTemplates || c.DrawGroundings || c.DrawLabels || c.DrawEnvelope)
@@ -174,7 +175,8 @@ namespace CsdBridge.BricsCAD
                 throw new ArgumentException("That entity's geometry can't be read as a 2D curve.");
             }
 
-            Path2 path = TurnPathBuilder.FromCurve(curves.Values.First(), TurnPathCommand.Wcs(ed, res.PickedPoint));
+            DrawingUnits units = c.Units;
+            Path2 path = TurnPathBuilder.FromCurve(units.ToModel(curves.Values.First()), units.ToModel(TurnPathCommand.Wcs(ed, res.PickedPoint)));
             DesignVehicle v = c.Vehicle;
             var req = new TurnPathRequest
             {
@@ -187,7 +189,7 @@ namespace CsdBridge.BricsCAD
             };
             TurnPathResult driven = TurnPathSimulator.Simulate(req);
 
-            Func<IReadOnlyList<Point2>, IReadOnlyList<double?>> sampler = host.Sampler(c.Surface, out string surfaceName);
+            Func<IReadOnlyList<Point2>, IReadOnlyList<double?>> sampler = units.ToModel(host.Sampler(c.Surface, out string surfaceName));
             ed.WriteMessage($"\nChecking against surface '{surfaceName}'...");
             PathClearanceResult r = GroundClearanceChecker.CheckAlongPath(driven, sampler, c.PoseInterval, c.GroundClearance);
 
@@ -201,7 +203,7 @@ namespace CsdBridge.BricsCAD
                 PromptPointResult at = ed.GetPoint(new PromptPointOptions("\nBottom-left corner for the wheel path long section plots: "));
                 if (at.Status == PromptStatus.OK)
                 {
-                    drafted.AddRange(GroundClearanceDrafter.DrawSectionPlots(r, TurnPathCommand.Wcs(ed, at.Value), c.PlotVerticalExaggeration, c.Layers, c.TextHeight, c.DrawEnvelope));
+                    drafted.AddRange(GroundClearanceDrafter.DrawSectionPlots(r, units.ToModel(TurnPathCommand.Wcs(ed, at.Value)), c.PlotVerticalExaggeration, c.Layers, c.TextHeight, c.DrawEnvelope));
                 }
             }
 

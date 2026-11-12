@@ -43,7 +43,10 @@ namespace CsdBridge.Core.Vehicles
                     "and heading at the start (start, heading_deg) and at the end (target, target_heading_deg) and the obstruction_layers that " +
                     "bound the space, and it finds the forward and reverse movements between them (a three-point turn, a reverse into a " +
                     "bay), keeping clearance_inside (default 300 mm) to everything on those layers, and reports how many movements it took " +
-                    "and whether the clearance had to be reduced. The reference point that follows the path is the " +
+                    "and whether the clearance had to be reduced. Points (start, points, target) are in the drawing's units; radii, " +
+                    "clearances and every other length are metres whatever the drawing is drawn in, and a millimetre drawing is handled " +
+                    "from its INSUNITS (pass drawing_units when that is unset or wrong: the result says which units it used). " +
+                    "The reference point that follows the path is the " +
                     "outer front wheel for templates and the front axle centre otherwise (rear axle when reversing); the rear axle tracks " +
                     "in behind it. Returns " +
                     "the tightest radius used and whether it meets the vehicle's minimum, the net turn, the handles drawn by part and the " +
@@ -77,6 +80,7 @@ namespace CsdBridge.Core.Vehicles
                     "\"arrival_headings_deg\":{\"type\":\"array\",\"items\":{\"type\":[\"number\",\"null\"]},\"description\":\"Points: the direction the vehicle faces on arriving at each destination (one entry per point after the first; null = free). With a heading the leg is turn, straight, turn.\"}," +
                     "\"obstruction_layers\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Check for conflicts with linework on these layers (kerbs, walls, columns; * wildcards, xref layers match by the part after |). Reports where the body hits and where the clearance is encroached, and marks them. Solve: the linework the vehicle must manoeuvre between (required).\"}," +
                     "\"block_name\":{\"type\":\"string\",\"description\":\"Name for the block (default '<vehicle> turning path'; a number is added if taken).\"}," +
+                    "\"drawing_units\":{\"type\":\"string\",\"enum\":[\"auto\",\"m\",\"mm\"],\"description\":\"What the drawing is drawn in. Default auto: its INSUNITS, or metres when that isn't set.\"}," +
                     "\"dry_run\":{\"type\":\"boolean\"}" +
                     "},\"required\":[\"mode\"]}"),
             };
@@ -121,6 +125,10 @@ namespace CsdBridge.Core.Vehicles
                 TurnPathConventions c = _conventions;
                 DesignVehicle vehicle = c.Vehicle(JsonArgs.OptionalString(input, "vehicle", ""));
                 string mode = JsonArgs.RequireString(input, "mode", "").Trim().ToLowerInvariant();
+
+                // The simulator works in metres: points from the drawing are converted on the way in,
+                // and what is drawn and reported is converted back on the way out.
+                DrawingUnits units = DrawingUnits.Resolve(JsonArgs.OptionalString(input, "drawing_units", "") ?? c.DrawingUnits, _host.GetDrawingInfo().Units);
                 bool reverse = JsonArgs.OptionalBool(input, "reverse", "", false);
                 bool dryRun = JsonArgs.OptionalBool(input, "dry_run", "", false);
                 var warnings = new List<string>();
@@ -154,7 +162,7 @@ namespace CsdBridge.Core.Vehicles
                         var t = new TurnTemplate
                         {
                             Vehicle = vehicle,
-                            Start = JsonArgs.RequirePoint(input, "start", ""),
+                            Start = units.ToModel(JsonArgs.RequirePoint(input, "start", "")),
                             Heading = JsonArgs.RequireNumber(input, "heading_deg", "") * Math.PI / 180,
                             Radius = JsonArgs.OptionalPositive(input, "radius", ""),
                             TurnAngleDeg = JsonArgs.OptionalPositive(input, "turn_angle_deg", "") ?? 90,
@@ -189,7 +197,8 @@ namespace CsdBridge.Core.Vehicles
                             throw new ArgumentException($"{handle} is not a line, arc, circle or polyline in this drawing.");
                         }
 
-                        Path2 path = TurnPathBuilder.FromCurve(curves.Values.First(), JsonArgs.OptionalPoint(input, "start", ""));
+                        Point2? near = JsonArgs.OptionalPoint(input, "start", "") is Point2 from ? units.ToModel(from) : (Point2?)null;
+                        Path2 path = TurnPathBuilder.FromCurve(units.ToModel(curves.Values.First()), near);
                         ReferencePoint rp = reference ?? (reverse ? ReferencePoint.RearAxle : ReferencePoint.FrontAxle);
                         req = new TurnPathRequest { Vehicle = vehicle, Path = path, Reference = vehicle.Resolve(rp, leftTurn: true), Reverse = reverse };
                         label = vehicle.Name;
@@ -202,7 +211,7 @@ namespace CsdBridge.Core.Vehicles
                         // points[1]); every later point is a destination the vehicle turns and drives to, forwards
                         // or in reverse. Each leg is a request of its own.
                         List<JsonElement> items = JsonArgs.RequireArray(input, "points", "", 2, 200);
-                        var pts = items.Select((e, i) => JsonArgs.ReadPoint(e, JsonArgs.Index("points", i))).ToList();
+                        var pts = items.Select((e, i) => units.ToModel(JsonArgs.ReadPoint(e, JsonArgs.Index("points", i)))).ToList();
                         double? headingDeg = JsonArgs.OptionalNumber(input, "heading_deg", "");
                         double heading = headingDeg is double hd ? hd * Math.PI / 180 : Math.Atan2(pts[1].Y - pts[0].Y, pts[1].X - pts[0].X);
                         double radius = JsonArgs.OptionalPositive(input, "radius", "") ?? vehicle.MinTurnRadius;
@@ -282,9 +291,10 @@ namespace CsdBridge.Core.Vehicles
                         {
                             Vehicle = vehicle.Name,
                             Mode = "solve",
-                            Start = JsonArgs.RequirePoint(input, "start", "").ToArray(),
+                            UnitsPerMetre = units.PerMetre,
+                            Start = units.ToModel(JsonArgs.RequirePoint(input, "start", "")).ToArray(),
                             HeadingDeg = JsonArgs.RequireNumber(input, "heading_deg", ""),
-                            Target = JsonArgs.RequirePoint(input, "target", "").ToArray(),
+                            Target = units.ToModel(JsonArgs.RequirePoint(input, "target", "")).ToArray(),
                             TargetHeadingDeg = JsonArgs.RequireNumber(input, "target_heading_deg", ""),
                             Radius = JsonArgs.OptionalPositive(input, "radius", "") ?? vehicle.MinTurnRadius,
                             ClearanceInside = solveClearance,
@@ -301,7 +311,7 @@ namespace CsdBridge.Core.Vehicles
                         ApplyLayers(input, ownLayers);
                         List<string> exclude = ManoeuvrePlanner.OwnLayers(new ManoeuvreRecord { Layers = ownLayers }, c);
                         List<string> layers = solveLayers;
-                        solved = ManoeuvrePlanner.Solve(record, c, (min, max) => space.Obstructions(layers, min, max, exclude));
+                        solved = ManoeuvrePlanner.Solve(record, c, (min, max) => units.ToModel(space.Obstructions(layers, units.ToDrawing(min), units.ToDrawing(max), exclude)));
                         if (!solved.Solved)
                         {
                             throw new ArgumentException($"{solved.Summary()} {solved.ObstructionsUsed} object(s) on the obstruction layers were in range. " +
@@ -361,6 +371,7 @@ namespace CsdBridge.Core.Vehicles
                 {
                     ["vehicle"] = vehicle.Name,
                     ["mode"] = mode,
+                    ["drawing_units"] = units.IsMetres ? "metres" : $"{units.Name}: points and extents here are in drawing units; lengths, radii and clearances are in metres",
                     ["reference_point"] = $"({JsonArgs.Fmt(req.Reference.X)}, {JsonArgs.Fmt(req.Reference.Y)}) in the vehicle frame (x forward from the rear axle, y left)",
                     ["reverse"] = reverse,
                     ["path_length"] = Math.Round(result.PathLength, 3),
@@ -371,10 +382,10 @@ namespace CsdBridge.Core.Vehicles
                     ["min_turn_radius"] = vehicle.MinTurnRadius,
                     ["within_minimum_radius"] = result.WithinMinimumRadius,
                     ["clearances"] = new { left = result.ClearanceLeft, right = result.ClearanceRight },
-                    ["start"] = Pose(result.Poses[0]),
-                    ["end"] = Pose(results[results.Count - 1].Poses[results[results.Count - 1].Poses.Count - 1]),
+                    ["start"] = Pose(result.Poses[0], units),
+                    ["end"] = Pose(results[results.Count - 1].Poses[results[results.Count - 1].Poses.Count - 1], units),
                     ["legs"] = legNotes.Count > 0 ? legNotes : null,
-                    ["extents"] = Extents(result),
+                    ["extents"] = Extents(result, units),
                 };
 
                 ConflictReport? conflicts = null;
@@ -401,7 +412,7 @@ namespace CsdBridge.Core.Vehicles
                     {
                         var (min, max) = ConflictChecker.Window(results);
                         var own = new ManoeuvreRecord { Layers = style.Layers };
-                        conflicts = ConflictChecker.Check(results, source.Obstructions(obstructionLayers, min, max, ManoeuvrePlanner.OwnLayers(own, c)));
+                        conflicts = ConflictChecker.Check(results, units.ToModel(source.Obstructions(obstructionLayers, units.ToDrawing(min), units.ToDrawing(max), ManoeuvrePlanner.OwnLayers(own, c))));
                         report["conflicts"] = new
                         {
                             summary = conflicts.Summary(),
@@ -417,7 +428,7 @@ namespace CsdBridge.Core.Vehicles
                                 depth_mm = k.BodyHit ? (object)Math.Round(k.Depth * 1000) : null,
                                 gap_mm = k.BodyHit ? null : (object)Math.Round(k.Gap * 1000),
                                 required_mm = Math.Round(k.Required * 1000),
-                                at = k.At.ToArray(),
+                                at = units.ToDrawing(k.At).ToArray(),
                             }).ToList(),
                         };
                     }
@@ -455,6 +466,7 @@ namespace CsdBridge.Core.Vehicles
                         drafted.AddRange(TurnPathDrafter.Draw(results[i], legStyle));
                     }
 
+                    drafted = units.ToDrawing(drafted);
                     DrawingInfo info = _host.GetDrawingInfo();
                     List<LayerSpec> missing = TurnPathDrafter.MissingLayers(
                         drafted.Select(d => d.Spec.Layer).Where(l => l != null).Select(l => l!),
@@ -498,7 +510,7 @@ namespace CsdBridge.Core.Vehicles
                         else if (all.Count > 0)
                         {
                             string name = JsonArgs.OptionalString(input, "block_name", "") ?? $"{vehicle.Name} turning path";
-                            BlockResult block = maker.MakeBlock(all, name, result.Poses[0].RearAxle, style.Layers.Resolve(vehicle.Name).Block);
+                            BlockResult block = maker.MakeBlock(all, name, units.ToDrawing(result.Poses[0].RearAxle), style.Layers.Resolve(vehicle.Name).Block);
                             report["block"] = new { name = block.BlockName, handle = block.Handle, entities = block.EntityCount };
                         }
                     }
@@ -576,13 +588,13 @@ namespace CsdBridge.Core.Vehicles
             }
         }
 
-        private static object Pose(VehiclePose p) => new
+        private static object Pose(VehiclePose p, DrawingUnits units) => new
         {
-            rear_axle = p.RearAxle.ToArray(),
+            rear_axle = units.ToDrawing(p.RearAxle).ToArray(),
             heading_deg = Math.Round(((p.Heading * 180 / Math.PI) % 360 + 360) % 360, 2),
         };
 
-        private static object Extents(TurnPathResult r)
+        private static object Extents(TurnPathResult r, DrawingUnits units)
         {
             double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
             foreach (Point2 p in r.LeftClearance.Concat(r.RightClearance).Concat(r.LeftBody).Concat(r.RightBody))
@@ -593,7 +605,8 @@ namespace CsdBridge.Core.Vehicles
                 maxY = Math.Max(maxY, p.Y);
             }
 
-            return new { min = new[] { Math.Round(minX, 3), Math.Round(minY, 3) }, max = new[] { Math.Round(maxX, 3), Math.Round(maxY, 3) } };
+            double k = units.PerMetre;
+            return new { min = new[] { Math.Round(minX * k, 3), Math.Round(minY * k, 3) }, max = new[] { Math.Round(maxX * k, 3), Math.Round(maxY * k, 3) } };
         }
     }
 }

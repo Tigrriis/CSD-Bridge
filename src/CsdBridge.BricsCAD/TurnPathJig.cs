@@ -16,10 +16,12 @@ namespace CsdBridge.BricsCAD
     /// that point would give is simulated (at a coarser step than the final result) and its
     /// swept path, clearance lines, driven path and end vehicle are drawn as temporary graphics,
     /// along with anything already decided (earlier legs of a drive). Points acquired by a jig
-    /// are in world coordinates.
+    /// are in world coordinates, in the drawing's units; the preview works in metres, so the
+    /// cursor is converted on the way in and the graphics on the way out.
     /// </summary>
     internal sealed class TurnPathJig : DrawJig
     {
+        private readonly DrawingUnits _units;
         private readonly Func<Point2, List<EntitySpec>?> _preview;
         private readonly IReadOnlyList<EntitySpec> _fixed;
         private readonly string _message;
@@ -29,22 +31,25 @@ namespace CsdBridge.BricsCAD
         private bool _hasPoint;
         private List<EntitySpec> _live = new List<EntitySpec>();
 
-        /// <param name="preview">Temporary graphics for a cursor position, or null for none.</param>
-        /// <param name="fixedGraphics">Temporary graphics drawn whatever the cursor does (earlier legs).</param>
-        /// <param name="basePoint">World point for the rubber-band line, if any.</param>
-        public TurnPathJig(string message, Point3d? basePoint, IReadOnlyList<string>? keywords, Func<Point2, List<EntitySpec>?> preview, IReadOnlyList<EntitySpec>? fixedGraphics = null)
+        /// <param name="units">The drawing's units.</param>
+        /// <param name="preview">Temporary graphics (in metres) for a cursor position (in metres), or null for none.</param>
+        /// <param name="fixedGraphics">Temporary graphics (in metres) drawn whatever the cursor does (earlier legs).</param>
+        /// <param name="basePoint">World point, in drawing units, for the rubber-band line, if any.</param>
+        public TurnPathJig(DrawingUnits units, string message, Point3d? basePoint, IReadOnlyList<string>? keywords, Func<Point2, List<EntitySpec>?> preview, IReadOnlyList<EntitySpec>? fixedGraphics = null)
         {
+            _units = units;
             _message = message;
             _basePoint = basePoint;
             _keywords = keywords ?? Array.Empty<string>();
             _preview = preview;
-            _fixed = fixedGraphics ?? Array.Empty<EntitySpec>();
+            _fixed = (fixedGraphics ?? Array.Empty<EntitySpec>()).Select(s => units.ToDrawing(s)).ToList();
         }
 
-        /// <summary>The last point the cursor was at (world coordinates).</summary>
+        /// <summary>The last point the cursor was at (world coordinates, drawing units).</summary>
         public Point3d Point => _current;
 
-        public Point2 Point2 => new Point2(_current.X, _current.Y);
+        /// <summary>The last point the cursor was at, in metres.</summary>
+        public Point2 Point2 => _units.ToModel(new Point2(_current.X, _current.Y));
 
         protected override SamplerStatus Sampler(JigPrompts prompts)
         {
@@ -79,7 +84,7 @@ namespace CsdBridge.BricsCAD
             _hasPoint = true;
             try
             {
-                _live = _preview(Point2) ?? new List<EntitySpec>();
+                _live = (_preview(Point2) ?? new List<EntitySpec>()).Select(s => _units.ToDrawing(s)).ToList();
             }
             catch (Exception)
             {

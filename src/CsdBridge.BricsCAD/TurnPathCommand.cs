@@ -30,7 +30,7 @@ namespace CsdBridge.BricsCAD
             Editor ed = doc.Editor;
             TurnPathConventions conventions = LoadConventions(ed, out string savePath);
             TurnPathChoice choice;
-            using (var dialog = new TurnPathDialog(conventions, savePath, null, startIn))
+            using (var dialog = new TurnPathDialog(conventions, savePath, doc.Database.Insunits.ToString(), DrawingExtent(doc), null, startIn))
             {
                 if (dialog.ShowDialog() != DialogResult.OK)
                 {
@@ -91,7 +91,9 @@ namespace CsdBridge.BricsCAD
                 // A block that was moved or rotated takes its manoeuvre with it.
                 if (block != null && record.BlockBase != null && record.BlockBase.Length >= 2 && record.Mode != "follow")
                 {
-                    double dx = block.X - record.BlockBase[0], dy = block.Y - record.BlockBase[1];
+                    // The record is in metres; the block is where it is in the drawing.
+                    Point2 now = DrawingUnits.Of(record.UnitsPerMetre).ToModel(new Point2(block.X, block.Y));
+                    double dx = now.X - record.BlockBase[0], dy = now.Y - record.BlockBase[1];
                     if (Math.Abs(dx) + Math.Abs(dy) > 1e-6 || Math.Abs(block.Rotation) > 1e-9)
                     {
                         record.Transform(new Point2(record.BlockBase[0], record.BlockBase[1]), block.Rotation, dx, dy);
@@ -108,7 +110,7 @@ namespace CsdBridge.BricsCAD
                 }
 
                 TurnPathChoice choice;
-                using (var dialog = new TurnPathDialog(conventions, savePath, record))
+                using (var dialog = new TurnPathDialog(conventions, savePath, doc.Database.Insunits.ToString(), DrawingExtent(doc), record))
                 {
                     if (dialog.ShowDialog() != DialogResult.OK)
                     {
@@ -213,6 +215,9 @@ namespace CsdBridge.BricsCAD
                 r.Radius = c.Radius;
             }
 
+            // A path told its drawing is in other units than it was drawn with stays where it is in the drawing.
+            r.SetUnits(c.Units.PerMetre);
+
             r.TurnAngles = c.TurnAngles.ToList();
             r.Left = c.Left;
             r.LeadIn = c.LeadIn;
@@ -242,12 +247,13 @@ namespace CsdBridge.BricsCAD
         private static bool PromptGeometry(Editor ed, ManoeuvreRecord r, TurnPathChoice c, bool continueDrive)
         {
             DesignVehicle v = c.Vehicle;
+            DrawingUnits units = DrawingUnits.Of(r.UnitsPerMetre);
             var preview = new PreviewBuilder();
             switch (r.Mode)
             {
                 case "template":
                 {
-                    if (!PickStartAndHeading(ed, "\nStart point (centre of the rear axle of the parked vehicle): ", out Point2 s, out double heading,
+                    if (!PickStartAndHeading(ed, units, "\nStart point (centre of the rear axle of the parked vehicle): ", out Point2 s, out double heading,
                         (at, cursor) => preview.Specs(TurnPathBuilder.Template(new TurnTemplate
                         {
                             Vehicle = v,
@@ -280,7 +286,7 @@ namespace CsdBridge.BricsCAD
                         return false;
                     }
 
-                    Point2 near = Wcs(ed, res.PickedPoint);
+                    Point2 near = units.ToModel(Wcs(ed, res.PickedPoint));
                     r.FollowHandle = res.ObjectId.Handle.ToString();
                     r.FollowNear = new[] { near.X, near.Y };
                     return true;
@@ -292,14 +298,14 @@ namespace CsdBridge.BricsCAD
                 case "solve":
                 {
                     List<EntitySpec>? Parked(Point2 at, Point2 cursor) => PreviewBuilder.Vehicle(v, new VehiclePose(at, Math.Atan2(cursor.Y - at.Y, cursor.X - at.X)));
-                    if (!PickStartAndHeading(ed, "\nStart position (centre of the rear axle of the vehicle): ", out Point2 from, out double facing, Parked))
+                    if (!PickStartAndHeading(ed, units, "\nStart position (centre of the rear axle of the vehicle): ", out Point2 from, out double facing, Parked))
                     {
                         return false;
                     }
 
                     // The vehicle at the start stays on screen while the target is placed.
                     List<EntitySpec> atStart = PreviewBuilder.Vehicle(v, new VehiclePose(from, facing));
-                    if (!PickStartAndHeading(ed, "\nTarget position (centre of the rear axle where the vehicle ends up): ", out Point2 to, out double arriving, Parked,
+                    if (!PickStartAndHeading(ed, units, "\nTarget position (centre of the rear axle where the vehicle ends up): ", out Point2 to, out double arriving, Parked,
                         "\nDirection the vehicle faces at the target (pick a point ahead of it): ", atStart))
                     {
                         return false;
@@ -327,6 +333,7 @@ namespace CsdBridge.BricsCAD
         private static bool Drive(Editor ed, ManoeuvreRecord r, TurnPathChoice c, PreviewBuilder preview, bool continueDrive)
         {
             DesignVehicle v = c.Vehicle;
+            DrawingUnits units = DrawingUnits.Of(r.UnitsPerMetre);
             TurnPathConventions conv = c.Conventions;
             var legs = new List<(DriveStop Stop, VehiclePose End, List<EntitySpec> Graphics)>();
             if (continueDrive)
@@ -341,7 +348,7 @@ namespace CsdBridge.BricsCAD
             }
             else
             {
-                if (!PickStartAndHeading(ed, "\nStart point (centre of the rear axle of the vehicle): ", out Point2 start, out double heading,
+                if (!PickStartAndHeading(ed, units, "\nStart point (centre of the rear axle of the vehicle): ", out Point2 start, out double heading,
                     (at, cursor) => PreviewBuilder.Vehicle(v, new VehiclePose(at, Math.Atan2(cursor.Y - at.Y, cursor.X - at.X)))))
                 {
                     return false;
@@ -364,7 +371,8 @@ namespace CsdBridge.BricsCAD
                 string prompt = legs.Count == 0
                     ? "\nWhere the vehicle drives to (ahead = forward, behind = reverse) or [Direction]: "
                     : canUndo ? "\nNext destination or [Undo/Direction] (Enter to finish): " : "\nNext destination or [Direction] (Enter to finish): ";
-                var jig = new TurnPathJig(prompt, new Point3d(from.RearAxle.X, from.RearAxle.Y, 0), canUndo ? new[] { "Undo", "Direction" } : new[] { "Direction" },
+                Point2 fromInDrawing = units.ToDrawing(from.RearAxle);
+                var jig = new TurnPathJig(units, prompt, new Point3d(fromInDrawing.X, fromInDrawing.Y, 0), canUndo ? new[] { "Undo", "Direction" } : new[] { "Direction" },
                     cursor =>
                     {
                         TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(v, from, cursor, r.Radius, null, r.TurnsKind);
@@ -403,7 +411,7 @@ namespace CsdBridge.BricsCAD
                 var stop = new DriveStop { Point = new[] { target.X, target.Y } };
                 if (askHeading)
                 {
-                    var facing = new TurnPathJig("\nDirection the vehicle faces on arrival (pick a point, or Enter to leave it free): ", jig.Point, null,
+                    var facing = new TurnPathJig(units, "\nDirection the vehicle faces on arrival (pick a point, or Enter to leave it free): ", jig.Point, null,
                         cursor =>
                         {
                             if (Distance(target, cursor) < 1e-6)
@@ -457,7 +465,7 @@ namespace CsdBridge.BricsCAD
         }
 
         /// <summary>Start point, then the direction of travel from a second point, with a live preview.</summary>
-        private static bool PickStartAndHeading(Editor ed, string startPrompt, out Point2 start, out double heading, Func<Point2, Point2, List<EntitySpec>?> previewAt,
+        private static bool PickStartAndHeading(Editor ed, DrawingUnits units, string startPrompt, out Point2 start, out double heading, Func<Point2, Point2, List<EntitySpec>?> previewAt,
             string? headingPrompt = null, List<EntitySpec>? fixedGraphics = null)
         {
             start = default;
@@ -468,9 +476,9 @@ namespace CsdBridge.BricsCAD
                 return false;
             }
 
-            Point2 s = Wcs(ed, first.Value);
+            Point2 s = units.ToModel(Wcs(ed, first.Value));
             Point3d startWcs = first.Value.TransformBy(ed.CurrentUserCoordinateSystem);
-            var jig = new TurnPathJig(headingPrompt ?? "\nDirection of travel (pick a point ahead of the vehicle): ", startWcs, null,
+            var jig = new TurnPathJig(units, headingPrompt ?? "\nDirection of travel (pick a point ahead of the vehicle): ", startWcs, null,
                 cursor => Distance(s, cursor) < 1e-6 ? null : previewAt(s, cursor), fixedGraphics);
             PromptResult ahead = ed.Drag(jig);
             if (ahead.Status != PromptStatus.OK)
@@ -539,7 +547,8 @@ namespace CsdBridge.BricsCAD
             var host = new BricsCadDrawingHost(doc);
             ed.WriteMessage($"\nCSD-Bridge: solving the manoeuvre (up to {conv.SolverTimeLimit:0} s)...");
             List<string> own = ManoeuvrePlanner.OwnLayers(r, conv);
-            SolveResult result = ManoeuvrePlanner.Solve(r, conv, (min, max) => host.Obstructions(r.ObstructionLayers, min, max, own));
+            DrawingUnits units = DrawingUnits.Of(r.UnitsPerMetre);
+            SolveResult result = ManoeuvrePlanner.Solve(r, conv, (min, max) => units.ToModel(host.Obstructions(r.ObstructionLayers, units.ToDrawing(min), units.ToDrawing(max), own)));
             ed.WriteMessage($"\n  {result.ObstructionsUsed} object(s) on the obstruction layers in range; {result.Expansions:N0} positions tried in {result.Seconds:0.0} s.");
             if (result.ObstructionsUsed == 0)
             {
@@ -573,7 +582,15 @@ namespace CsdBridge.BricsCAD
         {
             Editor ed = doc.Editor;
             var host = new BricsCadDrawingHost(doc);
-            ManoeuvrePlan plan = ManoeuvrePlanner.Plan(r, conv, handle => host.GetCurves(new[] { handle }).Values.FirstOrDefault());
+
+            // The plan is in metres: what it reads from the drawing is converted on the way in, and
+            // what it draws on the way out.
+            DrawingUnits units = DrawingUnits.Of(r.UnitsPerMetre);
+            ManoeuvrePlan plan = ManoeuvrePlanner.Plan(r, conv, handle =>
+            {
+                EntitySpec? curve = host.GetCurves(new[] { handle }).Values.FirstOrDefault();
+                return curve == null ? null : units.ToModel(curve);
+            });
             DesignVehicle v = plan.Vehicle;
             var warnings = new List<string>(plan.Warnings);
             TurnPathLayers layers = r.Layers.Resolve(v.Name);
@@ -582,7 +599,7 @@ namespace CsdBridge.BricsCAD
             if (r.CheckConflicts && r.ObstructionLayers.Count > 0)
             {
                 var (min, max) = ConflictChecker.Window(plan.Results);
-                conflicts = ConflictChecker.Check(plan.Results, host.Obstructions(r.ObstructionLayers, min, max, ManoeuvrePlanner.OwnLayers(r, conv)));
+                conflicts = ConflictChecker.Check(plan.Results, units.ToModel(host.Obstructions(r.ObstructionLayers, units.ToDrawing(min), units.ToDrawing(max), ManoeuvrePlanner.OwnLayers(r, conv))));
             }
 
             List<DraftedEntity> drafted = ManoeuvrePlanner.Draft(plan, r, conv);
@@ -596,6 +613,8 @@ namespace CsdBridge.BricsCAD
                 ed.WriteMessage("\nCSD-Bridge: nothing to draw (every part is switched off).\n");
                 return;
             }
+
+            drafted = units.ToDrawing(drafted);
 
             if (old != null)
             {
@@ -626,7 +645,7 @@ namespace CsdBridge.BricsCAD
                 try
                 {
                     Point2 basePoint = plan.StartPoint;
-                    BlockResult block = host.MakeBlock(handles, $"{v.Name} turning path", basePoint, layers.Block);
+                    BlockResult block = host.MakeBlock(handles, $"{v.Name} turning path", units.ToDrawing(basePoint), layers.Block);
                     r.BlockName = block.BlockName;
                     r.BlockHandle = block.Handle;
                     r.BlockBase = new[] { basePoint.X, basePoint.Y };
@@ -648,7 +667,8 @@ namespace CsdBridge.BricsCAD
             }
 
             ed.WriteMessage($"\nCSD-Bridge: {(old != null ? "regenerated" : "drew")} the {v.Name} turning path, {handles.Count} entities" +
-                            (missing.Count > 0 ? $" (created layers: {string.Join(", ", missing.Select(m => m.Name))})" : "") + ".");
+                            (missing.Count > 0 ? $" (created layers: {string.Join(", ", missing.Select(m => m.Name))})" : "") +
+                            (units.IsMetres ? "" : $", in a drawing in {units.Name}") + ".");
             if (r.Mode == "solve" && r.SolvedSummary != null)
             {
                 ed.WriteMessage("\n  " + r.SolvedSummary);
@@ -670,7 +690,10 @@ namespace CsdBridge.BricsCAD
                 ed.WriteMessage("\n  " + conflicts.Summary());
                 foreach (Conflict k in conflicts.Conflicts.OrderByDescending(k => k.Shortfall).Take(10))
                 {
-                    ed.WriteMessage($"\n    {(plan.Legs.Count > 1 ? $"Leg {k.Leg}: " : "")}{k.Describe()} at {k.At.X:0.00}, {k.At.Y:0.00}");
+                    // Where it is in the drawing: to the centimetre in metres, to the unit otherwise.
+                    Point2 at = units.ToDrawing(k.At);
+                    string places = units.IsMetres ? "0.00" : "0";
+                    ed.WriteMessage($"\n    {(plan.Legs.Count > 1 ? $"Leg {k.Leg}: " : "")}{k.Describe()} at {at.X.ToString(places)}, {at.Y.ToString(places)}");
                 }
 
                 if (conflicts.Conflicts.Count > 10)
@@ -691,6 +714,28 @@ namespace CsdBridge.BricsCAD
             }
 
             ed.WriteMessage("\n  Change it later with AITURNEDIT.\n");
+        }
+
+        /// <summary>
+        /// How big the drawing is: the larger of the width and height of its extents, in drawing
+        /// units. Null when it has none (an empty drawing). The dialogs use it to question the units.
+        /// </summary>
+        internal static double? DrawingExtent(Document doc)
+        {
+            try
+            {
+                Point3d min = doc.Database.Extmin, max = doc.Database.Extmax;
+                if (min.X > max.X || min.Y > max.Y)
+                {
+                    return null;
+                }
+
+                return Math.Max(max.X - min.X, max.Y - min.Y);
+            }
+            catch (System.Exception)
+            {
+                return null;
+            }
         }
 
         private static double Distance(Point2 a, Point2 b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));

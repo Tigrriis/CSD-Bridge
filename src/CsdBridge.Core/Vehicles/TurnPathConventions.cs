@@ -45,6 +45,12 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Layers holding kerbs, walls, columns and so on; * and ? wildcards; xref layers match by the part after '|'.</summary>
         public List<string> ObstructionLayers { get; set; } = new List<string>();
 
+        /// <summary>
+        /// The units drawings are in: "auto" (what the drawing's INSUNITS says, metres when it doesn't
+        /// say), "m" or "mm". Vehicle sizes, radii, clearances and text heights stay in metres.
+        /// </summary>
+        public string DrawingUnits { get; set; } = "auto";
+
         /// <summary>Solve mode: how long the search for a multi-point turn may take, seconds.</summary>
         public double SolverTimeLimit { get; set; } = 10;
 
@@ -58,7 +64,7 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Draw a vehicle outline every this many metres along the path (0 = only at the start and end).</summary>
         public double OutlineInterval { get; set; }
 
-        /// <summary>Height of the label text in drawing units. Null: the drawing's default text height.</summary>
+        /// <summary>Height of the label text in metres (converted to the drawing's units). Null: the drawing's default text height.</summary>
         public double? TextHeight { get; set; } = 0.3;
 
         /// <summary>Ground clearance check: distance the template is moved along a section each step (m).</summary>
