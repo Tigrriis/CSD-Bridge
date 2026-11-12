@@ -15,23 +15,28 @@
 //   approach/departure_angle  B5: the underside rises at 10 degrees over the overhangs
 // Add your own vehicles (a service vehicle, say) as more entries with the same fields.
 //
-// Trucks: give the real body. effective_* can be left out (a square body sweeps with its real
-// corners). With a group of rear axles, measure wheelbase and overhangs from the centre of the
-// group. min_turn_radius is at the outer front wheel, as for the cars.
+// Trucks (Austroads AP-G34-23, Design Vehicles and Turning Path Templates Guide, Edition 4.0,
+// Figures 2.3, 2.4, 2.7, 2.9 and 2.10): the body is square, so effective_* is left out. With a
+// group of rear axles, wheelbase and overhangs are measured from the centre of the group.
+//   min_turn_radius           the smallest radius the guide publishes a template for, at the outer
+//                             front wheel: 9 m for the service vehicle, 12.5 m for the rest
+//   clearance_inside/outside  0.5 m from the swept path to kerbs, edge lines and objects (3.4.1)
+//   max_articulation_deg      70 degrees between coupled units (3.5)
+//   rear_axles, axle_spacing  the rear axle group, as drawn
+// Not dimensioned in the guide's figures, so scaled from them (they don't move the swept path):
+//   track 2.25 (single tyres 250 mm wide, flush with the body), rear_track / trailer track 1.98
+//   (dual tyres), a prime mover's rear_overhang 1.2 (the back of its drive wheels, under the
+//   trailer) and an A-trailer's rear_overhang 1.85 (the back of its wheels, under the B-trailer).
 //
-// Trailers: a vehicle that tows gets "hitch" (its fifth wheel or tow coupling, metres ahead of
-// its rear axle; negative = behind it) and "trailers", listed front to back. Each trailer has:
-//   length, width      its body
-//   wheelbase          from its coupling (kingpin) back to the centre of its axle group
+// Trailers: a vehicle that tows gets "hitch" (its fifth wheel, metres ahead of the centre of its
+// rear axle group; negative = behind it) and "trailers", listed front to back. Each trailer has:
+//   width
 //   front_overhang     body ahead of the coupling: the kingpin's setback from the trailer's front
-//   hitch              where the next trailer couples on, ahead of this one's axle group (B-double)
-// A vehicle with trailers is driven forwards only. The letters below stand for your own figures:
-//   "MY SEMI": { "length": L, "width": W, "wheelbase": WB, "front_overhang": FO, "rear_overhang": RO,
-//                "track": T, "min_turn_radius": R, "hitch": H,
-//                "trailers": [ { "name": "semi-trailer", "length": TL, "width": TW,
-//                                "wheelbase": S, "front_overhang": K } ] }
-// Only the AS/NZS 2890.1 cars are included here. Enter trucks from the dimension drawings of the
-// guide you design to (Austroads AP-G34, AS 2890.2).
+//   wheelbase          from its coupling (kingpin) back to the centre of its axle group
+//   rear_overhang      from the centre of its axle group to its rear
+//   hitch              where the next trailer couples on, ahead of this one's axle group (B-double: 0)
+//   axles, axle_spacing, track   its axle group, as drawn
+// A vehicle with trailers is driven forwards only.
 //
 // Layers: {vehicle} in a layer name is replaced by the vehicle's name, e.g.
 // "AE CIV PLN - {vehicle} SWEPT PATH". layer_styles apply only when a layer doesn't exist yet;
@@ -80,6 +85,105 @@
       "departure_angle_deg": 10,
       "wheel_length": 0.65,
       "wheel_width": 0.22
+    },
+    "Service 8.8 m": {
+      "description": "Austroads AP-G34-23 Figure 2.3, service vehicle (8.8 m). Templates at 9, 12.5, 15, 20 and 30 m radius.",
+      "length": 8.8,
+      "width": 2.5,
+      "wheelbase": 5.0,
+      "front_overhang": 1.5,
+      "rear_overhang": 2.3,
+      "track": 2.25,
+      "min_turn_radius": 9,
+      "clearance_inside": 0.5,
+      "clearance_outside": 0.5,
+      "wheel_length": 1.05,
+      "wheel_width": 0.25
+    },
+    "Truck 12.5 m": {
+      "description": "Austroads AP-G34-23 Figure 2.4, single unit truck/bus (12.5 m). Templates at 12.5, 15, 20 and 30 m radius.",
+      "length": 12.5,
+      "width": 2.5,
+      "wheelbase": 6.85,
+      "front_overhang": 2.2,
+      "rear_overhang": 3.45,
+      "track": 2.25,
+      "rear_track": 1.98,
+      "rear_axles": 2,
+      "axle_spacing": 1.3,
+      "min_turn_radius": 12.5,
+      "clearance_inside": 0.5,
+      "clearance_outside": 0.5,
+      "wheel_length": 1.05,
+      "wheel_width": 0.25
+    },
+    "Semi 19 m": {
+      "description": "Austroads AP-G34-23 Figure 2.7, prime mover and semi-trailer (19 m). Templates at 12.5, 15, 20 and 30 m radius; 15 m is the usual design radius.",
+      "length": 8.1,
+      "width": 2.5,
+      "wheelbase": 5.3,
+      "front_overhang": 1.6,
+      "rear_overhang": 1.2,
+      "track": 2.25,
+      "rear_track": 1.98,
+      "rear_axles": 2,
+      "axle_spacing": 1.3,
+      "min_turn_radius": 12.5,
+      "clearance_inside": 0.5,
+      "clearance_outside": 0.5,
+      "max_articulation_deg": 70,
+      "wheel_length": 1.05,
+      "wheel_width": 0.25,
+      "hitch": 0.2,
+      "trailers": [
+        { "name": "semi-trailer", "width": 2.5, "front_overhang": 1.4, "wheelbase": 9.5, "rear_overhang": 2.8, "axles": 3, "axle_spacing": 1.3, "track": 1.98 }
+      ]
+    },
+    "B-double 25 m": {
+      "description": "Austroads AP-G34-23 Figure 2.9, B-double (25 m). Templates at 12.5, 15, 20 and 30 m radius.",
+      "length": 6.2,
+      "width": 2.5,
+      "wheelbase": 4.0,
+      "front_overhang": 1.0,
+      "rear_overhang": 1.2,
+      "track": 2.25,
+      "rear_track": 1.98,
+      "rear_axles": 2,
+      "axle_spacing": 1.3,
+      "min_turn_radius": 12.5,
+      "clearance_inside": 0.5,
+      "clearance_outside": 0.5,
+      "max_articulation_deg": 70,
+      "wheel_length": 1.05,
+      "wheel_width": 0.25,
+      "hitch": 0.4,
+      "trailers": [
+        { "name": "A-trailer", "width": 2.5, "front_overhang": 0.9, "wheelbase": 8.1, "rear_overhang": 1.85, "hitch": 0, "axles": 3, "axle_spacing": 1.3, "track": 1.98 },
+        { "name": "B-trailer", "width": 2.5, "front_overhang": 0.2, "wheelbase": 9.4, "rear_overhang": 2.9, "axles": 3, "axle_spacing": 1.3, "track": 1.98 }
+      ]
+    },
+    "B-double 26 m": {
+      "description": "Austroads AP-G34-23 Figure 2.10, B-double (26 m). Templates at 12.5, 15, 20 and 30 m radius.",
+      "length": 7.1,
+      "width": 2.5,
+      "wheelbase": 4.5,
+      "front_overhang": 1.4,
+      "rear_overhang": 1.2,
+      "track": 2.25,
+      "rear_track": 1.98,
+      "rear_axles": 2,
+      "axle_spacing": 1.3,
+      "min_turn_radius": 12.5,
+      "clearance_inside": 0.5,
+      "clearance_outside": 0.5,
+      "max_articulation_deg": 70,
+      "wheel_length": 1.05,
+      "wheel_width": 0.25,
+      "hitch": 0,
+      "trailers": [
+        { "name": "A-trailer", "width": 2.5, "front_overhang": 1.4, "wheelbase": 8.05, "rear_overhang": 1.85, "hitch": 0, "axles": 3, "axle_spacing": 1.3, "track": 1.98 },
+        { "name": "B-trailer", "width": 2.5, "front_overhang": 0.45, "wheelbase": 9.15, "rear_overhang": 2.9, "axles": 3, "axle_spacing": 1.3, "track": 1.98 }
+      ]
     }
   },
   "default_vehicle": "B99",

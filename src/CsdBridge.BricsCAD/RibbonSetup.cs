@@ -107,7 +107,7 @@ namespace CsdBridge.BricsCAD
                 source.Items.Add(stack);
 
                 var vehicles = new RibbonPanelSource { Id = "CSDBRIDGE_VEHICLES", Name = "Vehicles", Title = "Vehicles" };
-                vehicles.Items.Add(Button("Turn path", "AITURN", "Draw an AS/NZS 2890.1 B85 or B99 swept path: a turning template, a vehicle driven along a line you pick, or driven click by click", "turnpath", large: true));
+                vehicles.Items.Add(Button("Turn path", "AITURN", "Draw a design vehicle's swept path (AS/NZS 2890.1 B85 and B99 cars, Austroads trucks, semi-trailer and B-doubles): a turning template, a vehicle driven along a line you pick, or driven click by click", "turnpath", large: true));
                 vehicles.Items.Add(Button("Solve turn", "AITURNSOLVE", "Work out a multi-point turn: pick where a B85 or B99 starts and where it ends up, and the movements between the kerbs, walls and columns on the obstruction layers are found and drawn", "turnsolve", large: true));
                 vehicles.Items.Add(Button("Edit path", "AITURNEDIT", "Change a turning path drawn by Turn path: its vehicle, radius, clearances, layers or geometry, then regenerate it", "turnedit", large: true));
                 vehicles.Items.Add(Button("Clearance", "AICLEARANCE", "Check a B85 or B99 car's ground clearance (AS/NZS 2890.1 Appendix C) along a plotted long section, or on a surface along a path", "clearance", large: true));

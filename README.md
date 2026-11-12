@@ -45,8 +45,9 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
 - Objects you select *before* asking are passed in as context ("dimension these").
 - Conversations are per drawing, so follow-ups work ("make it 300 wider").
 - The whole request is **one UNDO step**. Esc or Stop cancels.
-- **Vehicle turning paths (AS/NZS 2890.1).** **AITURN**, or the **Turn path** ribbon button,
-  simulates a B99 or B85 design vehicle and draws its swept path and the standard's clearance
+- **Vehicle turning paths (AS/NZS 2890.1 and Austroads).** **AITURN**, or the **Turn path** ribbon button,
+  simulates a B99 or B85 car, or an Austroads truck (8.8 m service vehicle, 12.5 m truck, 19 m
+  semi-trailer, 25 m and 26 m B-doubles), and draws its swept path and the standard's clearance
   template: a standard turn from a picked start point, a vehicle driven along a line or polyline
   you select (forwards or in reverse), or through points you click. **Solve turn** works a
   multi-point turn out for you: pick where the car starts and where it ends up, and it finds the
@@ -65,7 +66,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 249 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 254 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -451,23 +452,42 @@ are on C-KERB"*.
 
 ### Trucks and trailers
 
-The simulator isn't limited to cars. Any rigid vehicle can be added to `turn-paths.json` with the same
-fields as the B99 and B85, and a vehicle can tow trailers: a prime mover and semi-trailer, or a B-double.
+The Austroads design vehicles for roads and commercial sites are included, from the dimension drawings of
+the *Design Vehicles and Turning Path Templates Guide* (AP-G34-23, Edition 4.0):
+
+| Vehicle | Guide | Dimensions (m) | Smallest template radius |
+|---|---|---|---|
+| **Service 8.8 m** | Figure 2.3, service vehicle | 2.3 rear overhang, 5.0 wheelbase, 1.5 front overhang | 9 m |
+| **Truck 12.5 m** | Figure 2.4, single unit truck/bus | 3.45, 6.85, 2.2; two rear axles | 12.5 m |
+| **Semi 19 m** | Figure 2.7, prime mover and semi-trailer | prime mover 5.3 wheelbase, 1.6 front overhang, kingpin 0.2 ahead of the drive axles; trailer 1.4 ahead of the kingpin, 9.5 to its axles, 2.8 behind them | 12.5 m |
+| **B-double 25 m** | Figure 2.9 | prime mover 4.0, 1.0, kingpin 0.4 ahead; A-trailer 0.9 and 8.1; B-trailer 0.2, 9.4 and 2.9 | 12.5 m |
+| **B-double 26 m** | Figure 2.10 | prime mover 4.5, 1.4, kingpin over the drive axles; A-trailer 1.4 and 8.05; B-trailer 0.45, 9.15 and 2.9 | 12.5 m |
+
+All are 2.5 m wide. As for the cars, the radius is measured at the outer front wheel, which is how the guide
+measures its templates. They default to 0.5 m clearance on both sides (Section 3.4.1: 0.5 m from the swept
+path to kerbs, edge lines and objects) and a 70° limit on the angle between coupled units (Section 3.5). The
+guide's usual choices (Table 2.3): the 19 m semi-trailer at 15 m radius for arterial and industrial
+intersections, the single unit truck at 12.5 m for collector streets, the service vehicle at 9 m for local
+residential streets, with B-doubles as checking vehicles. A few things the guide's figures don't dimension
+are scaled from them and don't move the swept path: the track widths, and how far a prime mover and an
+A-trailer reach behind their axles under the trailer that sits on them.
+
+Any other vehicle can be added to `turn-paths.json`:
 
 - **Rigid trucks.** Give the real body; the `effective_*` fields can be left out, because a square body
   sweeps with its real corners. With a group of rear axles, measure the wheelbase and overhangs from the
   centre of the group.
-- **Trailers.** Give the towing vehicle a `hitch` (its fifth wheel or tow coupling, in metres ahead of its
-  rear axle) and a list of `trailers`, front to back. Each trailer has its `length` and `width`, its
-  `wheelbase` (coupling to the centre of its axle group), its `front_overhang` (the kingpin's setback from
-  the front of the trailer) and, when another trailer follows, its own `hitch`. The comments at the top of
-  `turn-paths.json` show the layout.
+- **Trailers.** Give the towing vehicle a `hitch` (its fifth wheel, in metres ahead of the centre of its
+  rear axles) and a list of `trailers`, front to back. Each trailer has its `width`, its `front_overhang`
+  (the kingpin's setback from the front of the trailer), its `wheelbase` (kingpin to the centre of its axle
+  group), its `rear_overhang` and, when another trailer follows, its own `hitch`. The comments at the top
+  of `turn-paths.json` show the layout.
 
 A trailer is towed the way a real one is: its axles can't slip sideways, so it is dragged round behind its
 coupling and cuts inside the path of the vehicle ahead. The swept path covers the whole combination: the
 trailer's inner side on the inside of the turn, the prime mover's front corner on the outside. Every unit is
 drawn at the start and end (and along the way, with an outline interval), and the report gives the sharpest
-angle the combination folds to, with a warning if it would jackknife.
+angle the combination folds to, with a warning if it goes past the vehicle's limit.
 
 Limits for a vehicle with trailers:
 
@@ -475,9 +495,11 @@ Limits for a vehicle with trailers:
   behind the vehicle and **Solve** are refused for it.
 - The ground clearance check is for rigid vehicles.
 - Trailer axles are fixed: steerable and self-tracking axles aren't modelled.
+- Turns are tangential, as the guide's templates are: the vehicle arrives straight and the front wheel
+  follows the arc. There is no limit on how fast the steering is wound on.
 
-**No Austroads or AS 2890.2 design vehicle is included yet.** Their dimensions have to be entered from the
-guide's own dimension drawings (Austroads AP-G34, AS 2890.2 Appendix A); they are not guessed here.
+The other vehicles in the guide (the buses, the long semi-trailer and the road trains) and the AS 2890.2
+vehicles aren't included; they can be added the same way from their dimension drawings.
 
 ### Conflicts with kerbs, walls and columns
 

@@ -545,7 +545,8 @@ namespace CsdBridge.Core.Vehicles
             r.LeftClearance = Clean(OffsetChain(r.LeftBody, r.ClearanceLeft, leftSide: forward), tol, maxLoop);
             r.RightClearance = Clean(OffsetChain(r.RightBody, r.ClearanceRight, leftSide: !forward), tol, maxLoop);
 
-            foreach (var (x, y) in new[] { (v.Wheelbase, v.Track / 2), (v.Wheelbase, -v.Track / 2), (0.0, v.Track / 2), (0.0, -v.Track / 2) })
+            // Front wheels, then the rear group (at its centre: where the vehicle pivots), then each trailer's.
+            foreach (var (x, y) in new[] { (v.Wheelbase, v.Track / 2), (v.Wheelbase, -v.Track / 2), (0.0, v.RearTrackWidth / 2), (0.0, -v.RearTrackWidth / 2) })
             {
                 r.WheelPaths.Add(Simplify(r.Poses.Select(p => p.ToWorld(x, y)).ToList(), tol));
             }
@@ -1109,9 +1110,9 @@ namespace CsdBridge.Core.Vehicles
                 r.Warnings.Add($"The manoeuvre needs a {r.TightestRadius:0.00} m turn (outer front wheel), tighter than the {v.Name}'s minimum of {v.MinTurnRadius:0.0} m.");
             }
 
-            if (r.MaxArticulationDeg > 90)
+            if (r.MaxArticulationDeg > v.MaxArticulationDeg + 0.05)
             {
-                r.Warnings.Add($"The trailer folds to {r.MaxArticulationDeg:0} degrees against the unit towing it: the {v.Name} would jackknife.");
+                r.Warnings.Add($"A trailer folds to {r.MaxArticulationDeg:0} degrees against the unit towing it, past the {v.MaxArticulationDeg:0} degree limit for the {v.Name}: it would jackknife. Use a larger radius or a smaller angle of turn.");
             }
         }
     }

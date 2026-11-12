@@ -228,8 +228,12 @@ namespace CsdBridge.Core.Vehicles
                 }
 
                 // Axle centre lines, as on the standard's vehicle drawings.
-                double half = v.Track / 2 + v.WheelWidth / 2;
-                list.Add(new DraftedEntity(group, new LineSpec { Start = pose.ToWorld(0, -half), End = pose.ToWorld(0, half), Layer = layer }));
+                double half = v.Track / 2 + v.WheelWidth / 2, rearHalf = v.RearTrackWidth / 2 + v.WheelWidth / 2;
+                foreach (double axle in v.RearAxlePositions)
+                {
+                    list.Add(new DraftedEntity(group, new LineSpec { Start = pose.ToWorld(axle, -rearHalf), End = pose.ToWorld(axle, rearHalf), Layer = layer }));
+                }
+
                 list.Add(new DraftedEntity(group, new LineSpec { Start = pose.ToWorld(v.Wheelbase, -half), End = pose.ToWorld(v.Wheelbase, half), Layer = layer }));
             }
 
@@ -243,19 +247,23 @@ namespace CsdBridge.Core.Vehicles
                     continue;
                 }
 
-                // The trailer's axle group, and its coupling.
-                double hl = body.WheelLength / 2, hw = body.WheelWidth / 2, half = body.Track / 2 + hw;
-                foreach (double y in new[] { body.Track / 2, -body.Track / 2 })
+                // The trailer's axle group (drawn with the towing vehicle's tyres), and its coupling.
+                double hl = v.WheelLength / 2, hw = v.WheelWidth / 2, half = body.Track / 2 + hw;
+                foreach (double axle in body.RearAxlePositions)
                 {
-                    list.Add(new DraftedEntity(group, new PolylineSpec
+                    foreach (double y in new[] { body.Track / 2, -body.Track / 2 })
                     {
-                        Points = new List<Point2> { at.ToWorld(-hl, y - hw), at.ToWorld(hl, y - hw), at.ToWorld(hl, y + hw), at.ToWorld(-hl, y + hw) },
-                        Closed = true,
-                        Layer = layer,
-                    }));
+                        list.Add(new DraftedEntity(group, new PolylineSpec
+                        {
+                            Points = new List<Point2> { at.ToWorld(axle - hl, y - hw), at.ToWorld(axle + hl, y - hw), at.ToWorld(axle + hl, y + hw), at.ToWorld(axle - hl, y + hw) },
+                            Closed = true,
+                            Layer = layer,
+                        }));
+                    }
+
+                    list.Add(new DraftedEntity(group, new LineSpec { Start = at.ToWorld(axle, -half), End = at.ToWorld(axle, half), Layer = layer }));
                 }
 
-                list.Add(new DraftedEntity(group, new LineSpec { Start = at.ToWorld(0, -half), End = at.ToWorld(0, half), Layer = layer }));
                 list.Add(new DraftedEntity(group, new CircleSpec { Center = at.ToWorld(body.Wheelbase, 0), Radius = 0.1, Layer = layer }));
             }
         }

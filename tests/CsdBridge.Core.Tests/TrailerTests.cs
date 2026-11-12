@@ -42,7 +42,7 @@ namespace CsdBridge.Core.Tests
         {
             DesignVehicle v = PrimeMover();
             v.Name = "TEST SEMI";
-            v.Trailers.Add(new TrailerUnit { Name = "semi-trailer", Length = 13.0, Width = 2.5, Wheelbase = 8.5, FrontOverhang = 1.2 });
+            v.Trailers.Add(new TrailerUnit { Name = "semi-trailer", Width = 2.5, Wheelbase = 8.5, FrontOverhang = 1.2, RearOverhang = 3.3 });
             return v;
         }
 
@@ -51,8 +51,8 @@ namespace CsdBridge.Core.Tests
         {
             DesignVehicle v = PrimeMover();
             v.Name = "TEST B-DOUBLE";
-            v.Trailers.Add(new TrailerUnit { Name = "A trailer", Length = 8.0, Width = 2.5, Wheelbase = 6.0, FrontOverhang = 1.2, Hitch = 0.0 });
-            v.Trailers.Add(new TrailerUnit { Name = "B trailer", Length = 12.0, Width = 2.5, Wheelbase = 8.0, FrontOverhang = 1.2 });
+            v.Trailers.Add(new TrailerUnit { Name = "A trailer", Width = 2.5, Wheelbase = 6.0, FrontOverhang = 1.2, RearOverhang = 0.8, Hitch = 0.0 });
+            v.Trailers.Add(new TrailerUnit { Name = "B trailer", Width = 2.5, Wheelbase = 8.0, FrontOverhang = 1.2, RearOverhang = 2.8 });
             return v;
         }
 
@@ -76,7 +76,7 @@ namespace CsdBridge.Core.Tests
             DesignVehicle semi = Semi();
             Assert.True(semi.IsArticulated);
             Assert.False(PrimeMover().IsArticulated);
-            Assert.Equal(13.0 - 1.2 - 8.5, semi.Trailers[0].RearOverhang, 9);
+            Assert.Equal(1.2 + 8.5 + 3.3, semi.Trailers[0].Length, 9);
 
             // Front of the prime mover (5.0 ahead of its rear axle) to the back of the trailer:
             // kingpin at +0.25, trailer axles 8.5 behind it, body 3.3 behind them.
@@ -95,7 +95,7 @@ namespace CsdBridge.Core.Tests
 
             Assert.Empty(semi.Validate());
             DesignVehicle bad = Semi();
-            bad.Trailers[0].Length = 9;      // shorter than its kingpin setback plus its wheelbase
+            bad.Trailers[0].RearOverhang = -1;
             Assert.Contains(bad.Validate(), p => p.Contains("trailer"));
 
             // A copy doesn't share its trailers.
@@ -300,7 +300,7 @@ namespace CsdBridge.Core.Tests
             DesignVehicle tight = Semi();
             tight.MinTurnRadius = 4;
             TurnPathResult folds = Circle(tight, 4, 300);
-            Assert.True(folds.MaxArticulationDeg > 90);
+            Assert.True(folds.MaxArticulationDeg > 70);
             Assert.Contains(folds.Warnings, w => w.Contains("jackknife"));
         }
 
@@ -350,7 +350,7 @@ namespace CsdBridge.Core.Tests
                   ""length"": 6, ""width"": 2.5, ""wheelbase"": 3.6, ""front_overhang"": 1.4, ""rear_overhang"": 1.0, ""track"": 2.1, ""min_turn_radius"": 9,
                   ""hitch"": 0.25,
                   // front to back
-                  ""trailers"": [ { ""name"": ""semi-trailer"", ""length"": 13, ""width"": 2.5, ""wheelbase"": 8.5, ""front_overhang"": 1.2 } ]
+                  ""trailers"": [ { ""name"": ""semi-trailer"", ""width"": 2.5, ""front_overhang"": 1.2, ""wheelbase"": 8.5, ""rear_overhang"": 3.3, ""axles"": 3 } ]
                 }
               },
               ""default_vehicle"": ""RIGID""
@@ -371,7 +371,8 @@ namespace CsdBridge.Core.Tests
                 Assert.True(semi.IsArticulated);
                 Assert.Equal(0.25, semi.Hitch);
                 Assert.Equal("semi-trailer", semi.Trailers[0].Name);
-                Assert.Equal(3.3, semi.Trailers[0].RearOverhang, 9);
+                Assert.Equal(13, semi.Trailers[0].Length, 9);
+                Assert.Equal(3, semi.Trailers[0].Axles);
                 Assert.Equal(16.55, semi.OverallLength, 9);
                 Assert.Contains("towing a 13 m semi-trailer (16.55 m overall; forwards only)", c.Describe());
 
@@ -391,7 +392,7 @@ namespace CsdBridge.Core.Tests
             }
 
             // A trailer that doesn't add up is refused when the file is loaded.
-            File.WriteAllText(path, json.Replace("\"length\": 13", "\"length\": 5"));
+            File.WriteAllText(path, json.Replace("\"rear_overhang\": 3.3", "\"rear_overhang\": -2"));
             try
             {
                 var ex = Assert.Throws<InvalidDataException>(() => TurnPathConventions.Load(path));

@@ -100,6 +100,12 @@ namespace CsdBridge.Core.Vehicles
             "- The dashed template adds 300 mm manoeuvring clearance both sides, plus 300 mm circulation clearance on the outside for " +
             "B99 (600 mm outside in total) where vehicles travel above 10 km/h (B3.2).\n" +
             "- Aisle widths for parking manoeuvres come from Tables B2/B3 and Figure 2.2, not from swept paths (B4.4).\n" +
+            "- Trucks are the Austroads design vehicles (AP-G34-23): Service 8.8 m, Truck 12.5 m (single unit truck/bus), Semi 19 m " +
+            "(prime mover and semi-trailer) and B-double 25 m / 26 m. Their radius is also measured at the outer front wheel; the smallest " +
+            "template radius is 9 m for the service vehicle and 12.5 m for the others. Usual design vehicles and radii (Table 2.3): the " +
+            "19 m semi-trailer at 15 m for arterial and industrial intersections (12.5 m is the absolute minimum), the single unit truck " +
+            "at 12.5 m for collector streets, the service vehicle at 9 m for local residential streets; B-doubles are checking vehicles. " +
+            "Keep 0.5 m between the swept path and kerbs, edge lines and objects (3.4.1); that is their default clearance.\n" +
             "- To find out whether, and in how many movements, a vehicle can turn round or get into a space, use mode 'solve' with the " +
             "obstruction layers rather than guessing points: it reports the movements and any clearance it had to give up.\n" +
             (_conventions == null ? "" : "Vehicles and layers from turn-paths.json:\n" + _conventions.Describe());

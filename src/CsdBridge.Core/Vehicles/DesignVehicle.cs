@@ -14,9 +14,6 @@ namespace CsdBridge.Core.Vehicles
     {
         public string Name { get; set; } = "trailer";
 
-        /// <summary>Overall length of the trailer's body.</summary>
-        public double Length { get; set; }
-
         public double Width { get; set; }
 
         /// <summary>From the coupling (kingpin, or the eye of a drawbar) back to the centre of the trailer's axle group.</summary>
@@ -28,6 +25,9 @@ namespace CsdBridge.Core.Vehicles
         /// </summary>
         public double FrontOverhang { get; set; }
 
+        /// <summary>From the centre of the axle group to the rear of the body.</summary>
+        public double RearOverhang { get; set; }
+
         /// <summary>
         /// Where the next trailer couples on, measured forward from the centre of this trailer's axle
         /// group (negative: behind it). Only used when another trailer follows.
@@ -37,9 +37,15 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Distance between the wheel centres across an axle. 0: taken as the width less 0.4 m.</summary>
         public double Track { get; set; }
 
-        /// <summary>From the centre of the axle group to the rear of the body.</summary>
+        /// <summary>Axles in the group (drawn, and their wheel paths; the trailer pivots about the group's centre).</summary>
+        public int Axles { get; set; } = 1;
+
+        /// <summary>Distance between the axles of the group.</summary>
+        public double AxleSpacing { get; set; } = 1.3;
+
+        /// <summary>Overall length of the trailer's body: front to rear.</summary>
         [JsonIgnore]
-        public double RearOverhang => Length - FrontOverhang - Wheelbase;
+        public double Length => FrontOverhang + Wheelbase + RearOverhang;
 
         /// <summary>
         /// The trailer as a body in its own frame: origin at the centre of its axle group, X forward,
@@ -57,6 +63,8 @@ namespace CsdBridge.Core.Vehicles
             EffectiveRearOverhang = RearOverhang,
             EffectiveWidth = Width,
             Track = Track > 0 ? Track : Math.Max(0.1, Width - 0.4),
+            RearAxles = Math.Max(1, Axles),
+            AxleSpacing = AxleSpacing,
             MinTurnRadius = double.MaxValue,
         };
 
@@ -80,6 +88,45 @@ namespace CsdBridge.Core.Vehicles
 
         /// <summary>The trailers towed, front to back. Empty for a rigid vehicle.</summary>
         public List<TrailerUnit> Trailers { get; set; } = new List<TrailerUnit>();
+
+        /// <summary>
+        /// The sharpest angle allowed between two coupled units, degrees. Austroads AP-G34-23
+        /// Section 3.5: 70 degrees. A manoeuvre that folds the vehicle further is flagged.
+        /// </summary>
+        public double MaxArticulationDeg { get; set; } = 70;
+
+        /// <summary>Axles in the rear group (drawn, and their wheel paths; the vehicle pivots about the group's centre).</summary>
+        public int RearAxles { get; set; } = 1;
+
+        /// <summary>Distance between the axles of a group.</summary>
+        public double AxleSpacing { get; set; } = 1.3;
+
+        /// <summary>
+        /// Distance between the wheel centres of the rear axles, when it differs from the front
+        /// (dual tyres sit further in). 0: the same as <see cref="Track"/>.
+        /// </summary>
+        public double RearTrack { get; set; }
+
+        /// <summary>The track of the rear axle group.</summary>
+        [JsonIgnore]
+        public double RearTrackWidth => RearTrack > 0 ? RearTrack : Track;
+
+        /// <summary>Where the axles of the rear group are, along the vehicle from the group's centre.</summary>
+        [JsonIgnore]
+        public IReadOnlyList<double> RearAxlePositions
+        {
+            get
+            {
+                int n = Math.Max(1, RearAxles);
+                var xs = new List<double>(n);
+                for (int i = 0; i < n; i++)
+                {
+                    xs.Add((i - (n - 1) / 2.0) * AxleSpacing);
+                }
+
+                return xs;
+            }
+        }
 
         [JsonIgnore]
         public bool IsArticulated => Trailers.Count > 0;
@@ -352,6 +399,16 @@ namespace CsdBridge.Core.Vehicles
                 problems.Add("min_turn_radius must be larger than the wheelbase");
             }
 
+            if (RearAxles < 1 || RearAxles > 6 || AxleSpacing < 0 || RearTrack < 0 || RearTrack > Width)
+            {
+                problems.Add("rear_axles must be 1 to 6, axle_spacing 0 or more, and rear_track no more than the width");
+            }
+
+            if (MaxArticulationDeg <= 0 || MaxArticulationDeg > 180)
+            {
+                problems.Add("max_articulation_deg must be between 0 and 180");
+            }
+
             if (GroundClearance < 0 || ApproachAngleDeg < 0 || ApproachAngleDeg >= 90 || DepartureAngleDeg < 0 || DepartureAngleDeg >= 90)
             {
                 problems.Add("ground_clearance must be 0 or more and the approach/departure angles between 0 and 90 degrees");
@@ -361,13 +418,13 @@ namespace CsdBridge.Core.Vehicles
             {
                 TrailerUnit t = Trailers[i];
                 string what = Trailers.Count == 1 ? "trailer" : $"trailer {i + 1}";
-                if (!(t.Length > 0) || !(t.Width > 0) || !(t.Wheelbase > 0))
+                if (!(t.Width > 0) || !(t.Wheelbase > 0))
                 {
-                    problems.Add($"{what}: length, width and wheelbase (coupling to the centre of its axles) must be positive");
+                    problems.Add($"{what}: width and wheelbase (coupling to the centre of its axles) must be positive");
                 }
-                else if (t.RearOverhang < -1e-9)
+                else if (t.RearOverhang < 0)
                 {
-                    problems.Add($"{what}: its length is less than its front_overhang plus its wheelbase");
+                    problems.Add($"{what}: rear_overhang can't be negative");
                 }
                 else if (t.FrontOverhang < -t.Wheelbase)
                 {
@@ -377,6 +434,11 @@ namespace CsdBridge.Core.Vehicles
                 if (t.Track < 0 || t.Track > t.Width)
                 {
                     problems.Add($"{what}: track can't be negative or exceed the width");
+                }
+
+                if (t.Axles < 1 || t.Axles > 6 || t.AxleSpacing < 0)
+                {
+                    problems.Add($"{what}: axles must be 1 to 6, and axle_spacing 0 or more");
                 }
             }
 
@@ -468,7 +530,14 @@ namespace CsdBridge.Core.Vehicles
         public List<List<VehiclePoint>> Wheels()
         {
             var result = new List<List<VehiclePoint>>();
-            foreach (var (x, y) in new[] { (Wheelbase, Track / 2), (Wheelbase, -Track / 2), (0.0, Track / 2), (0.0, -Track / 2) })
+            var centres = new List<(double X, double Y)> { (Wheelbase, Track / 2), (Wheelbase, -Track / 2) };
+            foreach (double axle in RearAxlePositions)
+            {
+                centres.Add((axle, RearTrackWidth / 2));
+                centres.Add((axle, -RearTrackWidth / 2));
+            }
+
+            foreach (var (x, y) in centres)
             {
                 double hl = WheelLength / 2, hw = WheelWidth / 2;
                 result.Add(new List<VehiclePoint>
