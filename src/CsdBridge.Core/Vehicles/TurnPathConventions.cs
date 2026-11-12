@@ -132,6 +132,7 @@ namespace CsdBridge.Core.Vehicles
                     kv.Value.Name = kv.Key;
                 }
 
+                kv.Value.FillDefaults();
                 List<string> problems = kv.Value.Validate();
                 if (problems.Count > 0)
                 {
@@ -185,6 +186,12 @@ namespace CsdBridge.Core.Vehicles
                   .Append(" m, wheelbase ").Append(v.Wheelbase.ToString("0.##")).Append(" m, min turn radius ").Append(v.MinTurnRadius.ToString("0.#"))
                   .Append(" m (outer front wheel), clearances ").Append((v.ClearanceInside * 1000).ToString("0")).Append(" mm inside / ")
                   .Append((v.ClearanceOutside * 1000).ToString("0")).Append(" mm outside");
+                if (v.IsArticulated)
+                {
+                    sb.Append(", towing ").Append(string.Join(" and ", v.Trailers.Select(t => $"a {t.Length:0.##} m {t.Name}")))
+                      .Append(" (").Append(v.OverallLength.ToString("0.##")).Append(" m overall; forwards only)");
+                }
+
                 if (!string.IsNullOrWhiteSpace(v.Description))
                 {
                     sb.Append(". ").Append(v.Description);

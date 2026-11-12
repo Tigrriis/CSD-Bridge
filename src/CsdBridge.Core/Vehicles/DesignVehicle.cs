@@ -1,10 +1,161 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization;
 using CsdBridge.Core.Drawing;
 
 namespace CsdBridge.Core.Vehicles
 {
+    /// <summary>
+    /// A trailer towed behind a design vehicle or behind another trailer: a semi-trailer on a
+    /// fifth wheel, or a dolly on a drawbar. Dimensions in metres.
+    /// </summary>
+    public sealed class TrailerUnit
+    {
+        public string Name { get; set; } = "trailer";
+
+        /// <summary>Overall length of the trailer's body.</summary>
+        public double Length { get; set; }
+
+        public double Width { get; set; }
+
+        /// <summary>From the coupling (kingpin, or the eye of a drawbar) back to the centre of the trailer's axle group.</summary>
+        public double Wheelbase { get; set; }
+
+        /// <summary>
+        /// How far the body reaches ahead of the coupling: the kingpin's setback from the front of a
+        /// semi-trailer. Negative when the body starts behind the coupling (a dolly on a drawbar).
+        /// </summary>
+        public double FrontOverhang { get; set; }
+
+        /// <summary>
+        /// Where the next trailer couples on, measured forward from the centre of this trailer's axle
+        /// group (negative: behind it). Only used when another trailer follows.
+        /// </summary>
+        public double Hitch { get; set; }
+
+        /// <summary>Distance between the wheel centres across an axle. 0: taken as the width less 0.4 m.</summary>
+        public double Track { get; set; }
+
+        /// <summary>From the centre of the axle group to the rear of the body.</summary>
+        [JsonIgnore]
+        public double RearOverhang => Length - FrontOverhang - Wheelbase;
+
+        /// <summary>
+        /// The trailer as a body in its own frame: origin at the centre of its axle group, X forward,
+        /// so its "front axle" is the coupling. Square cornered.
+        /// </summary>
+        internal DesignVehicle Body() => new DesignVehicle
+        {
+            Name = Name,
+            Length = Length,
+            Width = Width,
+            Wheelbase = Wheelbase,
+            FrontOverhang = FrontOverhang,
+            RearOverhang = RearOverhang,
+            EffectiveFrontOverhang = FrontOverhang,
+            EffectiveRearOverhang = RearOverhang,
+            EffectiveWidth = Width,
+            Track = Track > 0 ? Track : Math.Max(0.1, Width - 0.4),
+            MinTurnRadius = double.MaxValue,
+        };
+
+        public TrailerUnit Clone() => (TrailerUnit)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// Trailers: a design vehicle can tow them (a prime mover and semi-trailer, a B-double). Each
+    /// follows the unit ahead the way a vehicle's rear axle follows its front: its axle group can't
+    /// slip sideways, so it is dragged round behind its coupling and cuts inside the path of the
+    /// unit ahead (off-tracking).
+    /// </summary>
+    public sealed partial class DesignVehicle
+    {
+        /// <summary>
+        /// Where a trailer couples on (the fifth wheel, or a tow coupling), measured forward from
+        /// the rear axle; negative when it is behind the axle. With a group of rear axles, measure
+        /// everything from the centre of the group.
+        /// </summary>
+        public double Hitch { get; set; }
+
+        /// <summary>The trailers towed, front to back. Empty for a rigid vehicle.</summary>
+        public List<TrailerUnit> Trailers { get; set; } = new List<TrailerUnit>();
+
+        [JsonIgnore]
+        public bool IsArticulated => Trailers.Count > 0;
+
+        /// <summary>
+        /// Overall length with any trailers straight behind: from the front of the vehicle to the
+        /// rearmost point of the combination.
+        /// </summary>
+        [JsonIgnore]
+        public double OverallLength
+        {
+            get
+            {
+                double front = Wheelbase + FrontOverhang, rear = -RearOverhang;
+                double coupling = Hitch;      // X of the coupling the next trailer hangs on, in the vehicle's frame
+                foreach (TrailerUnit t in Trailers)
+                {
+                    double axle = coupling - t.Wheelbase;
+                    rear = Math.Min(rear, axle - t.RearOverhang);
+                    front = Math.Max(front, coupling + t.FrontOverhang);
+                    coupling = axle + t.Hitch;
+                }
+
+                return front - rear;
+            }
+        }
+
+        /// <summary>
+        /// Where each trailer sits with the whole vehicle in a straight line: the pose of each
+        /// trailer's axle group behind the vehicle at <paramref name="pose"/>.
+        /// </summary>
+        public List<VehiclePose> StraightTrailerPoses(VehiclePose pose)
+        {
+            var poses = new List<VehiclePose>();
+            double coupling = Hitch;
+            foreach (TrailerUnit t in Trailers)
+            {
+                double axle = coupling - t.Wheelbase;
+                poses.Add(new VehiclePose(pose.ToWorld(axle, 0), pose.Heading));
+                coupling = axle + t.Hitch;
+            }
+
+            return poses;
+        }
+
+        /// <summary>
+        /// Fills in what a truck's definition can leave out: the effective overhangs and width (a
+        /// square-cornered body sweeps with its real corners).
+        /// </summary>
+        public void FillDefaults()
+        {
+            if (EffectiveWidth <= 0)
+            {
+                EffectiveWidth = Width;
+            }
+
+            if (EffectiveFrontOverhang <= 0)
+            {
+                EffectiveFrontOverhang = FrontOverhang;
+            }
+
+            if (EffectiveRearOverhang <= 0)
+            {
+                EffectiveRearOverhang = RearOverhang;
+            }
+
+            for (int i = 0; i < Trailers.Count; i++)
+            {
+                if (string.IsNullOrWhiteSpace(Trailers[i].Name) || Trailers[i].Name == "trailer")
+                {
+                    Trailers[i].Name = Trailers.Count == 1 ? "trailer" : $"trailer {i + 1}";
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// A design vehicle for swept path (turning path) analysis. Dimensions in metres.
     ///
@@ -12,9 +163,10 @@ namespace CsdBridge.Core.Vehicles
     /// Y to the left. The swept path is traced by the body's *effective* extremities
     /// (AS/NZS 2890.1:2004 Figures B1 and B2, "relevant longitudinal dimensions that affect
     /// swept path"): the rounded front and rear corners reach the effective overhangs at the
-    /// effective width, and the overall overhangs only at the centreline.
+    /// effective width, and the overall overhangs only at the centreline. A truck's square body
+    /// has effective dimensions equal to its real ones.
     /// </summary>
-    public sealed class DesignVehicle
+    public sealed partial class DesignVehicle
     {
         public string Name { get; set; } = "";
 
@@ -205,6 +357,29 @@ namespace CsdBridge.Core.Vehicles
                 problems.Add("ground_clearance must be 0 or more and the approach/departure angles between 0 and 90 degrees");
             }
 
+            for (int i = 0; i < Trailers.Count; i++)
+            {
+                TrailerUnit t = Trailers[i];
+                string what = Trailers.Count == 1 ? "trailer" : $"trailer {i + 1}";
+                if (!(t.Length > 0) || !(t.Width > 0) || !(t.Wheelbase > 0))
+                {
+                    problems.Add($"{what}: length, width and wheelbase (coupling to the centre of its axles) must be positive");
+                }
+                else if (t.RearOverhang < -1e-9)
+                {
+                    problems.Add($"{what}: its length is less than its front_overhang plus its wheelbase");
+                }
+                else if (t.FrontOverhang < -t.Wheelbase)
+                {
+                    problems.Add($"{what}: front_overhang can't put the front of the body behind its axles");
+                }
+
+                if (t.Track < 0 || t.Track > t.Width)
+                {
+                    problems.Add($"{what}: track can't be negative or exceed the width");
+                }
+            }
+
             return problems;
         }
 
@@ -306,7 +481,12 @@ namespace CsdBridge.Core.Vehicles
             return result;
         }
 
-        public DesignVehicle Clone() => (DesignVehicle)MemberwiseClone();
+        public DesignVehicle Clone()
+        {
+            var copy = (DesignVehicle)MemberwiseClone();
+            copy.Trailers = Trailers.Select(t => t.Clone()).ToList();
+            return copy;
+        }
     }
 
     /// <summary>A point in the vehicle frame: X forward from the rear axle centre, Y to the left.</summary>

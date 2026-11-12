@@ -49,6 +49,8 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
   travel, stepping along full-lock arcs and straights, finishing with turn-straight-turn paths to the target or
   to a straight run-in to it, and testing every step by sweeping the body's true outline, enlarged by the
   clearance, against the obstruction linework),
+  trailers (a vehicle can tow a chain of them: each is dragged by its coupling under the same no-side-slip
+  rule as the vehicle's own rear axle, and the swept path is the union over every body),
   unit conversion at the edges (`DrawingUnits`: the simulator always works in metres, so points, curves,
   obstructions and surface levels from a millimetre drawing are scaled on the way in and everything drawn
   on the way out),

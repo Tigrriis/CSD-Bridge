@@ -232,6 +232,11 @@ namespace CsdBridge.Core.Vehicles
         {
             var watch = Stopwatch.StartNew();
             DesignVehicle v = q.Vehicle;
+            if (v.IsArticulated)
+            {
+                throw new ArgumentException($"The {v.Name} tows a trailer; the solver only works out manoeuvres for rigid vehicles.");
+            }
+
             double radius = q.Radius ?? v.MinTurnRadius;
             if (radius < v.MinTurnRadius - 1e-9)
             {

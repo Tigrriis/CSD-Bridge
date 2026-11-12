@@ -15,6 +15,24 @@
 //   approach/departure_angle  B5: the underside rises at 10 degrees over the overhangs
 // Add your own vehicles (a service vehicle, say) as more entries with the same fields.
 //
+// Trucks: give the real body. effective_* can be left out (a square body sweeps with its real
+// corners). With a group of rear axles, measure wheelbase and overhangs from the centre of the
+// group. min_turn_radius is at the outer front wheel, as for the cars.
+//
+// Trailers: a vehicle that tows gets "hitch" (its fifth wheel or tow coupling, metres ahead of
+// its rear axle; negative = behind it) and "trailers", listed front to back. Each trailer has:
+//   length, width      its body
+//   wheelbase          from its coupling (kingpin) back to the centre of its axle group
+//   front_overhang     body ahead of the coupling: the kingpin's setback from the trailer's front
+//   hitch              where the next trailer couples on, ahead of this one's axle group (B-double)
+// A vehicle with trailers is driven forwards only. The letters below stand for your own figures:
+//   "MY SEMI": { "length": L, "width": W, "wheelbase": WB, "front_overhang": FO, "rear_overhang": RO,
+//                "track": T, "min_turn_radius": R, "hitch": H,
+//                "trailers": [ { "name": "semi-trailer", "length": TL, "width": TW,
+//                                "wheelbase": S, "front_overhang": K } ] }
+// Only the AS/NZS 2890.1 cars are included here. Enter trucks from the dimension drawings of the
+// guide you design to (Austroads AP-G34, AS 2890.2).
+//
 // Layers: {vehicle} in a layer name is replaced by the vehicle's name, e.g.
 // "AE CIV PLN - {vehicle} SWEPT PATH". layer_styles apply only when a layer doesn't exist yet;
 // existing layers are never changed. The AITURN dialog can edit all of this per run and save it.

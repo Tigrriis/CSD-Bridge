@@ -620,8 +620,11 @@ namespace CsdBridge.BricsCAD
                 _clearOutside.Text = Num(v.ClearanceOutside);
             }
 
+            string towing = v.IsArticulated
+                ? $" Tows {string.Join(" and ", v.Trailers.Select(t => $"a {t.Length:0.##} m {t.Name}"))}: {v.OverallLength:0.##} m overall, forwards only."
+                : "";
             _vehicleInfo.Text = $"{v.Length:0.##} x {v.Width:0.##} m, wheelbase {v.Wheelbase:0.##} m, overhangs {v.FrontOverhang:0.##} / {v.RearOverhang:0.##} m, " +
-                                $"minimum turn radius {v.MinTurnRadius:0.#} m. {v.Description}";
+                                $"minimum turn radius {v.MinTurnRadius:0.#} m.{towing} {v.Description}";
             _lastVehicle = name;
         }
 
@@ -701,6 +704,18 @@ namespace CsdBridge.BricsCAD
                 Units = SelectedUnits,
                 UnitsSetting = _units.SelectedIndex == 1 ? "m" : _units.SelectedIndex == 2 ? "mm" : "auto",
             };
+
+            if (vehicle.IsArticulated && c.Mode == TurnPathChoice.ManoeuvreMode.Solve)
+            {
+                problem = $"The {vehicle.Name} tows a trailer. The solver only works out manoeuvres for rigid vehicles: drive it yourself with Drive, or follow a line.";
+                return false;
+            }
+
+            if (vehicle.IsArticulated && c.Reverse)
+            {
+                problem = $"The {vehicle.Name} tows a trailer, and reversing with a trailer isn't supported.";
+                return false;
+            }
 
             if (c.Mode != TurnPathChoice.ManoeuvreMode.Follow)
             {

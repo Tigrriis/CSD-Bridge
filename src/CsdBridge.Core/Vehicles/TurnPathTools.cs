@@ -46,6 +46,8 @@ namespace CsdBridge.Core.Vehicles
                     "and whether the clearance had to be reduced. Points (start, points, target) are in the drawing's units; radii, " +
                     "clearances and every other length are metres whatever the drawing is drawn in, and a millimetre drawing is handled " +
                     "from its INSUNITS (pass drawing_units when that is unset or wrong: the result says which units it used). " +
+                    "A vehicle defined with trailers (a prime mover and semi-trailer, a B-double) is towed through the manoeuvre and the " +
+                    "swept path covers the whole combination; it drives forwards only, so reverse, and mode 'solve', are refused for it. " +
                     "The reference point that follows the path is the " +
                     "outer front wheel for templates and the front axle centre otherwise (rear axle when reversing); the rear axle tracks " +
                     "in behind it. Returns " +
@@ -217,9 +219,11 @@ namespace CsdBridge.Core.Vehicles
                         double radius = JsonArgs.OptionalPositive(input, "radius", "") ?? vehicle.MinTurnRadius;
                         var pose = new VehiclePose(pts[0], heading);
                         legs = new List<TurnPathRequest>();
+                        IReadOnlyList<double>? trailers = null;   // where the last leg left the trailers
                         for (int i = 1; i < pts.Count; i++)
                         {
-                            bool? force = JsonArgs.TryGet(input, "reverse", out _) ? reverse : (bool?)null;
+                            // A vehicle with a trailer only drives forwards.
+                            bool? force = vehicle.IsArticulated ? false : JsonArgs.TryGet(input, "reverse", out _) ? reverse : (bool?)null;
                             string? turnsName = JsonArgs.OptionalString(input, "turns", "");
                             TurnPathBuilder.DriveTurns turns = string.IsNullOrWhiteSpace(turnsName) ? c.DriveTurnsMode
                                 : turnsName!.Trim().ToLowerInvariant() == "corner" ? TurnPathBuilder.DriveTurns.Corner
@@ -243,7 +247,9 @@ namespace CsdBridge.Core.Vehicles
 
                             leg.Request.Step = c.Step;
                             leg.Request.Tolerance = c.Tolerance;
+                            leg.Request.InitialTrailerHeadings = trailers;
                             TurnPathResult legResult = TurnPathSimulator.Simulate(leg.Request);
+                            trailers = legResult.Trailers.Count > 0 ? legResult.EndTrailerHeadings : null;
                             pose = legResult.Poses[legResult.Poses.Count - 1];
                             legs.Add(leg.Request);
                             legNotes.Add($"leg {legs.Count}: {(leg.Reverse ? "reverse" : "forward")}, " +
@@ -387,6 +393,11 @@ namespace CsdBridge.Core.Vehicles
                     ["legs"] = legNotes.Count > 0 ? legNotes : null,
                     ["extents"] = Extents(result, units),
                 };
+                if (vehicle.IsArticulated)
+                {
+                    report["trailers"] = vehicle.Trailers.Select(t => t.Name).ToList();
+                    report["max_articulation_deg"] = Math.Round(results.Max(x => x.MaxArticulationDeg), 1);
+                }
 
                 ConflictReport? conflicts = null;
                 List<JsonElement>? obstructionItems = JsonArgs.OptionalArray(input, "obstruction_layers", "", 0, 100);

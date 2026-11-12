@@ -65,7 +65,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 239 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 249 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -448,6 +448,36 @@ driveway on the kerb return I just drew"* or *"add B85 turning templates at 5.8 
 end"*. It can also run it as a dry run and report the tightest radius without drawing, and solve a
 manoeuvre between obstruction layers: *"can a B99 turn round at the end of this aisle? The kerbs
 are on C-KERB"*.
+
+### Trucks and trailers
+
+The simulator isn't limited to cars. Any rigid vehicle can be added to `turn-paths.json` with the same
+fields as the B99 and B85, and a vehicle can tow trailers: a prime mover and semi-trailer, or a B-double.
+
+- **Rigid trucks.** Give the real body; the `effective_*` fields can be left out, because a square body
+  sweeps with its real corners. With a group of rear axles, measure the wheelbase and overhangs from the
+  centre of the group.
+- **Trailers.** Give the towing vehicle a `hitch` (its fifth wheel or tow coupling, in metres ahead of its
+  rear axle) and a list of `trailers`, front to back. Each trailer has its `length` and `width`, its
+  `wheelbase` (coupling to the centre of its axle group), its `front_overhang` (the kingpin's setback from
+  the front of the trailer) and, when another trailer follows, its own `hitch`. The comments at the top of
+  `turn-paths.json` show the layout.
+
+A trailer is towed the way a real one is: its axles can't slip sideways, so it is dragged round behind its
+coupling and cuts inside the path of the vehicle ahead. The swept path covers the whole combination: the
+trailer's inner side on the inside of the turn, the prime mover's front corner on the outside. Every unit is
+drawn at the start and end (and along the way, with an outline interval), and the report gives the sharpest
+angle the combination folds to, with a warning if it would jackknife.
+
+Limits for a vehicle with trailers:
+
+- It drives **forwards only**. Reversing a trailer isn't modelled, so a reversed follow, a drive destination
+  behind the vehicle and **Solve** are refused for it.
+- The ground clearance check is for rigid vehicles.
+- Trailer axles are fixed: steerable and self-tracking axles aren't modelled.
+
+**No Austroads or AS 2890.2 design vehicle is included yet.** Their dimensions have to be entered from the
+guide's own dimension drawings (Austroads AP-G34, AS 2890.2 Appendix A); they are not guessed here.
 
 ### Conflicts with kerbs, walls and columns
 

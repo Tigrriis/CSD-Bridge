@@ -335,7 +335,9 @@ namespace CsdBridge.BricsCAD
             DesignVehicle v = c.Vehicle;
             DrawingUnits units = DrawingUnits.Of(r.UnitsPerMetre);
             TurnPathConventions conv = c.Conventions;
-            var legs = new List<(DriveStop Stop, VehiclePose End, List<EntitySpec> Graphics)>();
+            // Each leg: where it went, where it left the vehicle (and any trailers), and its graphics.
+            var legs = new List<(DriveStop Stop, VehiclePose End, List<EntitySpec> Graphics, IReadOnlyList<double>? Trailers)>();
+            bool? direction = v.IsArticulated ? false : (bool?)null;   // a trailer can't be reversed: forwards only
             if (continueDrive)
             {
                 // The existing legs, as drawn: the new ones carry on from where they end.
@@ -343,7 +345,7 @@ namespace CsdBridge.BricsCAD
                 for (int i = 0; i < plan.Legs.Count; i++)
                 {
                     TurnPathResult result = plan.Legs[i].Result;
-                    legs.Add((r.Stops[i], result.Poses[result.Poses.Count - 1], preview.Specs(result, startVehicle: false)));
+                    legs.Add((r.Stops[i], result.Poses[result.Poses.Count - 1], preview.Specs(result, startVehicle: false), result.Trailers.Count > 0 ? result.EndTrailerHeadings : null));
                 }
             }
             else
@@ -364,19 +366,28 @@ namespace CsdBridge.BricsCAD
             while (true)
             {
                 VehiclePose from = legs.Count > 0 ? legs[legs.Count - 1].End : startPose;
+                IReadOnlyList<double>? towed = legs.Count > 0 ? legs[legs.Count - 1].Trailers : null;
                 List<EntitySpec> fixedGraphics = PreviewBuilder.Vehicle(v, startPose);
                 fixedGraphics.AddRange(legs.SelectMany(l => l.Graphics));
 
                 bool canUndo = legs.Count > kept;
                 string prompt = legs.Count == 0
-                    ? "\nWhere the vehicle drives to (ahead = forward, behind = reverse) or [Direction]: "
+                    ? (v.IsArticulated
+                        ? "\nWhere the vehicle drives to (forwards only: it tows a trailer) or [Direction]: "
+                        : "\nWhere the vehicle drives to (ahead = forward, behind = reverse) or [Direction]: ")
                     : canUndo ? "\nNext destination or [Undo/Direction] (Enter to finish): " : "\nNext destination or [Direction] (Enter to finish): ";
                 Point2 fromInDrawing = units.ToDrawing(from.RearAxle);
                 var jig = new TurnPathJig(units, prompt, new Point3d(fromInDrawing.X, fromInDrawing.Y, 0), canUndo ? new[] { "Undo", "Direction" } : new[] { "Direction" },
                     cursor =>
                     {
-                        TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(v, from, cursor, r.Radius, null, r.TurnsKind);
-                        return leg == null ? null : preview.Specs(leg.Request, startVehicle: false);
+                        TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveTo(v, from, cursor, r.Radius, direction, r.TurnsKind);
+                        if (leg == null)
+                        {
+                            return null;
+                        }
+
+                        leg.Request.InitialTrailerHeadings = towed;
+                        return preview.Specs(leg.Request, startVehicle: false);
                     },
                     fixedGraphics);
                 PromptResult res = ed.Drag(jig);
@@ -419,8 +430,14 @@ namespace CsdBridge.BricsCAD
                                 return null;
                             }
 
-                            TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveToPose(v, from, target, Math.Atan2(cursor.Y - target.Y, cursor.X - target.X), r.Radius);
-                            return leg == null ? null : preview.Specs(leg.Request, startVehicle: false);
+                            TurnPathBuilder.DriveLeg? leg = TurnPathBuilder.DriveToPose(v, from, target, Math.Atan2(cursor.Y - target.Y, cursor.X - target.X), r.Radius, direction);
+                            if (leg == null)
+                            {
+                                return null;
+                            }
+
+                            leg.Request.InitialTrailerHeadings = towed;
+                            return preview.Specs(leg.Request, startVehicle: false);
                         },
                         fixedGraphics);
                     PromptResult dir = ed.Drag(facing);
@@ -439,7 +456,9 @@ namespace CsdBridge.BricsCAD
                 {
                     ed.WriteMessage(stop.HeadingDeg != null
                         ? "\nThe vehicle can't arrive there facing that way in one leg (it would need a loop, or the turns overlap). Pick another direction, or get closer in an earlier leg."
-                        : "\nThe vehicle can't get there in one leg: the point is too close, inside its turning circle, or more than a half turn away. Click further away, or drive past and reverse.");
+                        : v.IsArticulated
+                            ? "\nThe vehicle can't get there in one leg: the point is behind it (with a trailer it only drives forwards), too close, inside its turning circle, or more than a half turn away."
+                            : "\nThe vehicle can't get there in one leg: the point is too close, inside its turning circle, or more than a half turn away. Click further away, or drive past and reverse.");
                     continue;
                 }
 
@@ -449,9 +468,10 @@ namespace CsdBridge.BricsCAD
                 req.Tolerance = conv.Tolerance;
                 req.ClearanceInside = r.ClearanceInside;
                 req.ClearanceOutside = r.ClearanceOutside;
+                req.InitialTrailerHeadings = towed;
                 TurnPathResult result = TurnPathSimulator.Simulate(req);
                 ed.WriteMessage($"\n  Leg {legs.Count + 1}: {ManoeuvrePlanner.Describe(chosen)}.");
-                legs.Add((stop, result.Poses[result.Poses.Count - 1], preview.Specs(result, startVehicle: false)));
+                legs.Add((stop, result.Poses[result.Poses.Count - 1], preview.Specs(result, startVehicle: false), result.Trailers.Count > 0 ? result.EndTrailerHeadings : null));
             }
 
             if (legs.Count == 0)
