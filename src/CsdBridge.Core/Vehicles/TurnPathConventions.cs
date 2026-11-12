@@ -51,6 +51,17 @@ namespace CsdBridge.Core.Vehicles
         /// </summary>
         public string DrawingUnits { get; set; } = "auto";
 
+        /// <summary>
+        /// Solve mode: the layers whose linework bounds the space the vehicle manoeuvres in (kerbs,
+        /// walls, columns, boundaries); wildcards as for the obstruction layers. Empty: the
+        /// obstruction layers are used.
+        /// </summary>
+        public List<string> SolveLayers { get; set; } = new List<string>();
+
+        /// <summary>The layers a solve works between: the solve layers, or the obstruction layers when none are set.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public List<string> SolveBoundaryLayers => SolveLayers.Count > 0 ? SolveLayers.ToList() : ObstructionLayers.ToList();
+
         /// <summary>Solve mode: how long the search for a multi-point turn may take, seconds.</summary>
         public double SolverTimeLimit { get; set; } = 10;
 

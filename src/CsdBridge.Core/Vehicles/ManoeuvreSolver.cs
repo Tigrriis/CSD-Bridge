@@ -40,6 +40,20 @@ namespace CsdBridge.Core.Vehicles
 
         /// <summary>Reversing a metre costs this many metres of driving forward.</summary>
         public double ReverseFactor { get; set; } = 1.2;
+
+        /// <summary>The first movement must be forwards: the vehicle drives away from the start, it doesn't back away.</summary>
+        public bool FirstForward { get; set; }
+
+        /// <summary>The last movement must be forwards: the vehicle drives up to the target, it doesn't back onto it.</summary>
+        public bool LastForward { get; set; }
+
+        /// <summary>
+        /// Lines the vehicle may only be over while driving forwards: a site boundary across a
+        /// driveway, so that it enters and leaves the site in a forward direction.
+        /// </summary>
+        public IReadOnlyList<(Point2 A, Point2 B)> ForwardOnlyLines { get; set; } = new List<(Point2, Point2)>();
+
+        public SolveRequest Clone() => (SolveRequest)MemberwiseClone();
     }
 
     /// <summary>One movement of a solved manoeuvre: the rear axle's path, forwards or in reverse.</summary>
@@ -50,6 +64,9 @@ namespace CsdBridge.Core.Vehicles
 
         /// <summary>The way the vehicle faces at the start of the leg, radians.</summary>
         public double StartHeading { get; set; }
+
+        /// <summary>Solving in and out of a site: "in" for the movements to the stop, "out" for those from it. Otherwise null.</summary>
+        public string? Stage { get; set; }
 
         public double Length => Path.Length;
 
@@ -96,6 +113,11 @@ namespace CsdBridge.Core.Vehicles
         /// <summary>Why there is no solution.</summary>
         public string? Failure { get; set; }
 
+        /// <summary>Solving in and out of a site: the way in to the stop, and the way out from it.</summary>
+        public SolveResult? In { get; set; }
+
+        public SolveResult? Out { get; set; }
+
         /// <summary>The number of movements: 3 for a three-point turn.</summary>
         public int Movements => Legs.Count;
 
@@ -112,6 +134,11 @@ namespace CsdBridge.Core.Vehicles
             if (!Solved)
             {
                 return "No solution: " + (Failure ?? "unknown reason") + ".";
+            }
+
+            if (In != null && Out != null)
+            {
+                return $"Way in: {In.Summary()} Way out: {Out.Summary()} It drives in forwards and out forwards.";
             }
 
             string moves = string.Join(", ", Legs.Select(l => $"{(l.Reverse ? "reverse" : "forward")} {l.Length:0.0} m"));
@@ -224,6 +251,64 @@ namespace CsdBridge.Core.Vehicles
         }
 
         /// <summary>
+        /// Solves a visit to a site: from the start to a stop on the site, then from the stop to the
+        /// target, entering and leaving in a forward direction. The first movement of the way in and
+        /// the last movement of the way out are forwards, and the vehicle is only ever over one of
+        /// the request's forward-only lines (the site boundary) while driving forwards. What happens
+        /// in between, a reverse onto a dock, a three-point turn, is up to the search.
+        /// </summary>
+        public static SolveResult SolveInAndOut(SolveRequest q, VehiclePose stop)
+        {
+            SolveRequest wayIn = q.Clone();
+            wayIn.Goal = stop;
+            wayIn.FirstForward = true;
+            wayIn.LastForward = false;
+            SolveResult a = SolveWithFallback(wayIn);
+            if (!a.Solved)
+            {
+                a.Failure = "on the way in, " + (a.Failure ?? "no route found");
+                return a;
+            }
+
+            SolveRequest wayOut = q.Clone();
+            wayOut.Start = stop;
+            wayOut.FirstForward = false;
+            wayOut.LastForward = true;
+            SolveResult b = SolveWithFallback(wayOut);
+            var both = new SolveResult
+            {
+                Solved = b.Solved,
+                In = a,
+                Out = b,
+                ClearanceAsked = a.ClearanceAsked,
+                ClearanceUsed = Math.Min(a.ClearanceUsed, b.ClearanceUsed),
+                StartClearance = a.StartClearance,
+                GoalClearance = b.GoalClearance,
+                TightPieces = a.TightPieces || b.TightPieces,
+                Blocked = b.Blocked,
+                Expansions = a.Expansions + b.Expansions,
+                Seconds = a.Seconds + b.Seconds,
+                Failure = b.Solved ? null : "on the way out, " + (b.Failure ?? "no route found"),
+            };
+            if (b.Solved)
+            {
+                foreach (SolvedLeg leg in a.Legs)
+                {
+                    leg.Stage = "in";
+                    both.Legs.Add(leg);
+                }
+
+                foreach (SolvedLeg leg in b.Legs)
+                {
+                    leg.Stage = "out";
+                    both.Legs.Add(leg);
+                }
+            }
+
+            return both;
+        }
+
+        /// <summary>
         /// Solves keeping <paramref name="clearance"/> to every obstruction. With <paramref name="relaxAtEnds"/>,
         /// linework closer than that at the start or target pose keeps the distance it has there instead
         /// (or <paramref name="tightClearance"/>, if that is less).
@@ -245,7 +330,7 @@ namespace CsdBridge.Core.Vehicles
 
             var result = new SolveResult { ClearanceAsked = q.Clearance, ClearanceUsed = clearance, StartClearance = clearance, GoalClearance = clearance };
             double rho = v.RearAxleRadius(radius);
-            var space = new Space(v, q.Obstructions, q.Min, q.Max);
+            var space = new Space(v, q.Obstructions, q.Min, q.Max, q.ForwardOnlyLines);
 
             SolveResult Done(string? failure, bool blocked = false)
             {
@@ -409,6 +494,11 @@ namespace CsdBridge.Core.Vehicles
                     for (int b = 0; b < 2; b++)
                     {
                         bool back = b == 1;
+                        if (back && (q.LastForward || (q.FirstForward && n.Dir == 0)))
+                        {
+                            continue; // the movement that finishes, or the one that starts, has to be forwards
+                        }
+
                         bool sameLeg = n.Dir == (back ? -1 : 1);
                         double factor = back ? q.ReverseFactor : 1;
                         double before = n.G + (n.Dir != 0 && !sameLeg ? q.SwitchCost : 0);
@@ -458,6 +548,11 @@ namespace CsdBridge.Core.Vehicles
                 // ---- step on: forwards and in reverse, hard left, straight, hard right
                 for (int dir = 1; dir >= -1; dir -= 2)
                 {
+                    if (dir < 0 && q.FirstForward && n.Dir == 0)
+                    {
+                        continue; // the first movement has to be forwards
+                    }
+
                     for (int k = -1; k <= 1; k++)
                     {
                         double d = dir * step;
@@ -486,6 +581,11 @@ namespace CsdBridge.Core.Vehicles
                         if (!space.Clear(n.X, n.Y, n.Th, sweep) || !space.Clear(mx, my, mth, sweep))
                         {
                             continue;
+                        }
+
+                        if (dir < 0 && (space.OverForwardOnlyLine(n.X, n.Y, n.Th, sweep) || space.OverForwardOnlyLine(mx, my, mth, sweep)))
+                        {
+                            continue; // not in reverse over the site boundary
                         }
 
                         bestG[key] = (float)g;
@@ -809,6 +909,10 @@ namespace CsdBridge.Core.Vehicles
         {
             public readonly double[][] X = new double[3][];
             public readonly double[][] Y = new double[3][];
+
+            /// <summary>The body itself, with nothing added, swept through the movement.</summary>
+            public double[] BareX = new double[0];
+            public double[] BareY = new double[0];
             public double LowX;
             public double LowY;
             public double HighX;
@@ -850,12 +954,17 @@ namespace CsdBridge.Core.Vehicles
             private readonly double[][] _outlineX = new double[3][];
             private readonly double[][] _outlineY = new double[3][];
             private readonly Dictionary<(long Curvature, int Millimetres), Sweep> _sweeps = new Dictionary<(long, int), Sweep>();
+            private readonly IReadOnlyList<(Point2 A, Point2 B)> _forwardOnly;
+            private readonly double[] _bareX;
+            private readonly double[] _bareY;
             private int[] _stamp = new int[0];
             private int _tick;
 
-            public Space(DesignVehicle v, IReadOnlyList<Obstruction> obstructions, Point2 min, Point2 max)
+            public Space(DesignVehicle v, IReadOnlyList<Obstruction> obstructions, Point2 min, Point2 max, IReadOnlyList<(Point2 A, Point2 B)>? forwardOnly = null)
             {
                 _vehicle = v;
+                _forwardOnly = forwardOnly ?? new List<(Point2, Point2)>();
+                Outline(v, 0, out _bareX, out _bareY);
                 _minX = min.X;
                 _minY = min.Y;
                 _maxX = max.X;
@@ -1145,6 +1254,30 @@ namespace CsdBridge.Core.Vehicles
 
             public bool Free(VehiclePose p) => Clear(p.RearAxle.X, p.RearAxle.Y, p.Heading, For(0, 0));
 
+            /// <summary>
+            /// True when the body, moving through the sweep from the pose, is over a line it may only
+            /// cross driving forwards.
+            /// </summary>
+            public bool OverForwardOnlyLine(double x, double y, double th, Sweep sw)
+            {
+                if (_forwardOnly.Count == 0 || sw.BareX.Length == 0)
+                {
+                    return false;
+                }
+
+                double c = Math.Cos(th), s = Math.Sin(th);
+                foreach (var (a, b) in _forwardOnly)
+                {
+                    double ux = a.X - x, uy = a.Y - y, vx = b.X - x, vy = b.Y - y;
+                    if (Touches(ux * c + uy * s, uy * c - ux * s, vx * c + vy * s, vy * c - vx * s, sw.BareX, sw.BareY))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
             /// <summary>True when the rear axle can follow the path (in reverse: facing backwards along it) without touching anything.</summary>
             public bool PathFree(Path2 path, bool reverse)
             {
@@ -1167,7 +1300,8 @@ namespace CsdBridge.Core.Vehicles
                     for (int i = 0; i < steps; i++)
                     {
                         Point2 from = seg.PointAt(ds * i), to = seg.PointAt(ds * (i + 1));
-                        if (!Inside(to.X, to.Y) || !Clear(from.X, from.Y, seg.TangentAt(ds * i) + flip, sw))
+                        double heading = seg.TangentAt(ds * i) + flip;
+                        if (!Inside(to.X, to.Y) || !Clear(from.X, from.Y, heading, sw) || (reverse && OverForwardOnlyLine(from.X, from.Y, heading, sw)))
                         {
                             return false;
                         }
@@ -1191,6 +1325,13 @@ namespace CsdBridge.Core.Vehicles
                     double dx = Math.Abs(kappa) < 1e-12 ? d : Math.Sin(turn) / kappa;
                     double dy = Math.Abs(kappa) < 1e-12 ? 0 : (1 - Math.Cos(turn)) / kappa;
                     sw = Make(_outlineX, _outlineY, dx, dy, turn);
+                    if (_forwardOnly.Count > 0)
+                    {
+                        Sweep bare = Make(new[] { _bareX, _bareX, _bareX }, new[] { _bareY, _bareY, _bareY }, dx, dy, turn);
+                        sw.BareX = bare.X[0];
+                        sw.BareY = bare.Y[0];
+                    }
+
                     _sweeps[key] = sw;
                 }
 

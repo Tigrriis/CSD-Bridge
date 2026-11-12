@@ -24,7 +24,7 @@ namespace CsdBridge.BricsCAD
     /// </summary>
     internal static class TurnPathCommand
     {
-        /// <param name="startIn">The manoeuvre the dialog opens on (AITURNSOLVE opens it on Solve).</param>
+        /// <param name="startIn">The manoeuvre the dialog opens on (AITURNSOLVE opens it on Solve, AITURNINOUT on Solve in and out).</param>
         public static void Run(Document doc, TurnPathChoice.ManoeuvreMode? startIn = null)
         {
             Editor ed = doc.Editor;
@@ -204,7 +204,7 @@ namespace CsdBridge.BricsCAD
 
         private static string ModeName(TurnPathChoice.ManoeuvreMode mode) =>
             mode == TurnPathChoice.ManoeuvreMode.Template ? "template" : mode == TurnPathChoice.ManoeuvreMode.Follow ? "follow"
-            : mode == TurnPathChoice.ManoeuvreMode.Solve ? "solve" : "drive";
+            : mode == TurnPathChoice.ManoeuvreMode.Solve || mode == TurnPathChoice.ManoeuvreMode.SolveInOut ? "solve" : "drive";
 
         /// <summary>Copies the dialog's settings onto a record, leaving its manoeuvre and geometry alone.</summary>
         private static void Apply(TurnPathChoice c, ManoeuvreRecord r)
@@ -298,6 +298,13 @@ namespace CsdBridge.BricsCAD
                 case "solve":
                 {
                     List<EntitySpec>? Parked(Point2 at, Point2 cursor) => PreviewBuilder.Vehicle(v, new VehiclePose(at, Math.Atan2(cursor.Y - at.Y, cursor.X - at.X)));
+                    if (c.Mode == TurnPathChoice.ManoeuvreMode.SolveInOut)
+                    {
+                        return PickInAndOut(ed, r, v, units, Parked);
+                    }
+
+                    r.Via = null;
+                    r.Boundary = null;
                     if (!PickStartAndHeading(ed, units, "\nStart position (centre of the rear axle of the vehicle): ", out Point2 from, out double facing, Parked))
                     {
                         return false;
@@ -321,6 +328,69 @@ namespace CsdBridge.BricsCAD
                 default:
                     return false;
             }
+        }
+
+        /// <summary>
+        /// The 3-point solve: where the vehicle arrives, where it stops on the site, and where it
+        /// leaves, each with the way it faces; then, optionally, the site boundary across the
+        /// driveway, which it may only cross driving forwards.
+        /// </summary>
+        private static bool PickInAndOut(Editor ed, ManoeuvreRecord r, DesignVehicle v, DrawingUnits units, Func<Point2, Point2, List<EntitySpec>?> parked)
+        {
+            if (!PickStartAndHeading(ed, units, "\nEntry: where the vehicle arrives (centre of its rear axle, before it turns in): ", out Point2 entry, out double arriving, parked))
+            {
+                return false;
+            }
+
+            // Each vehicle placed stays on screen while the next is.
+            List<EntitySpec> shown = PreviewBuilder.Vehicle(v, new VehiclePose(entry, arriving));
+            if (!PickStartAndHeading(ed, units, "\nStop on the site: where the vehicle stands (centre of its rear axle): ", out Point2 stop, out double standing, parked,
+                "\nDirection the vehicle faces at the stop (pick a point ahead of it): ", shown))
+            {
+                return false;
+            }
+
+            shown.AddRange(PreviewBuilder.Vehicle(v, new VehiclePose(stop, standing)));
+            if (!PickStartAndHeading(ed, units, "\nExit: where the vehicle leaves to (centre of its rear axle, once it has turned out): ", out Point2 exit, out double leaving, parked,
+                "\nDirection of travel at the exit (pick a point ahead of the vehicle): ", shown))
+            {
+                return false;
+            }
+
+            r.Start = new[] { entry.X, entry.Y };
+            r.HeadingDeg = arriving * 180 / Math.PI;
+            r.Via = new[] { stop.X, stop.Y };
+            r.ViaHeadingDeg = standing * 180 / Math.PI;
+            r.Target = new[] { exit.X, exit.Y };
+            r.TargetHeadingDeg = leaving * 180 / Math.PI;
+            r.Boundary = null;
+
+            // The boundary line is optional: Enter leaves it out.
+            shown.AddRange(PreviewBuilder.Vehicle(v, new VehiclePose(exit, leaving)));
+            var first = new PromptPointOptions("\nSite boundary across the driveway, which the vehicle may only cross forwards: first point (Enter for none): ") { AllowNone = true };
+            PromptPointResult a = ed.GetPoint(first);
+            if (a.Status != PromptStatus.OK)
+            {
+                return a.Status == PromptStatus.None;
+            }
+
+            Point2 start = units.ToModel(Wcs(ed, a.Value));
+            var jig = new TurnPathJig(units, "\nSecond point of the boundary line: ", a.Value.TransformBy(ed.CurrentUserCoordinateSystem), null,
+                cursor => new List<EntitySpec> { new LineSpec { Start = start, End = cursor } }, shown);
+            PromptResult b = ed.Drag(jig);
+            if (b.Status != PromptStatus.OK)
+            {
+                return false;
+            }
+
+            Point2 end = jig.Point2;
+            if (Distance(start, end) < 1e-6)
+            {
+                throw new ArgumentException("The two points of the boundary line must be apart.");
+            }
+
+            r.Boundary = new[] { start.X, start.Y, end.X, end.Y };
+            return true;
         }
 
         /// <summary>
@@ -583,9 +653,16 @@ namespace CsdBridge.BricsCAD
                 return false;
             }
 
-            if (result.Movements > 3 && r.SolveClearance > 0.05)
+            if (result.In == null && result.Movements > 3 && r.SolveClearance > 0.05)
             {
                 ed.WriteMessage("\n  That is a lot of shuffling: with a smaller clearance it may take fewer movements.");
+            }
+
+            if (result.In != null)
+            {
+                ed.WriteMessage(r.Boundary != null
+                    ? "\n  It only crosses the boundary line you picked driving forwards."
+                    : "\n  No boundary line was picked: its first movement in and last movement out are forwards, but check where it crosses the boundary.");
             }
 
             return true;

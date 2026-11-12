@@ -23,6 +23,9 @@ namespace CsdBridge.Core.Vehicles
     {
         public bool Reverse { get; set; }
 
+        /// <summary>Solving in and out of a site: "in" for the movements to the stop, "out" for those from it.</summary>
+        public string? Stage { get; set; }
+
         /// <summary>The way the vehicle faces at the start of the movement, degrees anticlockwise from +X.</summary>
         public double HeadingDeg { get; set; }
 
@@ -76,6 +79,21 @@ namespace CsdBridge.Core.Vehicles
         public double[]? Target { get; set; }
 
         public double TargetHeadingDeg { get; set; }
+
+        /// <summary>
+        /// Solve in and out (the 3-point solve): the rear axle centre, and the way the vehicle faces,
+        /// where it stops on the site between driving in and driving out. Null: a plain solve from
+        /// the start to the target.
+        /// </summary>
+        public double[]? Via { get; set; }
+
+        public double ViaHeadingDeg { get; set; }
+
+        /// <summary>
+        /// Solve in and out: a line the vehicle only crosses driving forwards, x1, y1, x2, y2: the
+        /// site boundary across the driveway. Null: none given.
+        /// </summary>
+        public double[]? Boundary { get; set; }
 
         /// <summary>Solve: the movements the solver found, what they were solved for, and what it said.</summary>
         public List<SolvedMove>? Solved { get; set; }
@@ -137,7 +155,9 @@ namespace CsdBridge.Core.Vehicles
             string N(double v) => Math.Round(v, 3).ToString("0.###", CultureInfo.InvariantCulture);
             string P(double[]? p) => p == null || p.Length < 2 ? "-" : N(p[0]) + "," + N(p[1]);
             return string.Join("|", Vehicle, N(Radius), N(SolveClearance), P(Start), N(HeadingDeg), P(Target), N(TargetHeadingDeg),
-                string.Join(",", ObstructionLayers.Select(l => l.Trim().ToUpperInvariant())));
+                string.Join(",", ObstructionLayers.Select(l => l.Trim().ToUpperInvariant())),
+                Via == null ? "-" : P(Via) + "@" + N(ViaHeadingDeg),
+                Boundary == null ? "-" : string.Join(",", Boundary.Select(N)));
         }
 
         [JsonIgnore]
@@ -149,7 +169,7 @@ namespace CsdBridge.Core.Vehicles
             Solved = new List<SolvedMove>();
             foreach (SolvedLeg leg in result.Legs)
             {
-                var move = new SolvedMove { Reverse = leg.Reverse, HeadingDeg = Math.Round(leg.StartHeading * 180 / Math.PI, 7) };
+                var move = new SolvedMove { Reverse = leg.Reverse, Stage = leg.Stage, HeadingDeg = Math.Round(leg.StartHeading * 180 / Math.PI, 7) };
                 foreach (Segment s in leg.Path.Segments)
                 {
                     move.Segments.Add(s is ArcSegment arc
@@ -189,7 +209,7 @@ namespace CsdBridge.Core.Vehicles
 
                 if (segments.Count > 0)
                 {
-                    legs.Add(new SolvedLeg { Reverse = move.Reverse, StartHeading = move.HeadingDeg * Math.PI / 180, Path = new Path2(segments, false) });
+                    legs.Add(new SolvedLeg { Reverse = move.Reverse, Stage = move.Stage, StartHeading = move.HeadingDeg * Math.PI / 180, Path = new Path2(segments, false) });
                 }
             }
 
@@ -238,6 +258,16 @@ namespace CsdBridge.Core.Vehicles
                 Target = Times(Target);
             }
 
+            if (Via != null)
+            {
+                Via = Times(Via);
+            }
+
+            if (Boundary != null)
+            {
+                Boundary = Times(Boundary);
+            }
+
             if (BlockBase != null)
             {
                 BlockBase = Times(BlockBase);
@@ -281,6 +311,18 @@ namespace CsdBridge.Core.Vehicles
             if (FollowNear != null)
             {
                 FollowNear = Move(FollowNear);
+            }
+
+            if (Via != null)
+            {
+                Via = Move(Via);
+                ViaHeadingDeg += deg;
+            }
+
+            if (Boundary != null && Boundary.Length >= 4)
+            {
+                double[] a = Move(new[] { Boundary[0], Boundary[1] }), b = Move(new[] { Boundary[2], Boundary[3] });
+                Boundary = new[] { a[0], a[1], b[0], b[1] };
             }
 
             if (Target != null)
@@ -429,7 +471,7 @@ namespace CsdBridge.Core.Vehicles
                         throw new ArgumentException("The manoeuvre hasn't been solved yet.");
                     }
 
-                    string label = legs.Count == 1 ? v.Name : $"{v.Name}, {legs.Count} movements";
+                    string label = r.Via != null ? $"{v.Name}, in and out" : legs.Count == 1 ? v.Name : $"{v.Name}, {legs.Count} movements";
                     for (int i = 0; i < legs.Count; i++)
                     {
                         TurnPathResult result = Run(legs[i].ToRequest(v));
@@ -439,7 +481,7 @@ namespace CsdBridge.Core.Vehicles
                             Result = result,
                             Label = label,
                             First = i == 0,
-                            Description = $"{(legs[i].Reverse ? "reverse" : "forward")} {legs[i].Length:0.0} m",
+                            Description = (legs[i].Stage != null ? legs[i].Stage + ", " : "") + $"{(legs[i].Reverse ? "reverse" : "forward")} {legs[i].Length:0.0} m",
                         });
                     }
 
@@ -473,9 +515,16 @@ namespace CsdBridge.Core.Vehicles
 
             var start = new VehiclePose(r.StartPoint, r.HeadingDeg * Math.PI / 180);
             var goal = new VehiclePose(r.TargetPoint, r.TargetHeadingDeg * Math.PI / 180);
+            VehiclePose? stop = r.Via != null && r.Via.Length >= 2 ? new VehiclePose(new Point2(r.Via[0], r.Via[1]), r.ViaHeadingDeg * Math.PI / 180) : (VehiclePose?)null;
+            var places = new List<Point2> { start.RearAxle, goal.RearAxle };
+            if (stop is VehiclePose at)
+            {
+                places.Add(at.RearAxle);
+            }
+
             double margin = Math.Max(v.Length, c.SolverSearchMargin);
-            var min = new Point2(Math.Min(start.RearAxle.X, goal.RearAxle.X) - margin, Math.Min(start.RearAxle.Y, goal.RearAxle.Y) - margin);
-            var max = new Point2(Math.Max(start.RearAxle.X, goal.RearAxle.X) + margin, Math.Max(start.RearAxle.Y, goal.RearAxle.Y) + margin);
+            var min = new Point2(places.Min(p => p.X) - margin, places.Min(p => p.Y) - margin);
+            var max = new Point2(places.Max(p => p.X) + margin, places.Max(p => p.Y) + margin);
             double reach = v.Length + 2;
             var q = new SolveRequest
             {
@@ -489,7 +538,12 @@ namespace CsdBridge.Core.Vehicles
                 Max = max,
                 TimeLimitSeconds = c.SolverTimeLimit,
             };
-            SolveResult result = ManoeuvreSolver.SolveWithFallback(q);
+            if (stop != null && r.Boundary != null && r.Boundary.Length >= 4)
+            {
+                q.ForwardOnlyLines = new List<(Point2, Point2)> { (new Point2(r.Boundary[0], r.Boundary[1]), new Point2(r.Boundary[2], r.Boundary[3])) };
+            }
+
+            SolveResult result = stop is VehiclePose on ? ManoeuvreSolver.SolveInAndOut(q, on) : ManoeuvreSolver.SolveWithFallback(q);
             result.ObstructionsUsed = q.Obstructions.Count;
             if (result.Solved)
             {

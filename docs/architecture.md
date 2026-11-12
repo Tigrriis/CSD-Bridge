@@ -48,7 +48,9 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
   a multi-point turn solver (`ManoeuvreSolver`: a hybrid A* search over position, heading and direction of
   travel, stepping along full-lock arcs and straights, finishing with turn-straight-turn paths to the target or
   to a straight run-in to it, and testing every step by sweeping the body's true outline, enlarged by the
-  clearance, against the obstruction linework),
+  clearance, against the obstruction linework; a 3-point solve runs it twice, into a stop and out of it,
+  with the first and last movements held forwards and optional boundary lines the body may only be over
+  while moving forwards),
   trailers (a vehicle can tow a chain of them: each is dragged by its coupling under the same no-side-slip
   rule as the vehicle's own rear axle, and the swept path is the union over every body),
   unit conversion at the edges (`DrawingUnits`: the simulator always works in metres, so points, curves,

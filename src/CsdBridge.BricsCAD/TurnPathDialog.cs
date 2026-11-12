@@ -16,7 +16,12 @@ namespace CsdBridge.BricsCAD
             Template,
             Follow,
             Drive,
+
+            /// <summary>The 2-point solve: from a start to a target.</summary>
             Solve,
+
+            /// <summary>The 3-point solve: into a site, to a stop on it, and out again, forwards both ways.</summary>
+            SolveInOut,
         }
 
         public DesignVehicle Vehicle { get; set; } = DesignVehicle.B99;
@@ -43,7 +48,17 @@ namespace CsdBridge.BricsCAD
         /// <summary>Check the result against linework on the obstruction layers.</summary>
         public bool CheckConflicts { get; set; }
 
+        /// <summary>The layers this run works with: the solve boundary layers for a solve, otherwise the conflict layers.</summary>
         public List<string> ObstructionLayers { get; set; } = new List<string>();
+
+        /// <summary>The two layer lists as typed: for the conflict check, and for the solve's boundaries.</summary>
+        public List<string> ConflictLayers { get; set; } = new List<string>();
+
+        public List<string> SolveLayers { get; set; } = new List<string>();
+
+        /// <summary>True for either solve.</summary>
+        public bool IsSolve => Mode == ManoeuvreMode.Solve || Mode == ManoeuvreMode.SolveInOut;
+
         public double ClearanceInside { get; set; } = 0.3;
         public double ClearanceOutside { get; set; } = 0.3;
         public TurnPathStyle Style { get; set; } = new TurnPathStyle();
@@ -74,6 +89,8 @@ namespace CsdBridge.BricsCAD
         private readonly RadioButton _modeFollow;
         private readonly RadioButton _modePoints;
         private readonly RadioButton _modeSolve;
+        private readonly RadioButton _modeSolve3;
+        private readonly TextBox _solveLayers;
         private readonly TextBox _radius;
         private readonly Label _radiusLabel;
         private readonly TextBox _angles;
@@ -156,8 +173,9 @@ namespace CsdBridge.BricsCAD
             _modeTemplate = new RadioButton { Text = "Standard turn template: pick the start point and direction", AutoSize = true, Checked = true };
             _modeFollow = new RadioButton { Text = "Follow a line, arc or polyline you select", AutoSize = true };
             _modePoints = new RadioButton { Text = "Drive: click where it goes next (turns at the radius; behind = reverse; each leg kept)", AutoSize = true };
-            _modeSolve = new RadioButton { Text = "Solve: pick where it starts and ends up; finds the movements between the obstruction layers", AutoSize = true };
-            foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints, _modeSolve })
+            _modeSolve = new RadioButton { Text = "Solve (2 points): pick where it starts and ends up; finds the movements between", AutoSize = true };
+            _modeSolve3 = new RadioButton { Text = "Solve in and out (3 points): entry, stop on site, exit; in forwards and out forwards", AutoSize = true };
+            foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints, _modeSolve, _modeSolve3 })
             {
                 rb.Margin = new Padding(3, 2, 3, 2);
                 manoeuvre.Controls.Add(rb, 0, manoeuvre.RowCount);
@@ -208,7 +226,9 @@ namespace CsdBridge.BricsCAD
             conflicts.RowCount++;
             _obstructions = Box(300);
             Row(conflicts, Caption("Layers"), _obstructions, null);
-            Label conflictNote = Note("Separate with commas; * is a wildcard and matches xref layers too (A-WALL* finds arch|A-WALL-EXT). Leave blank to pick objects on the layers after OK. Frozen and off layers are ignored. Solve manoeuvres between the linework on these layers.", LeftWidth - 30);
+            _solveLayers = Box(300);
+            Row(conflicts, Caption("Solve boundary layers"), _solveLayers, null);
+            Label conflictNote = Note("Separate with commas; * is a wildcard and matches xref layers too (A-WALL* finds arch|A-WALL-EXT). Leave blank to pick objects on the layers after OK. Frozen and off layers are ignored. A solve stays between the linework on the solve boundary layers (blank: the layers above). Save as defaults keeps both lists.", LeftWidth - 30);
             conflicts.Controls.Add(conflictNote, 0, conflicts.RowCount);
             conflicts.SetColumnSpan(conflictNote, 2);
             conflicts.RowCount++;
@@ -306,7 +326,8 @@ namespace CsdBridge.BricsCAD
 
             _vehicle.SelectedIndexChanged += (s, e) => OnVehicleChanged();
             _units.SelectedIndexChanged += (s, e) => OnUnitsChanged();
-            foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints, _modeSolve })
+            _solveLayers.TextChanged += (s, e) => _obstructions.Enabled = !_solveLayers.Enabled || _solveLayers.Text.Trim().Length == 0;
+            foreach (RadioButton rb in new[] { _modeTemplate, _modeFollow, _modePoints, _modeSolve, _modeSolve3 })
             {
                 rb.CheckedChanged += (s, e) =>
                 {
@@ -347,6 +368,10 @@ namespace CsdBridge.BricsCAD
             {
                 _modeSolve.Checked = true;
             }
+            else if (startIn == TurnPathChoice.ManoeuvreMode.SolveInOut)
+            {
+                _modeSolve3.Checked = true;
+            }
 
             OnUnitsChanged();
         }
@@ -369,9 +394,10 @@ namespace CsdBridge.BricsCAD
             _modeTemplate.Checked = mode == "template";
             _modeFollow.Checked = mode == "follow";
             _modePoints.Checked = mode == "drive";
-            _modeSolve.Checked = mode == "solve";
+            _modeSolve.Checked = mode == "solve" && r.Via == null;
+            _modeSolve3.Checked = mode == "solve" && r.Via != null;
             OnModeChanged();
-            _modeTemplate.Enabled = _modeFollow.Enabled = _modePoints.Enabled = _modeSolve.Enabled = false;
+            _modeTemplate.Enabled = _modeFollow.Enabled = _modePoints.Enabled = _modeSolve.Enabled = _modeSolve3.Enabled = false;
 
             if (r.Radius > 0)
             {
@@ -409,7 +435,16 @@ namespace CsdBridge.BricsCAD
             }
 
             _checkConflicts.Checked = r.CheckConflicts || mode == "solve";
-            _obstructions.Text = string.Join(", ", r.ObstructionLayers);
+            if (mode == "solve")
+            {
+                // The layers it was solved between.
+                _solveLayers.Text = string.Join(", ", r.ObstructionLayers);
+            }
+            else
+            {
+                _obstructions.Text = string.Join(", ", r.ObstructionLayers);
+            }
+
             _status.Text = mode == "solve"
                 ? "Settings of the selected manoeuvre. OK regenerates it; a change of vehicle, radius, clearance or layers solves it again."
                 : "Settings of the selected turning path. OK regenerates it.";
@@ -572,6 +607,7 @@ namespace CsdBridge.BricsCAD
             _arrival.Checked = c.DriveArrivalHeading;
             _checkConflicts.Checked = c.CheckConflicts;
             _obstructions.Text = string.Join(", ", c.ObstructionLayers);
+            _solveLayers.Text = string.Join(", ", c.SolveLayers);
             _drawSwept.Checked = c.Draw.SweptPath;
             _drawClearance.Checked = c.Draw.Clearance;
             _drawVehicle.Checked = c.Draw.Vehicle;
@@ -644,7 +680,7 @@ namespace CsdBridge.BricsCAD
 
         private void OnModeChanged()
         {
-            bool template = _modeTemplate.Checked, points = _modePoints.Checked, solve = _modeSolve.Checked;
+            bool template = _modeTemplate.Checked, points = _modePoints.Checked, solve = _modeSolve.Checked || _modeSolve3.Checked;
             _radius.Enabled = template || points || solve;
             _radiusLabel.Text = "Turn radius (m)";
             _angles.Enabled = template;
@@ -660,13 +696,17 @@ namespace CsdBridge.BricsCAD
                 _reverse.Checked = false;
             }
 
-            // Solve works between the obstruction layers, keeping one clearance to them on both sides.
+            // A solve works between its boundary layers, keeping one clearance to them on both sides.
             _clearOutside.Enabled = !solve;
             _checkConflicts.Enabled = !solve;
+            _solveLayers.Enabled = solve;
+            _obstructions.Enabled = !solve || _solveLayers.Text.Trim().Length == 0;
             if (solve)
             {
                 _checkConflicts.Checked = true;
-                _status.Text = "Solve keeps the inside clearance on both sides, to everything on the obstruction layers.";
+                _status.Text = _modeSolve3.Checked
+                    ? "In and out: the first movement in and the last movement out are forwards. You can also pick the site boundary it may only cross forwards."
+                    : "Solve keeps the inside clearance on both sides, to everything on the solve boundary layers.";
             }
 
             _reference.SelectedIndex = template ? 0 : _reverse.Checked ? 2 : 1;
@@ -692,20 +732,24 @@ namespace CsdBridge.BricsCAD
             {
                 Vehicle = vehicle,
                 Mode = _modeTemplate.Checked ? TurnPathChoice.ManoeuvreMode.Template : _modeFollow.Checked ? TurnPathChoice.ManoeuvreMode.Follow
-                    : _modeSolve.Checked ? TurnPathChoice.ManoeuvreMode.Solve : TurnPathChoice.ManoeuvreMode.Drive,
+                    : _modeSolve.Checked ? TurnPathChoice.ManoeuvreMode.Solve : _modeSolve3.Checked ? TurnPathChoice.ManoeuvreMode.SolveInOut : TurnPathChoice.ManoeuvreMode.Drive,
                 Left = _left.Checked,
                 Reverse = _reverse.Checked,
                 Reference = _reference.SelectedIndex == 2 ? ReferencePoint.RearAxle : _reference.SelectedIndex == 1 ? ReferencePoint.FrontAxle : ReferencePoint.OuterFrontWheel,
                 Turns = _turns.SelectedIndex == 1 ? TurnPathBuilder.DriveTurns.Corner : TurnPathBuilder.DriveTurns.Arc,
                 ArrivalHeading = _arrival.Checked,
                 CheckConflicts = _checkConflicts.Checked,
-                ObstructionLayers = LayerPattern.Parse(_obstructions.Text),
+                ConflictLayers = LayerPattern.Parse(_obstructions.Text),
+                SolveLayers = LayerPattern.Parse(_solveLayers.Text),
                 Conventions = _conventions,
                 Units = SelectedUnits,
                 UnitsSetting = _units.SelectedIndex == 1 ? "m" : _units.SelectedIndex == 2 ? "mm" : "auto",
             };
 
-            if (vehicle.IsArticulated && c.Mode == TurnPathChoice.ManoeuvreMode.Solve)
+            // A solve stays between its boundary layers; with none typed, the conflict layers stand in.
+            c.ObstructionLayers = c.IsSolve && c.SolveLayers.Count > 0 ? c.SolveLayers.ToList() : c.ConflictLayers.ToList();
+
+            if (vehicle.IsArticulated && c.IsSolve)
             {
                 problem = $"The {vehicle.Name} tows a trailer. The solver only works out manoeuvres for rigid vehicles: drive it yourself with Drive, or follow a line.";
                 return false;
@@ -725,7 +769,7 @@ namespace CsdBridge.BricsCAD
                     return false;
                 }
 
-                if ((c.Mode == TurnPathChoice.ManoeuvreMode.Drive || c.Mode == TurnPathChoice.ManoeuvreMode.Solve) && radius < vehicle.MinTurnRadius - 1e-9)
+                if ((c.Mode == TurnPathChoice.ManoeuvreMode.Drive || c.IsSolve) && radius < vehicle.MinTurnRadius - 1e-9)
                 {
                     problem = $"The {vehicle.Name} can't turn tighter than {Num(vehicle.MinTurnRadius)} m (outer front wheel, AS/NZS 2890.1 B3.1).";
                     return false;
@@ -777,7 +821,7 @@ namespace CsdBridge.BricsCAD
 
             c.ClearanceInside = ci;
             c.ClearanceOutside = co;
-            if (c.Mode == TurnPathChoice.ManoeuvreMode.Solve)
+            if (c.IsSolve)
             {
                 // Which side is inside changes with every movement: one clearance, both sides, always checked.
                 c.ClearanceOutside = ci;
@@ -855,7 +899,8 @@ namespace CsdBridge.BricsCAD
                 c.DriveTurns = choice.Turns == TurnPathBuilder.DriveTurns.Corner ? "corner" : "arc";
                 c.DriveArrivalHeading = choice.ArrivalHeading;
                 c.CheckConflicts = choice.CheckConflicts;
-                c.ObstructionLayers = choice.ObstructionLayers.ToList();
+                c.ObstructionLayers = choice.ConflictLayers.ToList();
+                c.SolveLayers = choice.SolveLayers.ToList();
                 c.OutlineInterval = choice.Style.OutlineInterval;
                 c.TextHeight = choice.Style.TextHeight;
                 c.Draw = choice.Style.Draw.Clone();
