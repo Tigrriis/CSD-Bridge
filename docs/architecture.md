@@ -40,28 +40,9 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
   and DXF writer for the CLI harness and tests. Porting to AutoCAD means writing another
   `IDrawingHost`. The BricsCAD host already uses the AutoCAD-compatible API, so that is mostly a
   namespace swap.
-- **CsdBridge.Core/Vehicles** is the AS/NZS 2890.1 turning path simulator: design vehicles (B99,
-  B85, or any added to `turn-paths.json`), a kinematic bicycle-model simulation along a path, the
-  swept path as the exact boundary of the union of the body over every pose, the clearance
-  template, the `draw_turn_path` tool, a drive planner (turn at the radius, then straight, forwards or in
-  reverse, leg by leg, optionally arriving on a set heading), conflict detection against obstruction linework,
-  a multi-point turn solver (`ManoeuvreSolver`: a hybrid A* search over position, heading and direction of
-  travel, stepping along full-lock arcs and straights, finishing with turn-straight-turn paths to the target or
-  to a straight run-in to it, and testing every step by sweeping the body's true outline, enlarged by the
-  clearance, against the obstruction linework; a 3-point solve runs it twice, into a stop and out of it,
-  with the first and last movements held forwards and optional boundary lines the body may only be over
-  while moving forwards),
-  trailers (a vehicle can tow a chain of them: each is dragged by its coupling under the same no-side-slip
-  rule as the vehicle's own rear axle, and the swept path is the union over every body),
-  unit conversion at the edges (`DrawingUnits`: the simulator always works in metres, so points, curves,
-  obstructions and surface levels from a millimetre drawing are scaled on the way in and everything drawn
-  on the way out),
-  the saved manoeuvre record that `AITURNEDIT` regenerates from, and the Appendix C ground clearance check (`check_ground_clearance`) on a long
-  section or along each side of the car on a surface. It has no CAD dependency, so the same code serves
-  the `AITURN`/`AICLEARANCE` commands, Claude's tools and the tests.
-- **CsdBridge.BricsCAD** is the add-in: commands, panel, settings, and the drawing host. `AITURN`
-  shows a WinForms dialog, prompts for geometry with the Editor, and draws through
-  `BricsCadDrawingHost` like the tools do, so the result is one UNDO step.
+- **CsdBridge.BricsCAD** is the add-in: commands, panel, settings, and the drawing host.
+- The vehicle turning path tools that used to live here are now a separate add-in, PointerTurn
+  (github.com/Tigrriis/pointerturn). Nothing in CSD-Bridge depends on it.
 
 ## Request flow
 

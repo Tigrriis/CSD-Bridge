@@ -10,7 +10,6 @@ using Bricscad.ApplicationServices;
 using CsdBridge.BricsCAD.Csd;
 using CsdBridge.BricsCAD.Routines;
 using CsdBridge.Core.Civil;
-using CsdBridge.Core.Vehicles;
 using CsdBridge.Core.Agent;
 using CsdBridge.Core.Drawing;
 using CsdBridge.Core.History;
@@ -448,15 +447,12 @@ namespace CsdBridge.BricsCAD
             }
 
             RoadConventions? conventions = settings.LoadRoadConventions(out string? conventionsError);
-            TurnPathConventions? turnPaths = settings.LoadTurnPathConventions(out string? turnPathsError);
             var extensions = new List<IToolExtension>
             {
                 new ProfileTools(),
                 new DrawingNotesTools(NotesFor(doc)),
                 new RoadDraftingTools(new BricsCadDrawingHost(doc), conventions, conventionsError),
                 new RoutineTools(name => RoutineUi.CreateLibrary().Find(name), draft => Interlocked.Exchange(ref _draft, draft)),
-                new TurnPathTools(new BricsCadDrawingHost(doc), turnPaths, turnPathsError),
-                new GroundClearanceTools(new BricsCadDrawingHost(doc), turnPaths, turnPathsError),
             };
             if (!string.Equals(settings.CsdMode, "off", StringComparison.OrdinalIgnoreCase))
             {
