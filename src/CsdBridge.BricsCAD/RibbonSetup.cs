@@ -12,7 +12,7 @@ namespace CsdBridge.BricsCAD
 {
     /// <summary>
     /// Adds a "CSD-Bridge" tab to the BricsCAD ribbon:
-    ///   Chat | Draft | History   (large)    New chat / Status / API key   (small)    Hatch pipes (large)
+    ///   Chat | Draft | History   (large)    New chat / Status / API key   (small)    Hatch pipes (large)    VP layers (large)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
     ///
@@ -105,9 +105,13 @@ namespace CsdBridge.BricsCAD
                 var drafting = new RibbonPanelSource { Id = "CSDBRIDGE_DRAFTING_PANEL", Name = "Long sections", Title = "Long sections" };
                 drafting.Items.Add(Button("Hatch pipes", "AIPIPEHATCH", "Hatch the sewer and stormwater pipes in every long section layout", "pipehatch", large: true));
 
+                var layouts = new RibbonPanelSource { Id = "CSDBRIDGE_LAYOUTS_PANEL", Name = "Layouts", Title = "Layouts" };
+                layouts.Items.Add(Button("VP layers", "AIVPLAYERS", "Show or hide layers in the viewports of many layouts at once (layers × layouts grid)", "vplayers", large: true));
+
                 var tab = new RibbonTab { Id = TabId, Name = "CSD-Bridge", Title = "CSD-Bridge" };
                 tab.Panels.Add(new RibbonPanel { Source = source });
                 tab.Panels.Add(new RibbonPanel { Source = drafting });
+                tab.Panels.Add(new RibbonPanel { Source = layouts });
                 ribbon.Tabs.Add(tab);
                 if (activate)
                 {
@@ -257,6 +261,9 @@ namespace CsdBridge.BricsCAD
                             return;
                         case "AIHISTORY":
                             HistoryWindow.ShowWindow();
+                            return;
+                        case "AIVPLAYERS":
+                            ViewportLayersWindow.ShowWindow();
                             return;
                         case string command:
                             Document? doc = CadApp.DocumentManager.MdiActiveDocument;
