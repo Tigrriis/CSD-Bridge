@@ -152,6 +152,32 @@ def pipe_hatch():
     return img
 
 
+def vp_layers():
+    img, d = canvas()
+    # a sheet with a grid of dots: filled = shown, hollow = frozen in that layout's viewports
+    d.rounded_rectangle((16, 16, 240, 240), radius=24, fill=WHITE, outline=GREY, width=OUTLINE)
+    d.line([(16, 80), (240, 80)], fill=GREY, width=8)
+    d.line([(80, 16), (80, 240)], fill=GREY, width=8)
+    states = [
+        [True, False, True],
+        [True, True, False],
+        [False, True, True],
+    ]
+    for row, cells in enumerate(states):
+        for col, shown in enumerate(cells):
+            cx, cy = 112 + col * 52, 112 + row * 52
+            box = (cx - 19, cy - 19, cx + 19, cy + 19)
+            if shown:
+                d.ellipse(box, fill=GREEN, outline=GREEN_DARK, width=6)
+            else:
+                d.ellipse(box, fill=WHITE, outline=GREY, width=8)
+    # layer bars in the name column
+    for row in range(3):
+        y = 112 + row * 52
+        d.line([(34, y), (62, y)], fill=BLUE, width=14)
+    return img
+
+
 ICONS = {
     "chat": chat,
     "draft": draft,
@@ -162,6 +188,7 @@ ICONS = {
     "key": key,
     "scalebar": scale_bar,
     "pipehatch": pipe_hatch,
+    "vplayers": vp_layers,
 }
 
 

@@ -23,6 +23,7 @@ namespace CsdBridge.BricsCAD
     /// AICSD      Civil Site Design tools: read only, edit, off, or list CSD's commands
     /// AISCALEBARS add scale bar blocks to every layout from its viewport scales (no Claude call)
     /// AIPIPEHATCH hatch the sewer and stormwater pipes in the long section layouts
+    /// AIVPLAYERS grid of layers × layouts: show or hide layers in the viewports of many layouts at once
     /// AIRESET    start a new conversation for this drawing
     /// AIKEY      set or remove the Anthropic API key
     /// AISTATUS   show settings, key source and usage
@@ -277,6 +278,9 @@ namespace CsdBridge.BricsCAD
         {
             PipeHatcher.Run(CadApp.DocumentManager.MdiActiveDocument);
         }
+
+        [CommandMethod(Group, "AIVPLAYERS", CommandFlags.Modal)]
+        public void AiVpLayers() => ViewportLayersWindow.ShowWindow();
 
         [CommandMethod(Group, "AIKEY", CommandFlags.Modal)]
         public void AiKey()

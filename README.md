@@ -56,7 +56,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 168 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 189 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -183,11 +183,12 @@ with `-Remove`.
 | `AIROUTINES` | Open the Routines window: run, create, edit, rename, duplicate or delete routines |
 | `AIHISTORY` | Open the history window: every request and what Claude did |
 | `AIPIPEHATCH` | Hatch the sewer and stormwater pipes in every long section layout. No API key needed; see [Hatching long section pipes](#hatching-long-section-pipes). |
+| `AIVPLAYERS` | Grid of layers × layouts: show or hide layers in every viewport of many layouts at once. No API key needed; see [Viewport layers across layouts](#viewport-layers-across-layouts). |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
 | `AISCALEBARS` | Add a scale bar block to every layout for each viewport scale on it. Runs in the add-in, so it doesn't call Claude or cost anything. See [Scale bars](#scale-bars). |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft, Routines and History buttons, small New chat,
-Status and API key buttons, a Scale Bars button in the Sheets panel and a Hatch pipes button in the
+Status and API key buttons, Scale Bars and VP layers buttons in the Sheets panel and a Hatch pipes button in the
 Long sections panel. It's added when the add-in loads. If your workspace hides the
 ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
@@ -395,6 +396,34 @@ The command lists, per layout, how many runs it hatched and which xref layers th
 up something that isn't a pipe, put those layer names in `pipe_layers` in `long-section-hatch.json` (next to the DLL),
 which also holds the layout name test, the hatch layers and the keywords for each service.
 
+## Viewport layers across layouts
+
+`AIVPLAYERS` (ribbon: **VP layers**) opens a window with the drawing's layers down the side and its layouts across the
+top. It doesn't use Claude. Each cell shows how that layer shows in that layout's viewports:
+
+| Cell | Meaning |
+|---|---|
+| ● green | shown in every viewport on the layout |
+| ○ grey | frozen in every viewport on the layout (VP freeze) |
+| ◐ orange | frozen in some of the layout's viewports |
+| – | the layout has no viewports |
+
+- **Select** like a spreadsheet: drag across cells, Ctrl-click to add, Shift-click for a range. Click a layout's name to
+  select its whole column, or a layer's name for its whole row (Ctrl/Shift work there too). Ctrl+A selects everything.
+- **Show in viewports** thaws the selected layers in every viewport of the selected layouts; **Hide in viewports**
+  freezes them. Space, a double-click or the right-click menu toggles (from the cell you started on: shown → hide,
+  otherwise → show). Viewports already right are left alone, and viewports on locked layers are changed too.
+- **Filters**: type in the Layers or Layouts box. Plain text matches anywhere in the name, `*` and `?` are wildcards,
+  commas separate several, and `~` in front leaves names out, e.g. `sewer, storm, ~*TEXT*`. Untick **Xref layers** to
+  hide `xref|layer` names.
+- Layers that are off or frozen in the whole drawing are greyed and marked: no viewport shows them until they are turned
+  on in the layer manager.
+- The window stays open beside the drawing, follows the drawing you switch to, and re-reads it when you come back to it
+  (or press Refresh). Each Show/Hide should be one UNDO step.
+
+**Not yet run inside BricsCAD**: the grid rules are unit-tested and the window compiles, but it hasn't been opened in
+BricsCAD yet. Check on a copy of a drawing first: that the paper space viewport is never counted as a layout's viewport,
+and that UNDO takes back a Show/Hide in one step.
 
 ## Saving work between chats
 

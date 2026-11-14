@@ -13,7 +13,7 @@ namespace CsdBridge.BricsCAD
     /// <summary>
     /// Adds a "CSD-Bridge" tab to the BricsCAD ribbon:
     ///   Claude panel:   Chat | Draft | Routines | History (large), New chat / Status / API key (small)
-    ///   Sheets panel:   Scale Bars (runs in the add-in, no Claude call)
+    ///   Sheets panel:   Scale Bars | VP layers (run in the add-in, no Claude call)
     ///   Long sections panel: Hatch pipes (runs in the add-in, no Claude call)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
@@ -110,6 +110,7 @@ namespace CsdBridge.BricsCAD
 
                 var sheets = new RibbonPanelSource { Id = "CSDBRIDGE_SHEETS", Name = "Sheets", Title = "Sheets" };
                 sheets.Items.Add(Button("Scale Bars", "AISCALEBARS", "Add a scale bar to every layout for each viewport scale (no Claude call, no cost)", "scalebar", large: true));
+                sheets.Items.Add(Button("VP layers", "AIVPLAYERS", "Show or hide layers in the viewports of many layouts at once: a grid of layers × layouts (no Claude call, no cost)", "vplayers", large: true));
                 tab.Panels.Add(new RibbonPanel { Source = sheets });
 
                 var longSections = new RibbonPanelSource { Id = "CSDBRIDGE_LONGSECTIONS", Name = "Long sections", Title = "Long sections" };
@@ -269,6 +270,9 @@ namespace CsdBridge.BricsCAD
                             return;
                         case "AIROUTINES":
                             Routines.RoutinesWindow.ShowWindow();
+                            return;
+                        case "AIVPLAYERS":
+                            ViewportLayersWindow.ShowWindow();
                             return;
                         case null:
                             Say($"the ribbon button gave no command ({parameter?.GetType().FullName ?? "nothing"} was passed). Type the command instead.");
