@@ -15,11 +15,6 @@ namespace CsdBridge.BricsCAD
     /// AIPANEL    open the chat panel
     /// AIHISTORY  open the history of requests to Claude
     /// AIROUTINES open the routines: saved procedures to run, create, edit, rename or delete
-    /// AITURN     draw an AS/NZS 2890.1 B85/B99 vehicle swept path (turning template, along a path, or driven)
-    /// AITURNEDIT change a turning path drawn by AITURN (settings or geometry) and regenerate it
-    /// AITURNSOLVE work out a multi-point turn: the movements from a start to a target between the solve boundary layers
-    /// AITURNINOUT work out the way into a site, to a stop on it, and out again, forwards both ways
-    /// AICLEARANCE check a design vehicle's ground clearance (Appendix C) on a long section or a surface
     /// AIRIBBON   add the CSD-Bridge ribbon tab again (if a workspace change removed it)
     /// AIEFFORT   choose how hard Claude works: Auto, Quick, Normal or Thorough
     /// AIMODEL    choose the Claude model: Opus, Sonnet or Haiku
@@ -241,20 +236,6 @@ namespace CsdBridge.BricsCAD
 
         [CommandMethod(Group, "AIROUTINES", CommandFlags.Modal)]
         public void AiRoutines() => Routines.RoutinesWindow.ShowWindow();
-        [CommandMethod(Group, "AITURN", CommandFlags.Modal)]
-        public void AiTurn() => TurnPathCommand.Run(CadApp.DocumentManager.MdiActiveDocument);
-
-        [CommandMethod(Group, "AITURNEDIT", CommandFlags.Modal)]
-        public void AiTurnEdit() => TurnPathCommand.Edit(CadApp.DocumentManager.MdiActiveDocument);
-
-        [CommandMethod(Group, "AITURNSOLVE", CommandFlags.Modal)]
-        public void AiTurnSolve() => TurnPathCommand.Run(CadApp.DocumentManager.MdiActiveDocument, TurnPathChoice.ManoeuvreMode.Solve);
-
-        [CommandMethod(Group, "AITURNINOUT", CommandFlags.Modal)]
-        public void AiTurnInOut() => TurnPathCommand.Run(CadApp.DocumentManager.MdiActiveDocument, TurnPathChoice.ManoeuvreMode.SolveInOut);
-
-        [CommandMethod(Group, "AICLEARANCE", CommandFlags.Modal)]
-        public void AiClearance() => GroundClearanceCommand.Run(CadApp.DocumentManager.MdiActiveDocument);
 
         [CommandMethod(Group, "AIRIBBON", CommandFlags.Modal)]
         public void AiRibbon()
@@ -341,8 +322,6 @@ namespace CsdBridge.BricsCAD
             ed.WriteMessage($"\n  Routines:   {BridgeSettings.PersonalRoutinesFolder}");
             ed.WriteMessage($"\n  Office routines: {(office == null ? "none (set office_routines_folder)" : office + (Directory.Exists(office) ? "" : " (not found)"))}");
             ed.WriteMessage($"\n  CSD tools:  {Describe((s.CsdMode ?? "read").ToLowerInvariant())} (change with AICSD)");
-            string turnPaths = s.ResolvedTurnPathsPath();
-            ed.WriteMessage($"\n  Turn paths: {turnPaths}{(File.Exists(turnPaths) ? "" : " (not found; built-in B99/B85 used)")}");
             ed.WriteMessage($"\n  Settings:   {BridgeSettings.SettingsPath}");
             ed.WriteMessage($"\n  Logs:       {BridgeSettings.LogFolder}");
             if (AgentRunner.Peek(doc) is { } agent)

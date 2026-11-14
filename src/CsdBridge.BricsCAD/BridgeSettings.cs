@@ -83,14 +83,6 @@ namespace CsdBridge.BricsCAD
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public CsdBridge.Core.Drawing.ScaleBarOptions? ScaleBars { get; set; }
 
-        /// <summary>
-        /// Vehicle turning path conventions file (vehicles, clearances, layers). Empty means
-        /// %APPDATA%\CsdBridge\turn-paths.json if the AITURN dialog has saved one, else turn-paths.json
-        /// next to the add-in DLL.
-        /// </summary>
-        [JsonPropertyName("turn_paths_file")]
-        public string? TurnPathsFile { get; set; }
-
         /// <summary>Long section pipe hatch settings (AIPIPEHATCH). Empty means long-section-hatch.json next to the add-in DLL.</summary>
         [JsonPropertyName("long_section_hatch_file")]
         public string? LongSectionHatchFile { get; set; }
@@ -193,64 +185,6 @@ namespace CsdBridge.BricsCAD
                 }
 
                 return CsdBridge.Core.Civil.RoadConventions.Load(path);
-            }
-            catch (Exception ex)
-            {
-                error = $"{path}: {ex.Message}";
-                return null;
-            }
-        }
-
-        /// <summary>Where the AITURN dialog saves the user's turning path conventions.</summary>
-        public static string UserTurnPathsPath => Path.Combine(Folder, "turn-paths.json");
-
-        public string ResolvedTurnPathsPath()
-        {
-            if (!string.IsNullOrWhiteSpace(TurnPathsFile))
-            {
-                return Environment.ExpandEnvironmentVariables(TurnPathsFile!);
-            }
-
-            if (File.Exists(UserTurnPathsPath))
-            {
-                return UserTurnPathsPath;
-            }
-
-            string dir = Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".";
-            return Path.Combine(dir, "turn-paths.json");
-        }
-
-        /// <summary>The turning path conventions, or null with the reason.</summary>
-        public CsdBridge.Core.Vehicles.TurnPathConventions? LoadTurnPathConventions(out string? error)
-        {
-            string path = ResolvedTurnPathsPath();
-            error = null;
-            try
-            {
-                if (!File.Exists(path))
-                {
-                    error = $"{path} not found";
-                    return null;
-                }
-
-                CsdBridge.Core.Vehicles.TurnPathConventions conventions = CsdBridge.Core.Vehicles.TurnPathConventions.Load(path);
-
-                // A copy saved by "Save as defaults", or a shared one, may predate vehicles added to the
-                // file shipped with the add-in: take those from the shipped file.
-                string shipped = Path.Combine(Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".", "turn-paths.json");
-                if (!string.Equals(Path.GetFullPath(path), Path.GetFullPath(shipped), StringComparison.OrdinalIgnoreCase) && File.Exists(shipped))
-                {
-                    try
-                    {
-                        conventions.AddMissingVehicles(CsdBridge.Core.Vehicles.TurnPathConventions.Load(shipped));
-                    }
-                    catch (Exception)
-                    {
-                        // The user's own file is good: a problem with the shipped one is not theirs to see here.
-                    }
-                }
-
-                return conventions;
             }
             catch (Exception ex)
             {

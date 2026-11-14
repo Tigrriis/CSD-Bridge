@@ -11,7 +11,6 @@ using CsdBridge.Core.Drawing;
 using CsdBridge.Core.Offline;
 using CsdBridge.Core.Routines;
 using CsdBridge.Core.Tools;
-using CsdBridge.Core.Vehicles;
 
 // Usage:
 //   csd-bridge [options] ["prompt"]
@@ -179,19 +178,6 @@ if (routineArg != null)
 }
 
 var client = new AnthropicClient();
-TurnPathConventions? turnPaths = null;
-string? turnPathsError = null;
-try
-{
-    turnPaths = TurnPathConventions.Load(Path.Combine(AppContext.BaseDirectory, "turn-paths.json"));
-}
-catch (Exception ex)
-{
-    turnPathsError = ex.Message;
-}
-
-extensions.Add(new TurnPathTools(host, turnPaths, turnPathsError));
-extensions.Add(new GroundClearanceTools(host, turnPaths, turnPathsError));
 var agent = new DraftingAgent(client, new ToolDispatcher(host), options, null, extensions);
 
 using var cts = new CancellationTokenSource();

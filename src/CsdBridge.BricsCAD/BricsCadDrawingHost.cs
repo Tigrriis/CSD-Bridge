@@ -20,7 +20,7 @@ namespace CsdBridge.BricsCAD
     /// BricsCAD's main thread, inside the AIDRAFT command (see <see cref="AgentRunner"/>),
     /// so the whole AI request is one UNDO step.
     /// </summary>
-    internal sealed class BricsCadDrawingHost : IDrawingHost, IBlockMaker, CsdBridge.Core.Vehicles.IGroundSurfaceProvider, CsdBridge.Core.Vehicles.IObstructionSource
+    internal sealed class BricsCadDrawingHost : IDrawingHost
     {
         private const int MaxListedNames = 5000;
         private const int MaxPolylinePoints = 500;
@@ -330,41 +330,6 @@ namespace CsdBridge.BricsCAD
             }
 
             return ItemResult.Success(index, ent.Handle.ToString(), note);
-        }
-
-        /// <summary>
-        /// A transient entity for temporary graphics (jigs): lines, polylines, arcs and circles only.
-        /// The caller owns and disposes it; it is never added to the database.
-        /// </summary>
-        internal static Entity? PreviewEntity(EntitySpec spec)
-        {
-            switch (spec)
-            {
-                case LineSpec l:
-                    return new Line(P3(l.Start), P3(l.End));
-
-                case PolylineSpec p:
-                {
-                    var pl = new Polyline(p.Points.Count);
-                    for (int i = 0; i < p.Points.Count; i++)
-                    {
-                        double bulge = p.Bulges != null ? p.Bulges[i] : 0;
-                        pl.AddVertexAt(i, new Point2d(p.Points[i].X, p.Points[i].Y), bulge, 0, 0);
-                    }
-
-                    pl.Closed = p.Closed;
-                    return pl;
-                }
-
-                case CircleSpec c:
-                    return new Circle(P3(c.Center), Vector3d.ZAxis, c.Radius);
-
-                case ArcSpec a:
-                    return new Arc(P3(a.Center), a.Radius, Rad(a.StartAngleDeg), Rad(a.EndAngleDeg));
-
-                default:
-                    return null;
-            }
         }
 
         private Entity Build(EntitySpec spec, ObjectId blockId)
@@ -1451,83 +1416,6 @@ namespace CsdBridge.BricsCAD
             foreach (ObjectId id in ids)
             {
                 ((Entity)tr.GetObject(id, OpenMode.ForWrite)).TransformBy(matrix);
-            }
-        }
-
-        // =========================================================== obstructions
-
-        public IReadOnlyList<CsdBridge.Core.Vehicles.Obstruction> Obstructions(IReadOnlyList<string> layerPatterns, Point2 min, Point2 max, IReadOnlyCollection<string> excludeLayers) =>
-            ObstructionScanner.Scan(_doc, layerPatterns, min, max, excludeLayers);
-
-        // ============================================================== surfaces
-
-        public IReadOnlyList<string> SurfaceNames() => Csd.GroundSampler.SurfaceNames(_doc);
-
-        public Func<IReadOnlyList<Point2>, IReadOnlyList<double?>> Sampler(string? surfaceName, out string resolvedName)
-        {
-            // Check the surface exists now, so a bad name fails before any work is done.
-            Csd.GroundSampler.SampleMany(_doc, surfaceName, Array.Empty<Point2>(), out resolvedName);
-            string name = resolvedName;
-            return points => Csd.GroundSampler.SampleMany(_doc, name, points, out _);
-        }
-
-        // ================================================================ blocks
-
-        private static readonly char[] InvalidNameChars = { '<', '>', '/', '\\', '"', ':', ';', '?', '*', '|', ',', '=', '`' };
-
-        public BlockResult MakeBlock(IReadOnlyList<string> handles, string name, Point2 basePoint, string? layer)
-        {
-            string clean = new string(name.Select(ch => Array.IndexOf(InvalidNameChars, ch) >= 0 ? '-' : ch).ToArray()).Trim();
-            if (clean.Length == 0)
-            {
-                clean = "Turning path";
-            }
-
-            using (_doc.LockDocument())
-            using (Transaction tr = Db.TransactionManager.StartTransaction())
-            {
-                var bt = (BlockTable)tr.GetObject(Db.BlockTableId, OpenMode.ForWrite);
-                string unique = clean;
-                for (int n = 2; bt.Has(unique); n++)
-                {
-                    unique = $"{clean} {n}";
-                }
-
-                var ids = new ObjectIdCollection();
-                foreach (string h in handles)
-                {
-                    ObjectId id = ResolveHandle(h);
-                    if (!id.IsNull && !id.IsErased)
-                    {
-                        ids.Add(id);
-                    }
-                }
-
-                if (ids.Count == 0)
-                {
-                    throw new ArgumentException("None of the entities could be found to make the block from.");
-                }
-
-                var btr = new BlockTableRecord { Name = unique, Origin = P3(basePoint) };
-                ObjectId btrId = bt.Add(btr);
-                tr.AddNewlyCreatedDBObject(btr, true);
-                // Moves the entities out of model space into the block, keeping their coordinates and layers.
-                btr.AssumeOwnershipOf(ids);
-
-                var space = (BlockTableRecord)tr.GetObject(Db.CurrentSpaceId, OpenMode.ForWrite);
-                var br = new BlockReference(P3(basePoint), btrId);
-                br.SetDatabaseDefaults(Db);
-                if (!string.IsNullOrWhiteSpace(layer))
-                {
-                    GetOrCreateLayer(tr, layer!, out _);
-                    br.Layer = layer;
-                }
-
-                space.AppendEntity(br);
-                tr.AddNewlyCreatedDBObject(br, true);
-                tr.Commit();
-                Flush();
-                return new BlockResult { BlockName = unique, Handle = br.Handle.ToString(), EntityCount = ids.Count };
             }
         }
 

@@ -112,44 +112,6 @@ namespace CsdBridge.BricsCAD.Csd
             }
         }
 
-        /// <summary>
-        /// Levels of a TIN surface at many plan points in one transaction; null where a point is off
-        /// the surface. <paramref name="surface"/> null means the only surface.
-        /// </summary>
-        public static List<double?> SampleMany(Document doc, string? surface, IReadOnlyList<CsdBridge.Core.Drawing.Point2> points, out string resolvedName)
-        {
-            Database db = doc.Database;
-            using (Transaction tr = db.TransactionManager.StartTransaction())
-            {
-                List<Entity> surfaces = FindSurfaces(db, tr);
-                if (surfaces.Count == 0)
-                {
-                    throw new CsdException("There is no BricsCAD TIN surface in this drawing. Make a BricsCAD copy of the CSD surface with Surface Exchange first.");
-                }
-
-                Entity ent = PickSurface(surfaces, surface);
-                resolvedName = SurfaceName(ent);
-                MethodInfo elevationAt = ent.GetType().GetMethod("GetElevationAtPoint", new[] { typeof(Point3d) })
-                    ?? throw new CsdException("This BricsCAD version can't read surface elevations.");
-                var levels = new List<double?>(points.Count);
-                foreach (CsdBridge.Core.Drawing.Point2 p in points)
-                {
-                    try
-                    {
-                        double z = (double)elevationAt.Invoke(ent, new object[] { new Point3d(p.X, p.Y, 0) })!;
-                        levels.Add(double.IsNaN(z) || double.IsInfinity(z) || Math.Abs(z) > 1e7 ? (double?)null : z);
-                    }
-                    catch (Exception)
-                    {
-                        levels.Add(null);
-                    }
-                }
-
-                tr.Commit();
-                return levels;
-            }
-        }
-
         public static List<string> SurfaceNames(Document doc)
         {
             using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
