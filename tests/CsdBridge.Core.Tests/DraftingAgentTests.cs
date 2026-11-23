@@ -254,6 +254,35 @@ namespace CsdBridge.Core.Tests
 
         // ------------------------------------------------------------------ helpers
 
+        [Fact]
+        public async Task A_picture_from_a_tool_goes_back_as_an_image_block()
+        {
+            var http = new FakeAnthropic(
+                Response("tool_use",
+                    ToolUse("toolu_1", ToolCatalog.DrawEntities, @"{""entities"":[{""kind"":""text"",""position"":[0,0],""text"":""PIT 1""}]}"),
+                    ToolUse("toolu_2", ToolCatalog.ViewDrawing, "{}")),
+                Response("end_turn", @"{""type"":""text"",""text"":""Looks clear.""}"));
+
+            var agent = NewAgent(http, new InMemoryDrawingHost());
+            AgentRunResult result = await agent.RunAsync("Label the pit and check it");
+
+            Assert.Equal(AgentRunStatus.Completed, result.Status);
+            JsonElement results = http.Bodies[1].GetProperty("messages")[2].GetProperty("content");
+            Assert.Equal(JsonValueKind.String, results[0].GetProperty("content").ValueKind); // ordinary results stay plain text
+
+            JsonElement view = results[1];
+            Assert.Equal("toolu_2", view.GetProperty("tool_use_id").GetString());
+            JsonElement blocks = view.GetProperty("content");
+            Assert.Equal("text", blocks[0].GetProperty("type").GetString());
+            Assert.Contains("\"overlap_count\":0", blocks[0].GetProperty("text").GetString());
+            Assert.Equal("image", blocks[1].GetProperty("type").GetString());
+            JsonElement source = blocks[1].GetProperty("source");
+            Assert.Equal("base64", source.GetProperty("type").GetString());
+            Assert.Equal("image/png", source.GetProperty("media_type").GetString());
+            byte[] png = Convert.FromBase64String(source.GetProperty("data").GetString()!);
+            Assert.Equal(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, png.Take(4).ToArray());
+        }
+
         private static DraftingAgent NewAgent(
             FakeAnthropic http,
             InMemoryDrawingHost host,

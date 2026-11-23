@@ -22,6 +22,12 @@ namespace CsdBridge.Core.Drawing
 
         IReadOnlyList<ItemResult> ModifyEntities(IReadOnlyList<ModifyOperation> operations);
 
+        /// <summary>
+        /// Change the content of existing annotation: text, block attribute values, dimension
+        /// text, multileaders, table cells, and their styles.
+        /// </summary>
+        IReadOnlyList<ItemResult> EditAnnotations(IReadOnlyList<AnnotationEdit> edits);
+
         // ---- exact geometry, computed by the CAD engine (never by the model) ----
 
         /// <summary>Offset curves; each result lists the new handles.</summary>

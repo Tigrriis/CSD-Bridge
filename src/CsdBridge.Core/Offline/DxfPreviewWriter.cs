@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using CsdBridge.Core.Drawing;
+using CsdBridge.Core.Geometry;
 
 namespace CsdBridge.Core.Offline
 {
@@ -146,6 +147,93 @@ namespace CsdBridge.Core.Offline
                     break;
                 }
 
+                case RadialDimensionSpec d:
+                {
+                    Point2 from = d.Diameter ? new Point2(2 * d.Center.X - d.ChordPoint.X, 2 * d.Center.Y - d.ChordPoint.Y) : d.Center;
+                    (Point2 at, double _) = AnnotationGeometry.TextPlace(d, defaultHeight);
+                    Line(dxf, layer, color, from, d.ChordPoint);
+                    Line(dxf, layer, color, d.ChordPoint, at);
+                    DimensionText(dxf, layer, color, d, defaultHeight);
+                    break;
+                }
+
+                case AngularDimensionSpec d:
+                {
+                    AnnotationGeometry.SweepFrom(d, out (double Start, double Signed) arc);
+                    double radius = Math.Sqrt(Math.Pow(d.ArcPoint.X - d.Center.X, 2) + Math.Pow(d.ArcPoint.Y - d.Center.Y, 2));
+                    double a0 = arc.Start * 180 / Math.PI, a1 = (arc.Start + arc.Signed) * 180 / Math.PI;
+                    dxf.Pair(0, "ARC").Common(layer, color).Point(10, d.Center).Pair(40, radius)
+                       .Pair(50, arc.Signed >= 0 ? a0 : a1).Pair(51, arc.Signed >= 0 ? a1 : a0);
+                    Point2 OnArc(double angle) => new Point2(d.Center.X + radius * Math.Cos(angle), d.Center.Y + radius * Math.Sin(angle));
+                    Line(dxf, layer, color, d.P1, OnArc(arc.Start));
+                    Line(dxf, layer, color, d.P2, OnArc(arc.Start + arc.Signed));
+                    DimensionText(dxf, layer, color, d, defaultHeight);
+                    break;
+                }
+
+                case OrdinateDimensionSpec d:
+                    Line(dxf, layer, color, d.FeaturePoint, d.LeaderEnd);
+                    DimensionText(dxf, layer, color, d, defaultHeight);
+                    break;
+
+                case MLeaderSpec l:
+                {
+                    double h = l.Height ?? defaultHeight;
+                    foreach (Point2 arrow in l.ArrowPoints)
+                    {
+                        Line(dxf, layer, color, arrow, l.TextPosition);
+                    }
+
+                    Point2[] box = AnnotationGeometry.TextBox(l, h);
+                    List<string> lines = AnnotationGeometry.Lines(l.Text, h, l.Width);
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        // Top line first; box[3] is the top-left corner.
+                        Text(dxf, layer, color, new Point2(box[3].X, box[3].Y - h - i * h * AnnotationGeometry.LineSpacing), lines[i], h, 0, TextAlign.Left);
+                    }
+
+                    break;
+                }
+
+                case TableSpec t:
+                {
+                    (List<double> widths, double rowHeight, double h) = AnnotationGeometry.TableLayout(t, defaultHeight);
+                    List<List<string>> cells = AnnotationGeometry.TableCells(t);
+                    double left = t.Position.X, top = t.Position.Y, right = left + widths.Sum(), bottom = top - cells.Count * rowHeight;
+                    for (int r = 0; r <= cells.Count; r++)
+                    {
+                        Line(dxf, layer, color, new Point2(left, top - r * rowHeight), new Point2(right, top - r * rowHeight));
+                    }
+
+                    double x = left;
+                    for (int c = 0; c <= widths.Count; c++)
+                    {
+                        // Inner column lines stop under the title, which is one merged cell.
+                        bool inner = c > 0 && c < widths.Count;
+                        Line(dxf, layer, color, new Point2(x, inner && t.Title != null ? top - rowHeight : top), new Point2(x, bottom));
+                        x += c < widths.Count ? widths[c] : 0;
+                    }
+
+                    for (int r = 0; r < cells.Count; r++)
+                    {
+                        bool title = t.Title != null && r == 0;
+                        double cellLeft = left;
+                        for (int c = 0; c < widths.Count; c++)
+                        {
+                            double cellWidth = title ? right - left : widths[c];
+                            if (cells[r][c].Length > 0)
+                            {
+                                var middle = new Point2(cellLeft + cellWidth / 2, top - (r + 0.5) * rowHeight);
+                                Text(dxf, layer, color, middle, cells[r][c], h, 0, TextAlign.MiddleCenter);
+                            }
+
+                            cellLeft += widths[c];
+                        }
+                    }
+
+                    break;
+                }
+
                 case BlockInsertSpec b:
                 {
                     double s = defaultHeight;
@@ -203,6 +291,12 @@ namespace CsdBridge.Core.Offline
             }
 
             Text(dxf, layer, color, mid, text, textHeight, angle, TextAlign.Center);
+        }
+
+        private static void DimensionText(Dxf dxf, string layer, short? color, DimensionSpec d, double height)
+        {
+            (Point2 at, double rotation) = AnnotationGeometry.TextPlace(d, height);
+            Text(dxf, layer, color, at, d.TextOverride ?? AnnotationGeometry.MeasureText(d), height, AnnotationGeometry.Readable(rotation), TextAlign.MiddleCenter);
         }
 
         private static string Fmt(double d) => d.ToString("0.##", CultureInfo.InvariantCulture);

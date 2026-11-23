@@ -22,6 +22,24 @@ namespace CsdBridge.Core.Tools
 
         /// <summary>One-line summary for the progress log in the CAD UI.</summary>
         public string? Summary { get; set; }
+
+        /// <summary>Pictures returned with the text (e.g. the view of the drawing from view_drawing).</summary>
+        public List<ToolImage> Images { get; } = new List<ToolImage>();
+    }
+
+    /// <summary>A picture in a tool result.</summary>
+    public sealed class ToolImage
+    {
+        public ToolImage(byte[] data, string mediaType)
+        {
+            Data = data;
+            MediaType = mediaType;
+        }
+
+        public byte[] Data { get; }
+
+        /// <summary>image/png, image/jpeg, image/gif or image/webp.</summary>
+        public string MediaType { get; }
     }
 
     /// <summary>
@@ -143,7 +161,9 @@ namespace CsdBridge.Core.Tools
                     }
 
                     default:
-                        return ExecuteEditing(toolName, input) ?? Error($"Unknown tool '{toolName}'.", "unknown tool");
+                        return ExecuteEditing(toolName, input)
+                            ?? ExecuteAnnotation(toolName, input)
+                            ?? Error($"Unknown tool '{toolName}'.", "unknown tool");
                 }
             }
             catch (ToolInputException ex)
@@ -200,9 +220,16 @@ namespace CsdBridge.Core.Tools
                         case "text": q.Kinds.Add(EntityKind.Text); break;
                         case "mtext": q.Kinds.Add(EntityKind.MText); break;
                         case "dimension":
-                            q.Kinds.Add(EntityKind.LinearDimension);
-                            q.Kinds.Add(EntityKind.AlignedDimension);
+                            q.Kinds.AddRange(new[]
+                            {
+                                EntityKind.LinearDimension, EntityKind.AlignedDimension, EntityKind.RadiusDimension,
+                                EntityKind.DiameterDimension, EntityKind.AngularDimension, EntityKind.ArcLengthDimension,
+                                EntityKind.OrdinateDimension,
+                            });
                             break;
+                        case "mleader":
+                        case "multileader": q.Kinds.Add(EntityKind.MLeader); break;
+                        case "table": q.Kinds.Add(EntityKind.Table); break;
                         case "block_insert": q.Kinds.Add(EntityKind.BlockInsert); break;
                         case "hatch": q.Kinds.Add(EntityKind.Hatch); break;
                         case "other": q.IncludeOtherKinds = true; break;
@@ -436,13 +463,21 @@ namespace CsdBridge.Core.Tools
                     break;
 
                 default:
-                    throw new ToolInputException(
-                        $"{path}.kind '{kind}' is not supported (use line, polyline, circle, arc, text, mtext, linear_dimension, aligned_dimension or block_insert)");
+                    spec = ParseAnnotationEntity(e, kind, path) ?? throw new ToolInputException(
+                        $"{path}.kind '{kind}' is not supported (use line, polyline, circle, arc, text, mtext, mleader, table, block_insert, " +
+                        "or a dimension: linear_, aligned_, radius_, diameter_, angular_, arc_length_ or ordinate_dimension)");
+                    break;
             }
 
             spec.Layer = ValidateLayerName(JsonArgs.OptionalString(e, "layer", path), JsonArgs.Path(path, "layer"));
             spec.ColorIndex = JsonArgs.OptionalColor(e, "color", path);
             spec.LinetypeScale = JsonArgs.OptionalPositive(e, "linetype_scale", path);
+            spec.Style = JsonArgs.OptionalString(e, "style", path)?.Trim();
+            if (spec.Style != null && (spec is LineSpec || spec is PolylineSpec || spec is CircleSpec || spec is ArcSpec || spec is BlockInsertSpec))
+            {
+                throw new ToolInputException($"{path}.style doesn't apply to a {kind}; styles are for text, mtext, dimensions, mleader and table");
+            }
+
             return spec;
         }
 

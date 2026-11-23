@@ -44,6 +44,11 @@ namespace CsdBridge.Core.Tools
         public const string JoinCurves = "join_curves";
         public const string OffsetByChainage = "offset_by_chainage";
         public const string AnalyseOffsets = "analyse_offsets";
+        public const string EditAnnotations = "edit_annotations";
+        public const string DimensionChain = "dimension_chain";
+        public const string LabelAlignment = "label_alignment";
+        public const string SetoutPoints = "setout_points";
+        public const string ViewDrawing = "view_drawing";
 
         public const int MaxEntitiesPerCall = 500;
         public const int MaxOperationsPerCall = 200;
@@ -58,7 +63,8 @@ namespace CsdBridge.Core.Tools
                 GetDrawingInfo,
                 "Read the active drawing's setup: drawing units, extents, current layer/text style/dimension style, " +
                 "default text height, and the existing layers as rows [name, colour, linetype, lineweight mm, state], " +
-                "linetypes, text styles, dimension styles and block definitions. Xref layers are left out unless asked for. " +
+                "linetypes, block definitions, and the text, dimension, multileader and table styles (with their text heights, arrow " +
+                "sizes and scales, so you can pick the one that suits the drawing scale). Xref layers are left out unless asked for. " +
                 "Civil Site Design's string layers (CSD-3D-<road>-<code>, CSD-2D-...) are summarised as csd_roads: each road " +
                 "with its codes. Call this once at the start of a task before drawing so you use the drawing's real units, " +
                 "layers and blocks; use layer_filter to look for particular layers.",
@@ -70,13 +76,15 @@ namespace CsdBridge.Core.Tools
                 ListEntities,
                 "List entities in the current space (model space or the active layout) with their key geometry: " +
                 "handle, kind, layer, and kind-specific fields (line start/end, circle/arc centre and radius, polyline " +
-                "vertices, text content and position, block name, dimension measurement, bounding box). All filters are " +
+                "vertices, text content and position, block name with its attribute values, dimension type and measurement, " +
+                "multileader text and arrow points, table cells, style, bounding box). All filters are " +
                 "optional and combine with AND; window_min/window_max keep entities whose bounding box overlaps that rectangle. " +
                 "Use a window or layer filter on large drawings; results are capped by " +
-                "'limit' and report 'truncated' when more matched. Handles returned here are what modify_entities takes.",
+                "'limit' and report 'truncated' when more matched. Handles returned here are what modify_entities and " +
+                "edit_annotations take.",
                 "{\"type\":\"object\",\"properties\":{" +
                 "\"layer\":{\"type\":\"string\",\"description\":\"Only entities on this layer (case-insensitive).\"}," +
-                "\"kinds\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"line\",\"polyline\",\"circle\",\"arc\",\"text\",\"mtext\",\"dimension\",\"block_insert\",\"hatch\",\"other\"]},\"description\":\"Only these entity kinds.\"}," +
+                "\"kinds\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"line\",\"polyline\",\"circle\",\"arc\",\"text\",\"mtext\",\"dimension\",\"mleader\",\"table\",\"block_insert\",\"hatch\",\"other\"]},\"description\":\"Only these entity kinds.\"}," +
                 "\"handles\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":\"Only these handles.\"}," +
                 "\"window_min\":" + Point + "," +
                 "\"window_max\":" + Point + "," +
@@ -116,15 +124,30 @@ namespace CsdBridge.Core.Tools
                 "- linear_dimension: p1, p2 (points being measured), dim_line_point (a point the dimension line passes " +
                 "through), rotation (0 = horizontal, 90 = vertical), optional text_override\n" +
                 "- aligned_dimension: p1, p2, dim_line_point, optional text_override\n" +
+                "- radius_dimension / diameter_dimension: center, and point (on the curve, where the arrow touches) or radius + " +
+                "angle (direction from the centre, degrees); optional leader_length, text_override\n" +
+                "- angular_dimension: center (the vertex), p1, p2 (a point on each leg), arc_point (a point the dimension arc " +
+                "passes through; it also picks which angle is measured), optional text_override\n" +
+                "- arc_length_dimension: center, p1, p2 (the ends of the arc), arc_point (where the dimension arc goes)\n" +
+                "- ordinate_dimension: point (the point measured), leader_end, axis (x or y: the coordinate shown), optional " +
+                "origin (the datum; default the world origin)\n" +
+                "- mleader (multileader): arrow_point (or arrow_points for several leaders), position (where the leader lands " +
+                "and the text starts), text (\\n for new lines), optional height, width (wrap), arrow_size, text_style\n" +
+                "- table: position (top-left corner), rows (array of rows, each an array of cell text; the first row is the " +
+                "column headings unless header is false), optional title (a merged row on top), column_widths, row_height, " +
+                "height (text), text_style\n" +
                 "- block_insert: block_name (must exist - see get_drawing_info), position, optional scale, rotation, " +
                 "attributes (object of TAG: value, e.g. title block fields; other attributes keep their defaults)\n" +
                 "Every item may also set 'layer' (created if missing; omit for the current layer), 'color' (ACI; " +
-                "omit for ByLayer, which is preferred) and 'linetype_scale'. Omitted heights use the drawing's default text height / dimension " +
-                "style. Returns one result per item, in order, with the new entity's handle.",
+                "omit for ByLayer, which is preferred), 'linetype_scale', and 'style': a named style from get_drawing_info to use " +
+                "instead of the current one (a text style for text and mtext, a dimension style for dimensions, a multileader style " +
+                "for mleader, a table style for table). Omitted heights come from the style or the drawing's default text height. " +
+                "Returns one result per item, in order, with the new entity's handle.",
                 "{\"type\":\"object\",\"properties\":{" +
                 "\"entities\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":500,\"items\":{\"type\":\"object\",\"properties\":{" +
-                "\"kind\":{\"type\":\"string\",\"enum\":[\"line\",\"polyline\",\"circle\",\"arc\",\"text\",\"mtext\",\"linear_dimension\",\"aligned_dimension\",\"block_insert\"]}," +
+                "\"kind\":{\"type\":\"string\",\"enum\":[\"line\",\"polyline\",\"circle\",\"arc\",\"text\",\"mtext\",\"linear_dimension\",\"aligned_dimension\",\"radius_dimension\",\"diameter_dimension\",\"angular_dimension\",\"arc_length_dimension\",\"ordinate_dimension\",\"mleader\",\"table\",\"block_insert\"]}," +
                 "\"layer\":{\"type\":\"string\"}," +
+                "\"style\":{\"type\":\"string\"},\"text_style\":{\"type\":\"string\"}," +
                 "\"color\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":255}," +
                 "\"linetype_scale\":{\"type\":\"number\"}," +
                 "\"start\":" + Point + ",\"end\":" + Point + "," +
@@ -139,6 +162,14 @@ namespace CsdBridge.Core.Tools
                 "\"align\":{\"type\":\"string\",\"enum\":[\"left\",\"center\",\"right\",\"middle_center\"]}," +
                 "\"p1\":" + Point + ",\"p2\":" + Point + ",\"dim_line_point\":" + Point + "," +
                 "\"text_override\":{\"type\":\"string\"}," +
+                "\"point\":" + Point + ",\"arc_point\":" + Point + ",\"leader_end\":" + Point + ",\"origin\":" + Point + "," +
+                "\"angle\":{\"type\":\"number\"},\"leader_length\":{\"type\":\"number\"}," +
+                "\"axis\":{\"type\":\"string\",\"enum\":[\"x\",\"y\"]}," +
+                "\"arrow_point\":" + Point + ",\"arrow_points\":{\"type\":\"array\",\"items\":" + Point + ",\"minItems\":1,\"maxItems\":20}," +
+                "\"arrow_size\":{\"type\":\"number\"}," +
+                "\"rows\":{\"type\":\"array\",\"items\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"minItems\":1,\"maxItems\":500}," +
+                "\"title\":{\"type\":\"string\"},\"header\":{\"type\":\"boolean\"}," +
+                "\"column_widths\":{\"type\":\"array\",\"items\":{\"type\":\"number\"}},\"row_height\":{\"type\":\"number\"}," +
                 "\"block_name\":{\"type\":\"string\"},\"scale\":{\"type\":\"number\"}," +
                 "\"attributes\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"string\"}}" +
                 "},\"required\":[\"kind\"]}}" +
@@ -351,6 +382,119 @@ namespace CsdBridge.Core.Tools
                 "\"tolerance\":{\"type\":\"number\"}," +
                 "\"arc_interval\":{\"type\":\"number\",\"description\":\"Sampling step along true arcs in the lines (default 1).\"}" +
                 "},\"required\":[\"alignment\",\"lines\"]}"),
+
+            new ToolDefinition(
+                EditAnnotations,
+                "Change the content of existing annotation by handle, without redrawing it. Each edit changes only the fields it " +
+                "gives: text (of a text, mtext or multileader; \\n for new lines), attributes ({TAG: value} of a block insert, " +
+                "e.g. title block fields), text_override (dimension text; \"\" goes back to the measured value), cells " +
+                "([{row, column, text}] of a table, counted from 0, the title row included), height, width (mtext or multileader " +
+                "wrap), rotation, position (insertion point of text or mtext, or a multileader's text), arrow_points (replaces a " +
+                "multileader's leaders) and style (as in draw_entities). A field that doesn't apply to that kind of object fails " +
+                "that edit and changes nothing. list_entities shows the current text, attributes, cells and styles.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"edits\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":200,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"handle\":{\"type\":\"string\"}," +
+                "\"text\":{\"type\":\"string\"}," +
+                "\"attributes\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"string\"}}," +
+                "\"text_override\":{\"type\":\"string\"}," +
+                "\"cells\":{\"type\":\"array\",\"maxItems\":2000,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"row\":{\"type\":\"integer\",\"minimum\":0},\"column\":{\"type\":\"integer\",\"minimum\":0},\"text\":{\"type\":\"string\"}}," +
+                "\"required\":[\"row\",\"column\",\"text\"]}}," +
+                "\"height\":{\"type\":\"number\"},\"width\":{\"type\":\"number\"},\"rotation\":{\"type\":\"number\"}," +
+                "\"position\":" + Point + "," +
+                "\"arrow_points\":{\"type\":\"array\",\"items\":" + Point + ",\"minItems\":1,\"maxItems\":20}," +
+                "\"style\":{\"type\":\"string\"}" +
+                "},\"required\":[\"handle\"]}}},\"required\":[\"edits\"]}"),
+
+            new ToolDefinition(
+                DimensionChain,
+                "Dimension a run of points in one call. mode chain (default): each point to the next, on one dimension line. " +
+                "mode baseline: each point from the first, the dimension lines stepping away by baseline_spacing. points are in " +
+                "order along the run; dim_line_point is a point the (first) dimension line passes through; rotation is the " +
+                "direction measured, in degrees (0 = horizontal, 90 = vertical; default: from the first point to the last). " +
+                "Returns the dimension handles in order.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"points\":{\"type\":\"array\",\"items\":" + Point + ",\"minItems\":2,\"maxItems\":200}," +
+                "\"dim_line_point\":" + Point + "," +
+                "\"rotation\":{\"type\":\"number\"}," +
+                "\"mode\":{\"type\":\"string\",\"enum\":[\"chain\",\"baseline\"]}," +
+                "\"baseline_spacing\":{\"type\":\"number\",\"description\":\"Baseline mode: distance between dimension lines.\"}," +
+                "\"layer\":{\"type\":\"string\"},\"style\":{\"type\":\"string\",\"description\":\"Dimension style.\"}," +
+                "\"color\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":255}" +
+                "},\"required\":[\"points\",\"dim_line_point\"]}"),
+
+            new ToolDefinition(
+                LabelAlignment,
+                "Label an alignment in plan (a line, arc or polyline, by handle) exactly: a tick and a chainage label every " +
+                "interval, and optionally the tangent points (where straights and arcs meet), the start and end, and each arc's " +
+                "radius. Chainage = start_chainage + distance along. Ticks are square to the alignment and the labels read along " +
+                "them, on 'side' (left or right of the direction of travel; default right). Labels are text by default, or " +
+                "multileaders with as: \"mleader\". Give at least one of interval, tangent_points, ends or radii. Returns the " +
+                "handles drawn and the chainages labelled.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"alignment\":{\"type\":\"string\"},\"start_chainage\":{\"type\":\"number\"}," +
+                "\"interval\":{\"type\":\"number\",\"description\":\"Chainage step, on round chainages (20 gives 0, 20, 40...).\"}," +
+                "\"from_chainage\":{\"type\":\"number\"},\"to_chainage\":{\"type\":\"number\"}," +
+                "\"tangent_points\":{\"type\":\"boolean\",\"description\":\"Label each tangent point, e.g. 'TP CH 45.320'.\"}," +
+                "\"ends\":{\"type\":\"boolean\",\"description\":\"Label the start and end chainage.\"}," +
+                "\"radii\":{\"type\":\"boolean\",\"description\":\"Label each arc's radius at its middle, e.g. 'R 120.000'.\"}," +
+                "\"side\":{\"type\":\"string\",\"enum\":[\"left\",\"right\"]}," +
+                "\"tick_length\":{\"type\":\"number\",\"description\":\"Default: twice the text height. 0 = no ticks.\"}," +
+                "\"label_gap\":{\"type\":\"number\",\"description\":\"Gap between tick end and label (default: half the text height).\"}," +
+                "\"prefix\":{\"type\":\"string\",\"description\":\"Before the chainage (default 'CH ').\"}," +
+                "\"decimals\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":4,\"description\":\"For interval labels (default: 0 for whole intervals, else 3). Tangent points and ends use 3.\"}," +
+                "\"text_height\":{\"type\":\"number\"},\"style\":{\"type\":\"string\",\"description\":\"Text style (or multileader style with as: mleader).\"}," +
+                "\"as\":{\"type\":\"string\",\"enum\":[\"text\",\"mleader\"]}," +
+                "\"layer\":{\"type\":\"string\"},\"tick_layer\":{\"type\":\"string\",\"description\":\"Default: the label layer.\"}" +
+                "},\"required\":[\"alignment\"]}"),
+
+            new ToolDefinition(
+                SetoutPoints,
+                "Mark and tabulate set-out points: a marker and a name at each point, and a table of point, easting and northing " +
+                "(plus chainage and offset for points taken from an alignment, and level where given). Give either points " +
+                "([{point, name, level}], name and level optional) or an alignment (handle) with chainages or interval, " +
+                "optionally offset (positive right) and tangent_points: true to include where straights and arcs meet. " +
+                "table_position is the table's top-left corner; omit it for markers and names only. Returns each point's exact " +
+                "coordinates, and the handles drawn.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"points\":{\"type\":\"array\",\"maxItems\":500,\"items\":{\"type\":\"object\",\"properties\":{" +
+                "\"point\":" + Point + ",\"name\":{\"type\":\"string\"},\"level\":{\"type\":\"number\"}},\"required\":[\"point\"]}}," +
+                "\"alignment\":{\"type\":\"string\"},\"start_chainage\":{\"type\":\"number\"}," +
+                "\"chainages\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"maxItems\":500}," +
+                "\"interval\":{\"type\":\"number\"},\"from_chainage\":{\"type\":\"number\"},\"to_chainage\":{\"type\":\"number\"}," +
+                "\"tangent_points\":{\"type\":\"boolean\"}," +
+                "\"offset\":{\"type\":\"number\"}," +
+                "\"levels\":{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"description\":\"With an alignment: one level per point, in chainage order.\"}," +
+                "\"prefix\":{\"type\":\"string\",\"description\":\"Names are prefix + number when not given (default 'SP').\"}," +
+                "\"start_number\":{\"type\":\"integer\",\"minimum\":0}," +
+                "\"marker\":{\"type\":\"string\",\"enum\":[\"cross\",\"circle\",\"none\"]}," +
+                "\"marker_size\":{\"type\":\"number\",\"description\":\"Default: the text height.\"}," +
+                "\"table_position\":" + Point + "," +
+                "\"title\":{\"type\":\"string\",\"description\":\"Table title (default 'SETOUT TABLE').\"}," +
+                "\"decimals\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":4,\"description\":\"Default 3.\"}," +
+                "\"text_height\":{\"type\":\"number\"}," +
+                "\"style\":{\"type\":\"string\",\"description\":\"Text style for the names and the table.\"}," +
+                "\"table_style\":{\"type\":\"string\"}," +
+                "\"layer\":{\"type\":\"string\"}" +
+                "}}"),
+
+            new ToolDefinition(
+                ViewDrawing,
+                "Look at part of the drawing. Returns a picture of the linework and annotation in a window, and a list of " +
+                "annotation that overlaps other annotation (text, dimension text, multileader text, tables). Use it after " +
+                "placing labels, leaders, dimensions or tables to check the layout, then fix clashes with modify_entities or " +
+                "edit_annotations and look again. Give window_min and window_max, or handles to frame those entities, or neither " +
+                "for the whole drawing. The picture is a schematic drawn from the drawing's geometry and the real size of each " +
+                "piece of text: text is black, its boxes blue (red where they overlap), dimensions green, block inserts are " +
+                "purple outlines with their name, and hatches aren't drawn.",
+                "{\"type\":\"object\",\"properties\":{" +
+                "\"window_min\":" + Point + ",\"window_max\":" + Point + "," +
+                "\"handles\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"maxItems\":500}," +
+                "\"layer\":{\"type\":\"string\",\"description\":\"Only entities on this layer.\"}," +
+                "\"width_px\":{\"type\":\"integer\",\"minimum\":300,\"maximum\":1568,\"description\":\"Picture width (default 1000).\"}," +
+                "\"picture\":{\"type\":\"boolean\",\"description\":\"false returns just the overlap list (default true).\"}" +
+                "}}"),
         };
     }
 }

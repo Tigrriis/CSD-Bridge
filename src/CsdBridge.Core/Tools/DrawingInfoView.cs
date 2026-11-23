@@ -16,6 +16,7 @@ namespace CsdBridge.Core.Tools
     {
         private const int MaxLayers = 300;
         private const int MaxBlocks = 150;
+        private const int MaxStyles = 100;
 
         public static object Compact(DrawingInfo info, JsonElement input)
         {
@@ -86,12 +87,33 @@ namespace CsdBridge.Core.Tools
                 csd_roads = roads.Count > 0 ? roads.ToDictionary(kv => kv.Key, kv => string.Join(", ", kv.Value)) : null,
                 csd_roads_note = roads.Count > 0 ? "String layers are CSD-<2D|3D>-<road>-<code>." : null,
                 linetypes = info.Linetypes,
-                text_styles = info.TextStyles,
-                dim_styles = info.DimStyles,
+                current_mleader_style = info.CurrentMLeaderStyle,
+                current_table_style = info.CurrentTableStyle,
+                text_style_columns = info.TextStyleDetails != null ? "name, font, fixed text height (0 = set per object)" : null,
+                text_styles = Styles(info.TextStyles, info.TextStyleDetails, s => new object?[] { s.Name, s.Font ?? "", s.TextHeight ?? 0 }),
+                dim_style_columns = info.DimStyleDetails != null ? "name, overall scale, text height, arrow size, text style (plotted sizes x overall scale = drawing units)" : null,
+                dim_styles = Styles(info.DimStyles, info.DimStyleDetails, DimensionRow),
+                mleader_style_columns = info.MLeaderStyleDetails != null ? "name, overall scale, text height, arrow size, text style" : null,
+                mleader_styles = Styles(info.MLeaderStyles, info.MLeaderStyleDetails, DimensionRow),
+                table_styles = info.TableStyles.Count > 0 ? info.TableStyles : null,
                 blocks = info.Blocks.Take(MaxBlocks).ToList(),
                 blocks_not_listed = info.Blocks.Count > MaxBlocks ? info.Blocks.Count - MaxBlocks : (int?)null,
             };
         }
+
+        /// <summary>Styles as rows of their settings when the host gave details, else just their names.</summary>
+        private static object? Styles(List<string> names, List<StyleInfo>? details, Func<StyleInfo, object?[]> row)
+        {
+            if (details != null)
+            {
+                return details.Take(MaxStyles).Select(row).ToList();
+            }
+
+            return names.Count > 0 ? names.Take(MaxStyles).ToList() : null;
+        }
+
+        private static object?[] DimensionRow(StyleInfo s) =>
+            new object?[] { s.Name + (s.Annotative == true ? " (annotative)" : ""), s.Scale ?? 1, s.TextHeight ?? 0, s.ArrowSize ?? 0, s.TextStyle ?? "" };
 
         /// <summary>
         /// Split "CL-01-LDR-1" into road "CL-01" and code "LDR-1". Road names and codes can both
