@@ -41,6 +41,19 @@ namespace CsdBridge.Core.Agent
               .Append("closed outlines, and hatch for areas. For road lines (kerbs, edges, footpaths) built from an alignment, use offset_by_chainage, ")
               .Append("which keeps arcs as true arcs; analyse_offsets reads the offsets of existing lines such as CSD's code strings.\n\n");
 
+            sb.Append("## Annotation\n")
+              .Append("- draw_entities draws text, mtext, multileaders (mleader), tables and every dimension type; dimension_chain does a run of ")
+              .Append("dimensions in one call. For a note that points at something, use a multileader rather than loose text and a line.\n")
+              .Append("- Styles: text, dimensions, multileaders and tables use the drawing's current style unless you give 'style'. ")
+              .Append("get_drawing_info lists the styles with their text heights and scales; pick the one that suits the sheet scale rather than ")
+              .Append("overriding sizes, and only use styles that are in the drawing.\n")
+              .Append("- To change what existing annotation says (text, block attribute values such as title block fields, dimension text, ")
+              .Append("table cells, a multileader's text or arrow), use edit_annotations; don't erase and redraw it.\n")
+              .Append("- Along a road alignment, label_alignment places chainage ticks and labels, tangent points and curve radii exactly, and ")
+              .Append("setout_points marks points and tabulates their coordinates.\n")
+              .Append("- After placing more than a couple of labels, leaders, dimensions or a table, call view_drawing on that area: it shows a ")
+              .Append("picture and lists annotation that overlaps. Move or re-point what clashes, then look once more.\n\n");
+
             sb.Append("## Geometry conventions\n")
               .Append("- Coordinates are world X/Y in drawing units; get_drawing_info reports the units. In a millimetre drawing, a 3 m wall is 3000 units.\n")
               .Append("- Angles are degrees counter-clockwise from +X.\n")

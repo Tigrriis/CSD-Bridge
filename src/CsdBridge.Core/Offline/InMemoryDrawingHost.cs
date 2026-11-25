@@ -30,6 +30,12 @@ namespace CsdBridge.Core.Offline
         /// <summary>Block names that block_insert may use.</summary>
         public List<string> Blocks { get; } = new List<string>();
 
+        /// <summary>Styles that entities may name; anything else is refused, as in a real drawing.</summary>
+        public List<string> TextStyles { get; } = new List<string> { "Standard" };
+        public List<string> DimStyles { get; } = new List<string> { "Standard" };
+        public List<string> MLeaderStyles { get; } = new List<string> { "Standard" };
+        public List<string> TableStyles { get; } = new List<string> { "Standard" };
+
         /// <summary>Answers pick_point. Return null to simulate Esc.</summary>
         public Func<string, Point2?>? PointPicker { get; set; }
 
@@ -66,8 +72,12 @@ namespace CsdBridge.Core.Offline
                 EntityCount = _entities.Count,
                 Layers = _layers.Values.OrderBy(l => l.Name, StringComparer.OrdinalIgnoreCase).ToList(),
                 Linetypes = new List<string> { "CONTINUOUS", "HIDDEN", "CENTER", "DASHED", "PHANTOM" },
-                TextStyles = new List<string> { "Standard" },
-                DimStyles = new List<string> { "Standard" },
+                TextStyles = TextStyles.ToList(),
+                DimStyles = DimStyles.ToList(),
+                MLeaderStyles = MLeaderStyles.ToList(),
+                TableStyles = TableStyles.ToList(),
+                CurrentMLeaderStyle = "Standard",
+                CurrentTableStyle = "Standard",
                 Blocks = Blocks.ToList(),
             };
 
@@ -117,7 +127,7 @@ namespace CsdBridge.Core.Offline
             {
                 TotalMatched = all.Count,
                 Truncated = all.Count > query.Limit,
-                Entities = all.Take(query.Limit).Select(Summarize).ToList(),
+                Entities = all.Take(query.Limit).Select(e => Summarize(e)).ToList(),
             };
         }
 
@@ -177,6 +187,15 @@ namespace CsdBridge.Core.Offline
                     }
                 }
 
+                string? styleProblem = StyleProblem(spec, spec.Style)
+                    ?? (spec is MLeaderSpec leader ? UnknownStyle("Text style", leader.TextStyle, TextStyles) : null)
+                    ?? (spec is TableSpec tableSpec ? UnknownStyle("Text style", tableSpec.TextStyle, TextStyles) : null);
+                if (styleProblem != null)
+                {
+                    results.Add(ItemResult.Failure(i, styleProblem));
+                    continue;
+                }
+
                 string? note = null;
                 spec.Layer ??= CurrentLayer;
                 if (!_layers.ContainsKey(spec.Layer))
@@ -193,6 +212,18 @@ namespace CsdBridge.Core.Offline
                 if (spec is MTextSpec m && m.Height == null)
                 {
                     m.Height = DefaultTextHeight;
+                }
+
+                if (spec is MLeaderSpec ml && ml.Height == null)
+                {
+                    ml.Height = DefaultTextHeight;
+                }
+
+                if (spec is TableSpec table)
+                {
+                    (table.ColumnWidths, double rowHeight, double textHeight) = AnnotationGeometry.TableLayout(table, DefaultTextHeight);
+                    table.RowHeight = rowHeight;
+                    table.TextHeight = textHeight;
                 }
 
                 string handle = NewHandle();
@@ -306,6 +337,148 @@ namespace CsdBridge.Core.Offline
 
             return results;
         }
+
+        public IReadOnlyList<ItemResult> EditAnnotations(IReadOnlyList<AnnotationEdit> edits)
+        {
+            var results = new List<ItemResult>();
+            for (int i = 0; i < edits.Count; i++)
+            {
+                AnnotationEdit edit = edits[i];
+                StoredEntity? e = Find(edit.Handle);
+                if (e == null)
+                {
+                    results.Add(ItemResult.Failure(i, $"Unknown handle: {edit.Handle}"));
+                    continue;
+                }
+
+                string? problem = AnnotationEdits.Problem(edit, KindName(e.Spec))
+                    ?? (edit.Style == null ? null : StyleProblem(e.Spec, edit.Style))
+                    ?? CellProblem(e.Spec as TableSpec, edit.Cells);
+                if (problem != null)
+                {
+                    results.Add(ItemResult.Failure(i, problem));
+                    continue;
+                }
+
+                Apply(e.Spec, edit);
+                results.Add(ItemResult.Success(i, e.Handle));
+            }
+
+            return results;
+        }
+
+        private static string? CellProblem(TableSpec? table, List<TableCellEdit>? cells)
+        {
+            if (table == null || cells == null)
+            {
+                return null;
+            }
+
+            List<List<string>> all = AnnotationGeometry.TableCells(table);
+            foreach (TableCellEdit c in cells)
+            {
+                if (c.Row >= all.Count || c.Column >= table.ColumnCount)
+                {
+                    return $"cell row {c.Row}, column {c.Column} is outside the table ({all.Count} rows x {table.ColumnCount} columns, counted from 0)";
+                }
+
+                if (table.Title != null && c.Row == 0 && c.Column != 0)
+                {
+                    return "row 0 is the title, one merged cell: set it with column 0";
+                }
+            }
+
+            return null;
+        }
+
+        private static void Apply(EntitySpec spec, AnnotationEdit edit)
+        {
+            if (edit.Style != null)
+            {
+                spec.Style = edit.Style;
+            }
+
+            switch (spec)
+            {
+                case TextSpec t:
+                    t.Text = edit.Text ?? t.Text;
+                    t.Height = edit.Height ?? t.Height;
+                    t.RotationDeg = edit.RotationDeg ?? t.RotationDeg;
+                    t.Position = edit.Position ?? t.Position;
+                    break;
+
+                case MTextSpec m:
+                    m.Text = edit.Text ?? m.Text;
+                    m.Height = edit.Height ?? m.Height;
+                    m.Width = edit.Width ?? m.Width;
+                    m.RotationDeg = edit.RotationDeg ?? m.RotationDeg;
+                    m.Position = edit.Position ?? m.Position;
+                    break;
+
+                case MLeaderSpec l:
+                    l.Text = edit.Text ?? l.Text;
+                    l.Height = edit.Height ?? l.Height;
+                    l.Width = edit.Width ?? l.Width;
+                    l.TextPosition = edit.Position ?? l.TextPosition;
+                    l.ArrowPoints = edit.ArrowPoints?.ToList() ?? l.ArrowPoints;
+                    break;
+
+                case DimensionSpec d:
+                    if (edit.TextOverride != null)
+                    {
+                        d.TextOverride = edit.TextOverride.Length == 0 || edit.TextOverride == "<>" ? null : edit.TextOverride;
+                    }
+
+                    break;
+
+                case BlockInsertSpec b:
+                    if (edit.Attributes != null)
+                    {
+                        b.Attributes ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (KeyValuePair<string, string> kv in edit.Attributes)
+                        {
+                            b.Attributes[kv.Key] = kv.Value;
+                        }
+                    }
+
+                    break;
+
+                case TableSpec table:
+                    foreach (TableCellEdit c in edit.Cells ?? new List<TableCellEdit>())
+                    {
+                        int row = c.Row;
+                        if (table.Title != null && row-- == 0)
+                        {
+                            table.Title = c.Text;
+                        }
+                        else
+                        {
+                            table.Rows[row][c.Column] = c.Text;
+                        }
+                    }
+
+                    break;
+            }
+        }
+
+        /// <summary>Why an entity can't use a style name (it must exist, as in a real drawing), or null.</summary>
+        private string? StyleProblem(EntitySpec spec, string? style)
+        {
+            switch (spec)
+            {
+                case TextSpec _:
+                case MTextSpec _: return UnknownStyle("Text style", style, TextStyles);
+                case DimensionSpec _: return UnknownStyle("Dimension style", style, DimStyles);
+                case MLeaderSpec _: return UnknownStyle("Multileader style", style, MLeaderStyles);
+                case TableSpec _: return UnknownStyle("Table style", style, TableStyles);
+                default: return null;
+            }
+        }
+
+        private static string? UnknownStyle(string what, string? name, List<string> known) =>
+            name == null || known.Contains(name, StringComparer.OrdinalIgnoreCase)
+                ? null
+                : $"{what} '{name}' is not in this drawing. Available: {string.Join(", ", known)}.";
 
         // ------------------------------------------------------------------ exact geometry
 
@@ -545,7 +718,7 @@ namespace CsdBridge.Core.Offline
                         m.DistanceToPoint = Math.Round(distance, 6);
                     }
                 }
-                else if (e.Spec is LinearDimensionSpec || e.Spec is AlignedDimensionSpec)
+                else if (e.Spec is DimensionSpec)
                 {
                     m.Measurement = Math.Round(Measure(e.Spec), 6);
                 }
@@ -610,9 +783,10 @@ namespace CsdBridge.Core.Offline
         {
             switch (spec)
             {
-                case LinearDimensionSpec _:
-                case AlignedDimensionSpec _:
+                case DimensionSpec _:
                     return "dimension";
+                case MLeaderSpec _:
+                    return "mleader";
                 default:
                     return Tools.ToolDispatcher.Snake(spec.Kind);
             }
@@ -647,26 +821,12 @@ namespace CsdBridge.Core.Offline
         private StoredEntity? Find(string handle) =>
             _entities.FirstOrDefault(e => string.Equals(e.Handle, handle, StringComparison.OrdinalIgnoreCase));
 
-        public static double Measure(EntitySpec spec)
-        {
-            switch (spec)
-            {
-                case LinearDimensionSpec d:
-                {
-                    double r = d.RotationDeg * Math.PI / 180;
-                    return Math.Abs((d.P2.X - d.P1.X) * Math.Cos(r) + (d.P2.Y - d.P1.Y) * Math.Sin(r));
-                }
-
-                case AlignedDimensionSpec a:
-                    return Math.Sqrt(Math.Pow(a.P2.X - a.P1.X, 2) + Math.Pow(a.P2.Y - a.P1.Y, 2));
-                default:
-                    return 0;
-            }
-        }
+        public static double Measure(EntitySpec spec) => AnnotationGeometry.Measure(spec);
 
         private EntitySummary Summarize(StoredEntity e)
         {
-            var s = new EntitySummary { Handle = e.Handle, Layer = e.Layer, Color = e.Spec.ColorIndex };
+            var s = new EntitySummary { Handle = e.Handle, Layer = e.Layer, Color = e.Spec.ColorIndex, Style = e.Spec.Style };
+            double textHeight = DefaultTextHeight;
             switch (e.Spec)
             {
                 case LineSpec l:
@@ -721,25 +881,80 @@ namespace CsdBridge.Core.Offline
                     s.Rotation = m.RotationDeg;
                     break;
                 case LinearDimensionSpec d:
-                    s.Kind = "dimension";
+                    s.DimType = "linear";
                     s.Start = d.P1.ToArray();
                     s.End = d.P2.ToArray();
-                    s.Measurement = Math.Round(Measure(d), 4);
-                    s.Text = d.TextOverride;
+                    s.DimLinePoint = d.DimLinePoint.ToArray();
+                    s.Rotation = d.RotationDeg;
                     break;
                 case AlignedDimensionSpec d:
-                    s.Kind = "dimension";
+                    s.DimType = "aligned";
                     s.Start = d.P1.ToArray();
                     s.End = d.P2.ToArray();
-                    s.Measurement = Math.Round(Measure(d), 4);
-                    s.Text = d.TextOverride;
+                    s.DimLinePoint = d.DimLinePoint.ToArray();
                     break;
+                case RadialDimensionSpec d:
+                    s.DimType = d.Diameter ? "diameter" : "radius";
+                    s.Center = d.Center.ToArray();
+                    s.Start = d.ChordPoint.ToArray();
+                    break;
+                case AngularDimensionSpec d:
+                    s.DimType = d.ArcLength ? "arc_length" : "angular";
+                    s.Center = d.Center.ToArray();
+                    s.Start = d.P1.ToArray();
+                    s.End = d.P2.ToArray();
+                    s.DimLinePoint = d.ArcPoint.ToArray();
+                    break;
+                case OrdinateDimensionSpec d:
+                    s.DimType = d.UseXAxis ? "ordinate_x" : "ordinate_y";
+                    s.Start = d.FeaturePoint.ToArray();
+                    s.End = d.LeaderEnd.ToArray();
+                    break;
+                case MLeaderSpec l:
+                    s.Kind = "mleader";
+                    s.Text = l.Text;
+                    s.Height = l.Height;
+                    s.Position = l.TextPosition.ToArray();
+                    s.ArrowPoints = l.ArrowPoints.Select(p => p.ToArray()).ToArray();
+                    s.TextBox = AnnotationGeometry.ToArrays(AnnotationGeometry.TextBox(l, l.Height ?? textHeight));
+                    break;
+                case TableSpec t:
+                {
+                    const int maxRows = 40;
+                    List<List<string>> cells = AnnotationGeometry.TableCells(t);
+                    s.Kind = "table";
+                    s.Position = t.Position.ToArray();
+                    s.Height = t.TextHeight;
+                    s.RowCount = cells.Count;
+                    s.ColumnCount = t.ColumnCount;
+                    s.Rows = cells.Take(maxRows).Select(r => r.ToArray()).ToArray();
+                    s.ColumnWidths = t.ColumnWidths?.Select(w => Math.Round(w, 4)).ToArray();
+                    break;
+                }
                 case BlockInsertSpec b:
                     s.Kind = "block_insert";
                     s.Block = b.BlockName;
                     s.Position = b.Position.ToArray();
                     s.Rotation = b.RotationDeg;
+                    s.Scale = Math.Abs(b.Scale - 1) > 1e-9 ? b.Scale : (double?)null;
+                    s.Attributes = b.Attributes == null || b.Attributes.Count == 0 ? null : new Dictionary<string, string>(b.Attributes);
                     break;
+            }
+
+            if (e.Spec is DimensionSpec dim)
+            {
+                s.Kind = "dimension";
+                s.Measurement = Math.Round(Measure(dim), 4);
+                s.Text = dim.TextOverride;
+                s.TextBox = AnnotationGeometry.ToArrays(AnnotationGeometry.TextBox(dim, textHeight));
+            }
+            else if (e.Spec is TextSpec text)
+            {
+                s.TextBox = AnnotationGeometry.ToArrays(AnnotationGeometry.TextBox(text, text.Height ?? textHeight));
+            }
+            else if (e.Spec is MTextSpec mtext)
+            {
+                s.TextBox = AnnotationGeometry.ToArrays(AnnotationGeometry.TextBox(mtext, mtext.Height ?? textHeight));
             }
 
             var (min, max) = Bounds(new[] { e.Spec });
@@ -785,6 +1000,18 @@ namespace CsdBridge.Core.Offline
                 case MTextSpec m: return new[] { (m.Position, 0.0) };
                 case LinearDimensionSpec d: return new[] { (d.P1, 0.0), (d.P2, 0.0), (d.DimLinePoint, 0.0) };
                 case AlignedDimensionSpec d: return new[] { (d.P1, 0.0), (d.P2, 0.0), (d.DimLinePoint, 0.0) };
+                case RadialDimensionSpec d:
+                    return new[] { (d.Diameter ? new Point2(2 * d.Center.X - d.ChordPoint.X, 2 * d.Center.Y - d.ChordPoint.Y) : d.Center, 0.0), (d.ChordPoint, 0.0) };
+                case AngularDimensionSpec d: return new[] { (d.P1, 0.0), (d.P2, 0.0), (d.ArcPoint, 0.0) };
+                case OrdinateDimensionSpec d: return new[] { (d.FeaturePoint, 0.0), (d.LeaderEnd, 0.0) };
+                case MLeaderSpec l:
+                    return l.ArrowPoints.Concat(new[] { l.TextPosition }).Concat(AnnotationGeometry.TextBox(l, l.Height ?? 2.5)).Select(pt => (pt, 0.0)).ToList();
+                case TableSpec t:
+                {
+                    (List<double> widths, double rowHeight, double _) = AnnotationGeometry.TableLayout(t, t.TextHeight ?? 2.5);
+                    int rows = t.Rows.Count + (t.Title != null ? 1 : 0);
+                    return new[] { (t.Position, 0.0), (new Point2(t.Position.X + widths.Sum(), t.Position.Y - rows * rowHeight), 0.0) };
+                }
                 case BlockInsertSpec b: return new[] { (b.Position, 0.0) };
                 case HatchSpec h: return h.Loops.SelectMany(l => l.Points).Select(pt => (pt, 0.0)).ToList();
                 default: return Array.Empty<(Point2, double)>();
@@ -856,6 +1083,34 @@ namespace CsdBridge.Core.Offline
                     b.Scale *= factor;
                     b.RotationDeg += angleDeg;
                     break;
+                case RadialDimensionSpec d:
+                    d.Center = T(d.Center);
+                    d.ChordPoint = T(d.ChordPoint);
+                    d.LeaderLength *= factor;
+                    break;
+                case AngularDimensionSpec d:
+                    d.Center = T(d.Center);
+                    d.P1 = T(d.P1);
+                    d.P2 = T(d.P2);
+                    d.ArcPoint = T(d.ArcPoint);
+                    break;
+                case OrdinateDimensionSpec d:
+                    d.FeaturePoint = T(d.FeaturePoint);
+                    d.LeaderEnd = T(d.LeaderEnd);
+                    break;
+                case MLeaderSpec l:
+                    l.ArrowPoints = l.ArrowPoints.Select(T).ToList();
+                    l.TextPosition = T(l.TextPosition);
+                    l.Height *= factor;
+                    l.Width *= factor;
+                    l.ArrowSize *= factor;
+                    break;
+                case TableSpec t:
+                    t.Position = T(t.Position);
+                    t.ColumnWidths = t.ColumnWidths?.Select(w => w * factor).ToList();
+                    t.RowHeight *= factor;
+                    t.TextHeight *= factor;
+                    break;
             }
         }
 
@@ -891,11 +1146,47 @@ namespace CsdBridge.Core.Offline
                         AngleDeg = h.AngleDeg,
                     };
                     break;
+                case RadialDimensionSpec d:
+                    c = new RadialDimensionSpec { Diameter = d.Diameter, Center = d.Center, ChordPoint = d.ChordPoint, LeaderLength = d.LeaderLength, TextOverride = d.TextOverride };
+                    break;
+                case AngularDimensionSpec d:
+                    c = new AngularDimensionSpec { ArcLength = d.ArcLength, Center = d.Center, P1 = d.P1, P2 = d.P2, ArcPoint = d.ArcPoint, TextOverride = d.TextOverride };
+                    break;
+                case OrdinateDimensionSpec d:
+                    c = new OrdinateDimensionSpec { FeaturePoint = d.FeaturePoint, LeaderEnd = d.LeaderEnd, UseXAxis = d.UseXAxis, Origin = d.Origin, TextOverride = d.TextOverride };
+                    break;
+                case MLeaderSpec l:
+                    c = new MLeaderSpec
+                    {
+                        ArrowPoints = l.ArrowPoints.ToList(),
+                        TextPosition = l.TextPosition,
+                        Text = l.Text,
+                        Height = l.Height,
+                        Width = l.Width,
+                        ArrowSize = l.ArrowSize,
+                        TextStyle = l.TextStyle,
+                    };
+                    break;
+                case TableSpec t:
+                    c = new TableSpec
+                    {
+                        Position = t.Position,
+                        Title = t.Title,
+                        Rows = t.Rows.Select(r => r.ToList()).ToList(),
+                        Header = t.Header,
+                        ColumnWidths = t.ColumnWidths?.ToList(),
+                        RowHeight = t.RowHeight,
+                        TextHeight = t.TextHeight,
+                        TextStyle = t.TextStyle,
+                    };
+                    break;
                 default: throw new NotSupportedException(s.GetType().Name);
             }
 
             c.Layer = s.Layer;
             c.ColorIndex = s.ColorIndex;
+            c.LinetypeScale = s.LinetypeScale;
+            c.Style = s.Style;
             return c;
         }
     }

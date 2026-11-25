@@ -6,7 +6,7 @@ There is no MCP server and no Claude desktop app in the loop.
 
 ```
 BricsCAD ── CSD-Bridge add-in ── Claude API
-              │  agent loop + drafting, geometry and road tools
+              │  agent loop + drafting, annotation, geometry and road tools
               └─ draws, edits, asks you to pick points / select objects
 ```
 
@@ -25,9 +25,18 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
   - updates live while a request runs
   - "Run again", "Edit in chat" and "Copy request" buttons
 - Claude reads the drawing setup (units, layers, blocks, styles), plans the geometry, then draws it
-  in batches: lines, polylines, circles, arcs, text, mtext, linear/aligned dimensions, and block
-  inserts with attribute values.
-- It can edit by handle (move, copy/array, rotate, scale, erase, change layer/colour).
+  in batches: lines, polylines, circles, arcs, text, mtext, multileaders, tables, every dimension type
+  (linear, aligned, radius, diameter, angular, arc length, ordinate, and chains or baselines of them),
+  and block inserts with attribute values.
+- It can edit by handle (move, copy/array, rotate, scale, erase, change layer/colour), and change what
+  existing annotation says without redrawing it: text, block attribute values, dimension text,
+  multileaders and table cells.
+- **Named styles.** Text, dimensions, multileaders and tables can each use any style in the drawing,
+  not just the current one. Claude sees each style's text height, arrow size and scale.
+- **Annotation along an alignment:** chainage ticks and labels, tangent points and curve radii, and
+  set-out points with a coordinate table (see [Annotation](#annotation) below).
+- **It checks its own layout.** `view_drawing` gives Claude a picture of the area it worked on and a
+  list of labels that overlap, so it can move them before it says it is done.
 - **Exact geometry, not mental arithmetic.** Claude decides *what* to do; BricsCAD's own geometry
   engine works out *where*:
   - `calculate` for sums and trigonometry
@@ -56,7 +65,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 189 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 213 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -259,6 +268,33 @@ The rules live in `road-drafting.json` next to the add-in: which codes become wh
 colours and linetype scales. The pavement, centreline and layer styles come from the office's sample drawings. The
 kerb, shoulder, footpath and batter rules depend on each job's template codes, so check and edit them. Junctions
 between roads aren't trimmed: Claude tidies them with `trim_extend` and `fillet`.
+
+## Annotation
+
+| Tool | What it does |
+|---|---|
+| `draw_entities` | Besides linework: `mleader` (text with one or more arrowed leaders), `table` (rows of cells, with an optional title), and `radius_`, `diameter_`, `angular_`, `arc_length_` and `ordinate_dimension` next to the linear and aligned ones. Any of them, and text and mtext, can name a `style`. |
+| `dimension_chain` | A run of dimensions in one call: a chain (each point to the next) or a baseline (each from the first point, the dimension lines stepping out). |
+| `edit_annotations` | Changes existing annotation in place: text, block attribute values (title block fields), dimension text, a multileader's text, arrows or position, table cells, and the style of any of them. |
+| `label_alignment` | Chainage ticks and labels at an interval along an alignment, with optional tangent point, start/end and curve radius labels. Positions come from the exact lines and arcs, so a label at CH 150 is at CH 150. |
+| `setout_points` | A marker and name at each set-out point and a table of point, easting and northing (plus chainage and offset for points taken from an alignment, and level where given). |
+| `view_drawing` | A picture of part of the drawing for Claude to look at, and a list of annotation that overlaps other annotation. |
+
+**Styles.** `get_drawing_info` lists the drawing's text, dimension, multileader and table styles with
+their text heights, arrow sizes and overall scales. Claude can only use styles that are in the drawing;
+asking for one that isn't fails with the list of those that are. It doesn't create or change styles.
+
+**The view.** The picture is a schematic that the add-in draws itself from the drawing's geometry, not
+a screenshot: linework in grey, text in black inside a blue box the size BricsCAD reports for the real
+text, dimensions in green, block inserts as purple outlines with their name, over a coordinate grid.
+Overlapping labels are boxed in red. Hatches, and anything on layers that are off or frozen, are left
+out. Overlaps are worked out from the text boxes turned as the text is turned, so labels along a road
+aren't reported just because their upright bounding boxes cross. The size of dimension text is
+estimated from its style, so an overlap involving a dimension can be slightly off. Each view costs
+roughly 1,000 to 2,000 input tokens.
+
+A typical request: *"Label MC01 every 20 m on AE CIV ANO - ALL PLANS with tangent points and radii,
+add a set-out table for the kerb returns here, then check nothing overlaps."*
 
 ## Scale bars
 
@@ -482,7 +518,7 @@ point `standards_file` at it.
 
 ## Cost and logs
 
-Each request is several API calls, one per round of tool use. The ~4,800-token system prompt
+Each request is several API calls, one per round of tool use. The system prompt
 and tool definitions are prompt-cached, so repeat calls mostly pay the cheap cache-read rate.
 The command line and panel show token usage after every request, with an estimated cost in
 US dollars ("about US$0.12"). The history window (`AIHISTORY`) shows each request's usage and

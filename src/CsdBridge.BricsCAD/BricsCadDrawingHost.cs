@@ -20,7 +20,7 @@ namespace CsdBridge.BricsCAD
     /// BricsCAD's main thread, inside the AIDRAFT command (see <see cref="AgentRunner"/>),
     /// so the whole AI request is one UNDO step.
     /// </summary>
-    internal sealed class BricsCadDrawingHost : IDrawingHost
+    internal sealed partial class BricsCadDrawingHost : IDrawingHost
     {
         private const int MaxListedNames = 5000;
         private const int MaxPolylinePoints = 500;
@@ -92,6 +92,7 @@ namespace CsdBridge.BricsCAD
                 info.Linetypes = Names<LinetypeTableRecord>(tr, Db.LinetypeTableId);
                 info.TextStyles = Names<TextStyleTableRecord>(tr, Db.TextStyleTableId);
                 info.DimStyles = Names<DimStyleTableRecord>(tr, Db.DimStyleTableId);
+                AddStyleDetails(info, tr);
 
                 var blocks = (BlockTable)tr.GetObject(Db.BlockTableId, OpenMode.ForRead);
                 foreach (ObjectId id in blocks)
@@ -117,11 +118,18 @@ namespace CsdBridge.BricsCAD
 
             using (Transaction tr = Db.TransactionManager.StartTransaction())
             {
+                // A view shows what the user sees: nothing on layers that are off or frozen.
+                HashSet<ObjectId>? hiddenLayers = query.ForView ? HiddenLayers(tr) : null;
                 var space = (BlockTableRecord)tr.GetObject(Db.CurrentSpaceId, OpenMode.ForRead);
                 foreach (ObjectId id in space)
                 {
                     var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
                     if (ent == null)
+                    {
+                        continue;
+                    }
+
+                    if (hiddenLayers != null && (!ent.Visible || hiddenLayers.Contains(ent.LayerId)))
                     {
                         continue;
                     }
@@ -142,7 +150,7 @@ namespace CsdBridge.BricsCAD
                         bool match = kind == null
                             ? query.IncludeOtherKinds
                             : query.Kinds != null && (query.Kinds.Contains(kind.Value)
-                                || (ent is Dimension && (query.Kinds.Contains(EntityKind.LinearDimension) || query.Kinds.Contains(EntityKind.AlignedDimension))));
+                                || (ent is Dimension && query.Kinds.Any(EntityQuery.IsDimension)));
                         if (!match)
                         {
                             continue;
@@ -157,7 +165,7 @@ namespace CsdBridge.BricsCAD
                     result.TotalMatched++;
                     if (result.Entities.Count < query.Limit)
                     {
-                        result.Entities.Add(Summarize(ent, tr));
+                        result.Entities.Add(Summarize(ent, tr, query.ForView));
                     }
                 }
 
@@ -166,6 +174,21 @@ namespace CsdBridge.BricsCAD
 
             result.Truncated = result.TotalMatched > result.Entities.Count;
             return result;
+        }
+
+        private HashSet<ObjectId> HiddenLayers(Transaction tr)
+        {
+            var hidden = new HashSet<ObjectId>();
+            foreach (ObjectId id in (LayerTable)tr.GetObject(Db.LayerTableId, OpenMode.ForRead))
+            {
+                var layer = (LayerTableRecord)tr.GetObject(id, OpenMode.ForRead);
+                if (layer.IsOff || layer.IsFrozen)
+                {
+                    hidden.Add(id);
+                }
+            }
+
+            return hidden;
         }
 
         // ================================================================ write
@@ -281,8 +304,20 @@ namespace CsdBridge.BricsCAD
                 blockId = bt[bi.BlockName];
             }
 
-            Entity ent = Build(spec, blockId);
-            ent.SetDatabaseDefaults(Db);
+            Styles styles = ResolveStyles(spec, tr, out string? styleError);
+            if (styleError != null)
+            {
+                return ItemResult.Failure(index, styleError);
+            }
+
+            Entity ent = Build(spec, blockId, styles);
+            if (!(ent is MLeader || ent is Table))
+            {
+                // Multileaders and tables take their defaults first, in BuildAnnotation, then their content.
+                ent.SetDatabaseDefaults(Db);
+            }
+
+            ApplyStyles(ent, spec, styles, tr);
 
             string? note = null;
             if (spec.Layer != null)
@@ -301,7 +336,7 @@ namespace CsdBridge.BricsCAD
                 ent.LinetypeScale = ltScale;
             }
 
-            ApplyTextDefaults(ent, spec);
+            ApplyTextDefaults(ent, spec, styles);
 
             space.AppendEntity(ent);
             tr.AddNewlyCreatedDBObject(ent, true);
@@ -332,7 +367,7 @@ namespace CsdBridge.BricsCAD
             return ItemResult.Success(index, ent.Handle.ToString(), note);
         }
 
-        private Entity Build(EntitySpec spec, ObjectId blockId)
+        private Entity Build(EntitySpec spec, ObjectId blockId, Styles styles)
         {
             switch (spec)
             {
@@ -374,10 +409,15 @@ namespace CsdBridge.BricsCAD
                     return new MText();
 
                 case LinearDimensionSpec d:
-                    return new RotatedDimension(Rad(d.RotationDeg), P3(d.P1), P3(d.P2), P3(d.DimLinePoint), d.TextOverride ?? "", Db.Dimstyle);
+                    return new RotatedDimension(Rad(d.RotationDeg), P3(d.P1), P3(d.P2), P3(d.DimLinePoint), d.TextOverride ?? "", styles.DimStyle);
 
                 case AlignedDimensionSpec d:
-                    return new AlignedDimension(P3(d.P1), P3(d.P2), P3(d.DimLinePoint), d.TextOverride ?? "", Db.Dimstyle);
+                    return new AlignedDimension(P3(d.P1), P3(d.P2), P3(d.DimLinePoint), d.TextOverride ?? "", styles.DimStyle);
+
+                case DimensionSpec _:
+                case MLeaderSpec _:
+                case TableSpec _:
+                    return BuildAnnotation(spec, styles);
 
                 case BlockInsertSpec b:
                     return new BlockReference(P3(b.Position), blockId)
@@ -392,12 +432,12 @@ namespace CsdBridge.BricsCAD
         }
 
         /// <summary>Text properties are set after SetDatabaseDefaults so they are not overwritten.</summary>
-        private void ApplyTextDefaults(Entity ent, EntitySpec spec)
+        private void ApplyTextDefaults(Entity ent, EntitySpec spec, Styles styles)
         {
             if (ent is DBText text && spec is TextSpec t)
             {
                 text.TextString = t.Text;
-                text.Height = t.Height ?? Db.Textsize;
+                text.Height = t.Height ?? styles.TextHeight ?? Db.Textsize;
                 text.Rotation = Rad(t.RotationDeg);
                 text.Position = P3(t.Position);
                 switch (t.Align)
@@ -423,7 +463,7 @@ namespace CsdBridge.BricsCAD
             {
                 mtext.Location = P3(m.Position);
                 mtext.Attachment = AttachmentPoint.TopLeft;
-                mtext.TextHeight = m.Height ?? Db.Textsize;
+                mtext.TextHeight = m.Height ?? styles.TextHeight ?? Db.Textsize;
                 mtext.Width = m.Width ?? 0;
                 mtext.Rotation = Rad(m.RotationDeg);
                 mtext.Contents = ToMTextContents(m.Text);
@@ -897,7 +937,7 @@ namespace CsdBridge.BricsCAD
                         }
                         else if (ent is Dimension d)
                         {
-                            m.Measurement = Math.Round(d.Measurement, 6);
+                            m.Measurement = Math.Round(DimensionValue(d), 6);
                         }
                     }
                     catch (System.Exception ex)
@@ -1262,15 +1302,22 @@ namespace CsdBridge.BricsCAD
                 case DBText _: return EntityKind.Text;
                 case MText _: return EntityKind.MText;
                 case AlignedDimension _: return EntityKind.AlignedDimension;
+                case RadialDimension _: return EntityKind.RadiusDimension;
+                case DiametricDimension _: return EntityKind.DiameterDimension;
+                case ArcDimension _: return EntityKind.ArcLengthDimension;
+                case OrdinateDimension _: return EntityKind.OrdinateDimension;
+                case Point3AngularDimension _:
+                case LineAngularDimension2 _: return EntityKind.AngularDimension;
                 case Dimension _: return EntityKind.LinearDimension;
-                case Table _: return null;
+                case MLeader _: return EntityKind.MLeader;
+                case Table _: return EntityKind.Table;
                 case BlockReference _: return EntityKind.BlockInsert;
                 case Hatch _: return EntityKind.Hatch;
                 default: return null;
             }
         }
 
-        private EntitySummary Summarize(Entity ent, Transaction tr)
+        private EntitySummary Summarize(Entity ent, Transaction tr, bool forView = false)
         {
             var s = new EntitySummary
             {
@@ -1335,6 +1382,7 @@ namespace CsdBridge.BricsCAD
                     s.Text = t.TextString;
                     s.Height = Round(t.Height);
                     s.Rotation = Round(Deg(t.Rotation));
+                    s.Style = NameOf(tr, t.TextStyleId);
                     break;
 
                 case MText m:
@@ -1343,28 +1391,19 @@ namespace CsdBridge.BricsCAD
                     s.Text = m.Text;
                     s.Height = Round(m.TextHeight);
                     s.Rotation = Round(Deg(m.Rotation));
+                    s.Style = NameOf(tr, m.TextStyleId);
                     break;
 
                 case Dimension d:
-                    s.Kind = "dimension";
-                    s.Measurement = Round(d.Measurement);
-                    s.Text = string.IsNullOrEmpty(d.DimensionText) ? null : d.DimensionText;
-                    if (d is RotatedDimension rd)
-                    {
-                        s.Start = Arr(rd.XLine1Point);
-                        s.End = Arr(rd.XLine2Point);
-                        s.Rotation = Round(Deg(rd.Rotation));
-                    }
-                    else if (d is AlignedDimension ad)
-                    {
-                        s.Start = Arr(ad.XLine1Point);
-                        s.End = Arr(ad.XLine2Point);
-                    }
-
+                    SummarizeDimension(s, d, tr);
                     break;
 
-                case Table _:
-                    s.Kind = "table";
+                case MLeader ml:
+                    SummarizeLeader(s, ml, tr, forView);
+                    break;
+
+                case Table table:
+                    SummarizeTable(s, table, tr);
                     break;
 
                 case BlockReference br:
@@ -1374,12 +1413,28 @@ namespace CsdBridge.BricsCAD
                     s.Block = ((BlockTableRecord)tr.GetObject(defId, OpenMode.ForRead)).Name;
                     s.Position = Arr(br.Position);
                     s.Rotation = Round(Deg(br.Rotation));
+                    s.Scale = Math.Abs(br.ScaleFactors.X - 1) > 1e-9 ? Round(br.ScaleFactors.X) : (double?)null;
+                    s.Attributes = ReadAttributes(br, tr);
                     break;
                 }
 
                 default:
                     s.Kind = ent.GetType().Name.ToLowerInvariant();
+                    if (forView && CurveSpec(ent) is PolylineSpec outline && outline.Points.Count >= 2)
+                    {
+                        // 2D and 3D polylines (e.g. CSD strings): their plan shape, for the picture.
+                        int n = Math.Min(outline.Points.Count, MaxPolylinePoints);
+                        s.Points = outline.Points.Take(n).Select(p => p.ToArray()).ToArray();
+                        s.Bulges = outline.Bulges != null && outline.Bulges.Count >= n ? outline.Bulges.Take(n).ToArray() : null;
+                        s.Closed = outline.Closed;
+                    }
+
                     break;
+            }
+
+            if (forView)
+            {
+                s.TextBox ??= TextBoxOf(ent);
             }
 
             try

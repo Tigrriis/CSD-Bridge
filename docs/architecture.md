@@ -75,10 +75,13 @@ BricsCAD would freeze for the 10-60 s a request can take.
 
 ## Tool design
 
-Twelve tools:
+The general tools (`ToolCatalog`), next to the extension tools for roads, profiles and Civil Site Design:
 - **Drawing:** `get_drawing_info`, `list_entities`, `ensure_layers`, `draw_entities`, `modify_entities`
 - **User input:** `pick_point`, `select_entities`
 - **Exact geometry:** `calculate`, `offset_entities`, `intersect`, `measure`, `points_on_curve`
+- **Linework finishing:** `hatch`, `trim_extend`, `fillet`, `join_curves`, `offset_by_chainage`, `analyse_offsets`
+- **Annotation:** `edit_annotations`, `dimension_chain`, `label_alignment`, `setout_points`, `view_drawing`
+  (multileaders, tables and every dimension type are kinds of `draw_entities`)
 
 - **Exact geometry is computed, never estimated.** LLMs make small arithmetic slips that are
   hard to spot in a drawing. So every derived number goes through a tool:
@@ -110,6 +113,26 @@ Twelve tools:
   4 decimals. Listing is capped at 500 entities and reports `truncated`.
 - **World coordinates, degrees.** Picked points are converted from UCS to WCS. Colour defaults
   to ByLayer, and missing layers are created.
+
+## Annotation and the view
+
+- **Positions are worked out in Core.** `label_alignment`, `setout_points` and `dimension_chain` compute every
+  position on exact lines and arcs (`Path2`) and hand finished entities to `IDrawingHost.CreateEntities`. The
+  BricsCAD and offline hosts therefore place things identically, and the placement is unit-tested.
+- **Styles are looked up, never created.** An entity names a style (`EntitySpec.Style`); the host resolves it
+  before creating anything and fails that item, listing the styles that exist, if it isn't in the drawing.
+  Multileader and table styles are read from their dictionaries (`ACAD_MLEADERSTYLE`, `ACAD_TABLESTYLE`), the
+  current ones from `CMLEADERSTYLE` / `CTABLESTYLE`.
+- **Editing is one host call.** `EditAnnotations` takes the fields to change; `AnnotationEdits.Problem` decides
+  which fields fit which kind of object for every host, and an edit that doesn't fit changes nothing.
+- **The view is drawn, not captured.** `view_drawing` lists the entities in a window (`EntityQuery.ForView`),
+  finds overlapping annotation (`AnnotationClashes`, a separating-axis test on text boxes turned with the
+  text), and draws a schematic PNG (`SchematicRenderer`, a small software canvas with its own PNG encoder
+  and stroke font, no dependencies). The host supplies each text box: BricsCAD from the real text
+  (`GeometricExtents`, MText `ActualWidth`/`ActualHeight`), the offline host from an estimate. A screenshot
+  was considered and rejected: it needs the view zoomed, can capture whatever is on top of the drawing
+  window, and can't be tested without BricsCAD. The picture goes back as an image block in the
+  `tool_result` (`ToolOutcome.Images`).
 
 ## Routines
 
@@ -205,15 +228,28 @@ says *why* each step happened, which a recording of commands and pick points can
 5. Text alignment, MText formatting, and dimension style/scale look right in the office template.
 6. Blocks with attributes (title blocks) insert with values filled.
 7. Behaviour on a large drawing (10k+ entities): `list_entities` speed and the `truncated` flag.
+8. Annotation (`BricsCadDrawingHost.Annotation.cs`). This file is checked by compiling it against Autodesk's
+   AutoCAD .NET reference assemblies with the namespaces swapped, which confirms names and signatures in the
+   API BricsCAD mirrors, but not BricsCAD's behaviour. Check in BricsCAD:
+   - a multileader: the arrow is at the arrow point, the text is beside the landing point, and there is no
+     extra vertex in the leader (BricsCAD wants `SetLastVertex` where AutoCAD wants `AddLastVertex`;
+     `AddLeaderLine` handles both)
+   - editing a multileader's text, arrow and position
+   - a table with and without a title: the top row is merged only with a title, and text heights, column
+     widths and row heights are as asked
+   - radius, diameter, angular, arc length and ordinate dimensions, and a named dimension style
+   - `view_drawing`: text boxes sit on the real text, including rotated and right-aligned text
 
 ## Roadmap ideas
 
-- **More tools:** hatch, leaders/multileaders, tables, set attribute values on existing
-  blocks, offset/trim/fillet, zoom to result, set the current layer.
+- **More tools:** zoom to result, set the current layer, layer states (freeze, off, lock), mirror and stretch,
+  layouts and viewports, creating and editing styles.
+- **More civil annotation:** level and grade labels from the ground sampling, batter tadpoles, pit and pipe
+  labels, linemarking, long section annotation.
 - **Preview/accept:** draw into a temporary layer or transaction and let the user accept or
   reject.
-- **Visual check:** send a rendered PNG of the result back to Claude (vision) to catch layout
-  issues.
+- **A real screenshot** as an alternative to the schematic view, for checking linetypes, hatches and block
+  graphics. See "Annotation and the view" for why it isn't the default.
 - **Streaming:** show Claude's text as it is written.
 - **Office knowledge:** standard details and block libraries described in the standards file,
   so "insert our standard pad footing detail" works.

@@ -310,15 +310,41 @@ namespace CsdBridge.Core.Agent
                     }
 
                     // Every tool_use must get exactly one tool_result, all in one user message.
-                    toolResults.Add(new BetaToolResultBlockParam
-                    {
-                        ToolUseID = toolUse.ID,
-                        Content = outcome.Content,
-                        IsError = outcome.IsError,
-                    });
+                    toolResults.Add(ToolResult(toolUse.ID, outcome));
                 }
 
                 _messages.Add(new BetaUserMessageParam { Content = toolResults });
+            }
+        }
+
+        /// <summary>A tool result: plain text, or text followed by pictures when the tool returned any.</summary>
+        private static BetaToolResultBlockParam ToolResult(string toolUseId, ToolOutcome outcome)
+        {
+            if (outcome.Images.Count == 0)
+            {
+                return new BetaToolResultBlockParam { ToolUseID = toolUseId, Content = outcome.Content, IsError = outcome.IsError };
+            }
+
+            var blocks = new List<Block> { new BetaTextBlockParam { Text = outcome.Content } };
+            foreach (ToolImage image in outcome.Images)
+            {
+                blocks.Add(new BetaImageBlockParam
+                {
+                    Source = new BetaBase64ImageSource { Data = Convert.ToBase64String(image.Data), MediaType = ImageType(image.MediaType) },
+                });
+            }
+
+            return new BetaToolResultBlockParam { ToolUseID = toolUseId, Content = blocks, IsError = outcome.IsError };
+        }
+
+        private static MediaType ImageType(string mediaType)
+        {
+            switch (mediaType)
+            {
+                case "image/jpeg": return MediaType.ImageJpeg;
+                case "image/gif": return MediaType.ImageGif;
+                case "image/webp": return MediaType.ImageWebP;
+                default: return MediaType.ImagePng;
             }
         }
 
@@ -644,6 +670,11 @@ namespace CsdBridge.Core.Agent
                 case ToolCatalog.JoinCurves: return "joining curves";
                 case ToolCatalog.OffsetByChainage: return $"drawing {Count(input, "lines")} road line(s) from the alignment";
                 case ToolCatalog.AnalyseOffsets: return "measuring offsets from the alignment";
+                case ToolCatalog.EditAnnotations: return $"editing {Count(input, "edits")} annotation object(s)";
+                case ToolCatalog.DimensionChain: return $"dimensioning a run of {Count(input, "points")} points";
+                case ToolCatalog.LabelAlignment: return "labelling the alignment";
+                case ToolCatalog.SetoutPoints: return "setting out points";
+                case ToolCatalog.ViewDrawing: return "looking at the drawing";
                 default: return name;
             }
         }
