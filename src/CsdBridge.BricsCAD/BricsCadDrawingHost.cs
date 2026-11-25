@@ -1173,7 +1173,7 @@ namespace CsdBridge.BricsCAD
         }
 
         /// <summary>Exact plan geometry of a curve in world X/Y, or null if it isn't a line, arc, circle or polyline.</summary>
-        private static EntitySpec? CurveSpec(Entity ent)
+        internal static EntitySpec? CurveSpec(Entity ent)
         {
             switch (ent)
             {

@@ -12,7 +12,9 @@ namespace CsdBridge.BricsCAD
 {
     /// <summary>
     /// Adds a "CSD-Bridge" tab to the BricsCAD ribbon:
-    ///   Chat | Draft | History   (large)    New chat / Status / API key   (small)    Hatch pipes (large)
+    ///   Claude panel:   Chat | Draft | Routines | History (large), New chat / Status / API key (small)
+    ///   Sheets panel:   Scale Bars | VP layers (run in the add-in, no Claude call)
+    ///   Long sections panel: Hatch pipes (runs in the add-in, no Claude call)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
     ///
@@ -92,6 +94,7 @@ namespace CsdBridge.BricsCAD
                 var source = new RibbonPanelSource { Id = "CSDBRIDGE_PANEL", Name = "Claude", Title = "Claude" };
                 source.Items.Add(Button("Chat", "AIPANEL", "Open the Claude chat panel", "chat", large: true));
                 source.Items.Add(Button("Draft", "AIDRAFT", "Ask Claude to draw or change something (command line)", "draft", large: true));
+                source.Items.Add(Button("Routines", "AIROUTINES", "Saved routines: run, create, edit and share standard procedures", "routines", large: true));
                 source.Items.Add(Button("History", "AIHISTORY", "Every request to Claude and what it did", "history", large: true));
 
                 var stack = new RibbonRowPanel();
@@ -102,12 +105,17 @@ namespace CsdBridge.BricsCAD
                 stack.Items.Add(Button("API key", "AIKEY", "Set or remove the Anthropic API key", "key", large: false));
                 source.Items.Add(stack);
 
-                var drafting = new RibbonPanelSource { Id = "CSDBRIDGE_DRAFTING_PANEL", Name = "Long sections", Title = "Long sections" };
-                drafting.Items.Add(Button("Hatch pipes", "AIPIPEHATCH", "Hatch the sewer and stormwater pipes in every long section layout", "pipehatch", large: true));
-
                 var tab = new RibbonTab { Id = TabId, Name = "CSD-Bridge", Title = "CSD-Bridge" };
                 tab.Panels.Add(new RibbonPanel { Source = source });
-                tab.Panels.Add(new RibbonPanel { Source = drafting });
+
+                var sheets = new RibbonPanelSource { Id = "CSDBRIDGE_SHEETS", Name = "Sheets", Title = "Sheets" };
+                sheets.Items.Add(Button("Scale Bars", "AISCALEBARS", "Add a scale bar to every layout for each viewport scale (no Claude call, no cost)", "scalebar", large: true));
+                sheets.Items.Add(Button("VP layers", "AIVPLAYERS", "Show or hide layers in the viewports of many layouts at once: a grid of layers × layouts (no Claude call, no cost)", "vplayers", large: true));
+                tab.Panels.Add(new RibbonPanel { Source = sheets });
+
+                var longSections = new RibbonPanelSource { Id = "CSDBRIDGE_LONGSECTIONS", Name = "Long sections", Title = "Long sections" };
+                longSections.Items.Add(Button("Hatch pipes", "AIPIPEHATCH", "Hatch the sewer and stormwater pipes in every long section layout (no Claude call, no cost)", "pipehatch", large: true));
+                tab.Panels.Add(new RibbonPanel { Source = longSections });
                 ribbon.Tabs.Add(tab);
                 if (activate)
                 {
@@ -249,7 +257,9 @@ namespace CsdBridge.BricsCAD
             {
                 try
                 {
-                    switch (parameter as string)
+                    // The ribbon passes the clicked button, not its CommandParameter.
+                    string? command = parameter as string ?? (parameter as RibbonCommandItem)?.CommandParameter as string;
+                    switch (command)
                     {
                         // Windows open directly, so they also work while a request is running.
                         case "AIPANEL":
@@ -258,15 +268,42 @@ namespace CsdBridge.BricsCAD
                         case "AIHISTORY":
                             HistoryWindow.ShowWindow();
                             return;
-                        case string command:
+                        case "AIROUTINES":
+                            Routines.RoutinesWindow.ShowWindow();
+                            return;
+                        case "AIVPLAYERS":
+                            ViewportLayersWindow.ShowWindow();
+                            return;
+                        case null:
+                            Say($"the ribbon button gave no command ({parameter?.GetType().FullName ?? "nothing"} was passed). Type the command instead.");
+                            return;
+                        default:
                             Document? doc = CadApp.DocumentManager.MdiActiveDocument;
-                            doc?.SendStringToExecute(command + " ", true, false, true);
+                            if (doc == null)
+                            {
+                                return; // no drawing open
+                            }
+
+                            doc.SendStringToExecute(command + " ", true, false, true);
                             return;
                     }
                 }
+                catch (Exception ex)
+                {
+                    // A failed click shouldn't take anything else down, but say why it did nothing.
+                    Say("the ribbon button failed: " + ex.Message);
+                }
+            }
+
+            private static void Say(string message)
+            {
+                try
+                {
+                    CadApp.DocumentManager.MdiActiveDocument?.Editor.WriteMessage("\nCSD-Bridge: " + message + "\n");
+                }
                 catch (Exception)
                 {
-                    // A failed click shouldn't take anything else down.
+                    // Nowhere to report it.
                 }
             }
         }

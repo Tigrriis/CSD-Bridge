@@ -31,7 +31,7 @@ namespace CsdBridge.Core.Tests
                 Status = AgentRunStatus.Completed,
                 FinalText = "Done.\nTwo lines.",
                 ToolCalls = 1,
-                Usage = new UsageTotals { Requests = 2, InputTokens = 1000, OutputTokens = 300, CacheReadTokens = 4000 },
+                Usage = new UsageTotals { Requests = 2, InputTokens = 1000, OutputTokens = 300, CacheReadTokens = 4000, CostUsd = 0.0108m },
             });
             return r;
         }
@@ -58,6 +58,9 @@ namespace CsdBridge.Core.Tests
             Assert.Equal(4000, r.CacheReadTokens);
             Assert.False(r.IsRunning);
             Assert.Contains("2 request(s)", r.UsageSummary());
+            Assert.Equal(0.0108m, r.CostUsd);
+            Assert.Null(r.UnpricedRequests);
+            Assert.Contains("about US$0.011", r.UsageSummary());
         }
 
         [Fact]

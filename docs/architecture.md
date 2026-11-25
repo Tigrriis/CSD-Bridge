@@ -41,6 +41,8 @@ The trade-off: we own the agent loop, the prompt and the error handling. That co
   `IDrawingHost`. The BricsCAD host already uses the AutoCAD-compatible API, so that is mostly a
   namespace swap.
 - **CsdBridge.BricsCAD** is the add-in: commands, panel, settings, and the drawing host.
+- The vehicle turning path tools that used to live here are now a separate add-in, PointerTurn
+  (github.com/Tigrriis/pointerturn). Nothing in CSD-Bridge depends on it.
 
 ## Request flow
 
@@ -132,9 +134,41 @@ The general tools (`ToolCatalog`), next to the extension tools for roads, profil
   window, and can't be tested without BricsCAD. The picture goes back as an image block in the
   `tool_result` (`ToolOutcome.Images`).
 
+## Routines
+
+A routine is a saved procedure: a name, typed inputs, and Markdown steps for Claude. The design choice
+was to build them from a real chat rather than from a typed prompt or by recording the user's clicks: the
+chat already holds what the job took (Claude's questions and the user's answers and corrections), and it
+says *why* each step happened, which a recording of commands and pick points can't.
+
+- **Files** (`Core/Routines/RoutineFile.cs`): one Markdown file per routine with a small YAML-like header
+  (name, description, effort, csd_edit, inputs). The parser handles only that fixed subset, so Core needs
+  no YAML package; anything it doesn't know is kept on save. A file without a header is all steps.
+- **Library** (`RoutineLibrary`): the user's folder (`%APPDATA%\CsdBridge\routines`) plus an optional
+  shared office folder. Names are unique per folder; files are named after the routine. Rename and "Saved
+  in" rewrite and move the file; delete moves it to `deleted\`. A save checks the file's write time against
+  when it was read, so two people editing an office routine don't silently overwrite each other.
+- **Running** (`RoutinePrompt`): the run dialog collects the typed inputs; points and selections are left to
+  `pick_point` / `select_entities` during the run. The routine goes in the **user message**, never the
+  system prompt, so the cached prefix is untouched. Its steps are sent with their `{{name}}` placeholders and
+  the values listed after them, so if the user later asks to update the routine in the same chat, Claude
+  still has the original wording. A routine can fix its effort tier; otherwise Auto judges its steps.
+- **Writing one** (`RoutineTools`, the `save_routine` tool): when asked to save a chat as a routine, Claude
+  calls `save_routine` with the inputs and steps. The tool validates them (bad input names, choices without
+  options, `{{name}}` with no matching input go back to Claude to fix) and hands the draft to the host;
+  nothing is written. When the request's command ends, the add-in opens the draft in the routine editor
+  for the user to check and save. With `replaces`, the draft is an update of a saved routine.
+- **UI** (`BricsCAD/Routines/`): the Routines window (list, search, New, Edit, Rename, Duplicate, Delete,
+  Run), the editor, and the run dialog. The run dialog remembers each user's last values per routine.
+
 ## Model settings and conversation rules
 
-- **Model:** `claude-opus-5-5`, with `thinking: adaptive`.
+- **Model:** `claude-opus-5-5` by default, with `thinking: adaptive`. The user can switch to
+  `claude-sonnet-5-5` or `claude-haiku-5-5` (chat panel or `AIMODEL`; list in
+  `src/CsdBridge.Core/Agent/ModelCatalog.cs`). A switch keeps the conversation as it is: the
+  API drops thinking blocks the new model can't read (unbilled), and the new model's cache
+  starts cold. The one exception is a model without per-message effort taking over a
+  conversation that has effort-only system messages; that starts a new conversation instead.
 - **Effort per request:** Auto picks Quick (`low`), Normal (`high`) or Thorough (`xhigh`)
   from the request wording, or the user fixes one mode.
   - **How it's sent:** the top-level effort stays at the Normal level. A change is an
@@ -149,7 +183,7 @@ The general tools (`ToolCatalog`), next to the extension tools for roads, profil
   is on by default. If a request is declined on policy grounds, Anthropic re-runs it on its
   recommended fallback model. That is unlikely for drafting, but it costs nothing otherwise.
   Turn it off with `server_side_fallback: false`. It is Claude API only, not Bedrock, Vertex AI
-  or Foundry.
+  or Foundry. Haiku 5.5 has no server-side fallback, so `fallbacks` isn't sent for it.
 - **Append-only history.** The system prompt, office standards and tool list are fixed for a
   conversation's lifetime. Assistant turns, including thinking blocks and their signatures,
   are echoed back exactly. Anything that varies per request, such as the selection, goes into
@@ -220,4 +254,7 @@ The general tools (`ToolCatalog`), next to the extension tools for roads, profil
 - **Office knowledge:** standard details and block libraries described in the standards file,
   so "insert our standard pad footing detail" works.
 - **Evaluation:** a set of reference prompts plus expected geometry, run through the CLI
-  harness, so prompt changes can be measured.
+  harness, so prompt changes can be measured. Routines are a natural source: the CLI can already run
+  one with `--routine` and `--input`.
+- **Routines from free text:** list the routine names in the system prompt (fixed per chat) so "do the
+  usual profile tidy on MC02" can find the right routine without opening the Routines window.

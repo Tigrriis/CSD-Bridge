@@ -111,6 +111,34 @@ def key():
     return img.rotate(35, resample=Image.BICUBIC, center=(128, 128)).resize((S, S))
 
 
+def scale_bar():
+    img, d = canvas()
+    # alternating segments, like a drawing's scale bar, with ticks above
+    x0, x1, y0, y1 = 20, 236, 110, 168
+    seg = (x1 - x0) / 4
+    for i in range(4):
+        a = x0 + i * seg
+        d.rectangle((a, y0, a + seg, y1), fill=BLUE if i % 2 == 0 else WHITE)
+    d.rectangle((x0, y0, x1, y1), outline=BLUE_DARK, width=OUTLINE)
+    for i in range(5):
+        x = x0 + i * seg
+        d.line([(x, y0 - (44 if i % 2 == 0 else 26)), (x, y0)], fill=BLUE_DARK, width=OUTLINE)
+    return img
+
+
+def routines():
+    img, d = canvas()
+    # a page of numbered steps...
+    d.rounded_rectangle((26, 16, 186, 238), radius=22, fill=WHITE, outline=BLUE_DARK, width=OUTLINE)
+    for y, end in ((66, 160), (114, 160), (162, 118)):
+        d.ellipse((50, y - 13, 76, y + 13), fill=BLUE)
+        d.line([(92, y), (end, y)], fill=GREY, width=14)
+    # ...and a run button
+    d.ellipse((132, 132, 246, 246), fill=GREEN, outline=GREEN_DARK, width=OUTLINE)
+    d.polygon([(174, 160), (174, 218), (222, 189)], fill=WHITE)
+    return img
+
+
 def pipe_hatch():
     img, d = canvas()
     # a long section: ground line above a hatched pipe falling to the left
@@ -124,14 +152,43 @@ def pipe_hatch():
     return img
 
 
+def vp_layers():
+    img, d = canvas()
+    # a sheet with a grid of dots: filled = shown, hollow = frozen in that layout's viewports
+    d.rounded_rectangle((16, 16, 240, 240), radius=24, fill=WHITE, outline=GREY, width=OUTLINE)
+    d.line([(16, 80), (240, 80)], fill=GREY, width=8)
+    d.line([(80, 16), (80, 240)], fill=GREY, width=8)
+    states = [
+        [True, False, True],
+        [True, True, False],
+        [False, True, True],
+    ]
+    for row, cells in enumerate(states):
+        for col, shown in enumerate(cells):
+            cx, cy = 112 + col * 52, 112 + row * 52
+            box = (cx - 19, cy - 19, cx + 19, cy + 19)
+            if shown:
+                d.ellipse(box, fill=GREEN, outline=GREEN_DARK, width=6)
+            else:
+                d.ellipse(box, fill=WHITE, outline=GREY, width=8)
+    # layer bars in the name column
+    for row in range(3):
+        y = 112 + row * 52
+        d.line([(34, y), (62, y)], fill=BLUE, width=14)
+    return img
+
+
 ICONS = {
     "chat": chat,
     "draft": draft,
     "history": history,
+    "routines": routines,
     "newchat": new_chat,
     "status": status,
     "key": key,
+    "scalebar": scale_bar,
     "pipehatch": pipe_hatch,
+    "vplayers": vp_layers,
 }
 
 

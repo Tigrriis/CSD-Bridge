@@ -24,6 +24,13 @@ namespace CsdBridge.Core.Civil
         /// </summary>
         public List<string> PipeLayers { get; set; } = new List<string>();
 
+        /// <summary>
+        /// Hatch only the long section's own pipe: runs that start and end on a structure. Crossing
+        /// and nearby pipes plotted on the section, which stop short of or run past the structures,
+        /// are left out.
+        /// </summary>
+        public bool MainPipeOnly { get; set; } = true;
+
         public string Pattern { get; set; } = "SOLID";
 
         /// <summary>Put the hatch behind the long section's linework.</summary>
@@ -177,29 +184,40 @@ namespace CsdBridge.Core.Civil
                     levelGroups.Add(level);
                 }
 
-                // The lowest line and the highest one parallel to it: a pipe drawn with wall
-                // lines as well is still hatched over its full height.
+                // Lines parallel to the lowest one, bottom up, pair off as invert and obvert:
+                // two pipes between the same chainages stay two pipes. Four lines spaced
+                // thin-thick-thin are one pipe drawn with its walls, hatched over its full height.
                 while (sloping.Count >= 2)
                 {
                     SectionLine invert = sloping[0];
-                    int top = 0;
-                    for (int i = 1; i < sloping.Count; i++)
+                    List<int> stack = Enumerable.Range(1, sloping.Count - 1)
+                        .Where(i => Parallel(invert, sloping[i], tol) && sloping[i].A.Y - invert.A.Y > tol)
+                        .ToList();
+                    if (stack.Count == 0)
                     {
-                        if (Parallel(invert, sloping[i], tol))
+                        sloping.RemoveAt(0);
+                        continue;
+                    }
+
+                    int top = stack[0];
+                    if (stack.Count >= 3)
+                    {
+                        double wall = sloping[stack[0]].A.Y - invert.A.Y;
+                        double bore = sloping[stack[1]].A.Y - sloping[stack[0]].A.Y;
+                        double wall2 = sloping[stack[2]].A.Y - sloping[stack[1]].A.Y;
+                        if (bore > wall * 2 && Math.Abs(wall - wall2) <= wall * 0.05 + tol)
                         {
-                            top = i;
+                            top = stack[2];
                         }
                     }
 
-                    if (top > 0 && sloping[top].A.Y - invert.A.Y > tol)
+                    quads.Add(Quad(invert, sloping[top]));
+                    foreach (int i in stack.Where(i => i <= top).Reverse())
                     {
-                        quads.Add(Quad(invert, sloping[top]));
-                        sloping.RemoveRange(0, top + 1);
+                        sloping.RemoveAt(i);
                     }
-                    else
-                    {
-                        sloping.RemoveAt(0);
-                    }
+
+                    sloping.RemoveAt(0);
                 }
             }
 
@@ -234,6 +252,59 @@ namespace CsdBridge.Core.Civil
             }
 
             return quads.OrderBy(q => q.Corners[0].X).ThenBy(q => q.Corners[0].Y).ToList();
+        }
+
+        /// <summary>
+        /// The runs of the long section's own pipe, leaving out crossing and nearby pipes that are
+        /// plotted on it. The section's pipe runs from structure to structure, so both ends of a
+        /// run sit on a structure's vertical line (a pit wall or the line dropped to the data
+        /// band); other pipes start or stop in between. Where two runs still cover the same
+        /// chainages, the larger is kept. If no run ends on vertical lines at all, the section is
+        /// drawn some other way and every run is returned.
+        /// </summary>
+        public static List<PipeQuad> MainLine(IReadOnlyList<PipeQuad> quads, IReadOnlyList<SectionLine> lines)
+        {
+            if (quads.Count == 0 || lines.Count == 0)
+            {
+                return quads.ToList();
+            }
+
+            double minX = lines.Min(l => Math.Min(l.A.X, l.B.X));
+            double maxX = lines.Max(l => Math.Max(l.A.X, l.B.X));
+            double tol = Math.Max((maxX - minX) * 1e-5, 1e-9);
+            List<(double X, double Bottom, double Top)> verticals = lines
+                .Where(l => Math.Abs(l.B.X - l.A.X) <= tol && Math.Abs(l.B.Y - l.A.Y) > tol)
+                .Select(l => ((l.A.X + l.B.X) / 2, Math.Min(l.A.Y, l.B.Y), Math.Max(l.A.Y, l.B.Y)))
+                .ToList();
+
+            // A structure line is taller than the pipe (so a pipe's own end cap doesn't count)
+            // and reaches the pipe's end (so lines down in the data band don't count).
+            bool AtStructure(Point2 invert, Point2 obvert)
+            {
+                double depth = obvert.Y - invert.Y;
+                return verticals.Any(v => Math.Abs(v.X - invert.X) <= tol
+                    && v.Top - v.Bottom >= depth * 1.2
+                    && v.Top >= invert.Y - depth && v.Bottom <= obvert.Y + depth);
+            }
+
+            List<PipeQuad> onStructures = quads
+                .Where(q => AtStructure(q.Corners[0], q.Corners[3]) && AtStructure(q.Corners[1], q.Corners[2]))
+                .ToList();
+            if (onStructures.Count == 0)
+            {
+                return quads.ToList();
+            }
+
+            var kept = new List<PipeQuad>();
+            foreach (PipeQuad q in onStructures.OrderByDescending(q => q.Depth))
+            {
+                if (!kept.Any(k => Math.Min(k.Corners[1].X, q.Corners[1].X) - Math.Max(k.Corners[0].X, q.Corners[0].X) > tol))
+                {
+                    kept.Add(q);
+                }
+            }
+
+            return kept.OrderBy(q => q.Corners[0].X).ThenBy(q => q.Corners[0].Y).ToList();
         }
 
         /// <summary>
