@@ -11,17 +11,21 @@ using Teigha.Geometry;
 namespace CsdBridge.BricsCAD
 {
     /// <summary>
-    /// AISCALEBARS: puts a scale bar block ("Scale Bar 750") on every layout for each
-    /// viewport scale on it, stacked when a layout has several. Runs entirely in the
-    /// add-in: no Claude call, so it costs nothing and gives the same result every time.
+    /// AISCALEBARS: puts a scale bar block on every layout for each viewport scale on it,
+    /// stacked when a layout has several. Which block is for which scale, and where bars go,
+    /// come from the office's scale bar file (<see cref="ScaleBarSettings"/>). Runs entirely
+    /// in the add-in: no Claude call, so it costs nothing and gives the same result every time.
     ///
     /// Section sheets have no viewports: the sections are xrefs placed straight on the
     /// layout. Their scales come from the xrefs' scale text instead ("SCALES: HORIZONTAL
     /// 1:50 VERTICAL 1:20"), counting only text that lands on the sheet, in case one xref
     /// holds several sheets.
     ///
-    /// A layout whose bars already match its viewports is left alone, so bars moved by
-    /// hand stay put. Otherwise its old bars are replaced. The whole run is one UNDO step.
+    /// Where text on a sheet states a horizontal and a vertical scale together and the office
+    /// has a combined block for them, that one bar is used instead of two.
+    ///
+    /// A layout whose bars already match is left alone, so bars moved by hand stay put.
+    /// Otherwise its old bars are replaced. The whole run is one UNDO step.
     /// </summary>
     internal static class ScaleBarTool
     {
@@ -29,7 +33,13 @@ namespace CsdBridge.BricsCAD
         {
             Database db = doc.Database;
             Editor ed = doc.Editor;
-            ScaleBarOptions options = BridgeSettings.Load().ScaleBars ?? new ScaleBarOptions();
+            ScaleBarSettings settings = BridgeSettings.Load().LoadScaleBars(out string path, out string? problem);
+            if (problem != null)
+            {
+                ed.WriteMessage($"\nCSD-Bridge: could not read the scale bar file ({problem}). Fix it or run AISCALEBARSETUP.\n");
+                return;
+            }
+
             bool mmDrawing = db.Insunits == UnitsValue.Millimeters;
 
             var lines = new List<string>();
@@ -39,13 +49,9 @@ namespace CsdBridge.BricsCAD
             {
                 var blocks = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
                 var layers = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
-                if (layers.Has(options.Layer) && ((LayerTableRecord)tr.GetObject(layers[options.Layer], OpenMode.ForRead)).IsLocked)
-                {
-                    ed.WriteMessage($"\nCSD-Bridge: layer {options.Layer} is locked. Unlock it and run AISCALEBARS again.\n");
-                    return;
-                }
+                Func<string, bool> isLocked = name => layers.Has(name) && ((LayerTableRecord)tr.GetObject(layers[name], OpenMode.ForRead)).IsLocked;
 
-                ObjectId layerId = ObjectId.Null;
+                var layerIds = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
                 var hiddenLayers = new Dictionary<ObjectId, bool>();
                 Func<ObjectId, bool> hidden = id =>
                 {
@@ -59,107 +65,110 @@ namespace CsdBridge.BricsCAD
                     return h;
                 };
                 var textCache = new Dictionary<ObjectId, List<ScaleText>>();
+                bool wantPairs = settings.HasCombined; // text on the sheet is only read for combined bars
 
                 foreach (Layout layout in Layouts(db, tr))
                 {
                     var space = (BlockTableRecord)tr.GetObject(layout.BlockTableRecordId, OpenMode.ForRead);
                     var viewports = new List<Viewport>();
-                    var existing = new List<(BlockReference Bar, int Scale)>();
+                    var existing = new List<(BlockReference Bar, ScaleBarId Id)>();
                     var xrefs = new List<BlockReference>();
+                    var onLayout = new List<ScaleText>(); // scale text in paper space, other than in the scale bars themselves
                     foreach (ObjectId id in space)
                     {
                         DBObject obj = tr.GetObject(id, OpenMode.ForRead);
                         if (obj is Viewport vp)
                         {
                             viewports.Add(vp);
+                            continue;
                         }
-                        else if (obj is BlockReference br)
+
+                        if (!(obj is Entity ent) || !ent.Visible || hidden(ent.LayerId))
                         {
-                            var def = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
-                            if (def.IsFromExternalReference)
+                            // A hidden scale bar still counts as one to replace.
+                            if (obj is BlockReference hiddenBar && settings.TryParseBlockName(BlockName(hiddenBar, tr), out ScaleBarId hiddenId))
                             {
-                                if (br.Visible && !hidden(br.LayerId))
+                                existing.Add((hiddenBar, hiddenId));
+                            }
+
+                            continue;
+                        }
+
+                        switch (ent)
+                        {
+                            case DBText text when wantPairs:
+                                AddScaleText(onLayout, text.TextString, text.Position);
+                                break;
+
+                            case MText mtext when wantPairs:
+                                AddScaleText(onLayout, mtext.Text, mtext.Location);
+                                break;
+
+                            case BlockReference br:
+                                var def = (BlockTableRecord)tr.GetObject(br.BlockTableRecord, OpenMode.ForRead);
+                                if (def.IsFromExternalReference)
                                 {
                                     xrefs.Add(br);
                                 }
-                            }
-                            else if (ScaleBars.TryParseBlockName(options, BlockName(br, tr), out int barScale))
-                            {
-                                existing.Add((br, barScale));
-                            }
+                                else if (settings.TryParseBlockName(BlockName(br, tr), out ScaleBarId barId))
+                                {
+                                    existing.Add((br, barId));
+                                    break; // its own lettering is not a statement about the sheet
+                                }
+
+                                if (wantPairs)
+                                {
+                                    onLayout.AddRange(TextOf(br, tr, textCache, hidden));
+                                }
+
+                                break;
                         }
                     }
 
                     // The first viewport is the layout's own paper-space view, not a view of the model.
-                    var scales = new List<int>();
-                    var problems = new List<string>();
+                    var found = new LayoutScales(new SheetInfo(layout.LayoutName, PaperSize(layout).Width, PaperSize(layout).Height)) { MillimetreDrawing = mmDrawing };
                     foreach (Viewport vp in viewports.Skip(1))
                     {
-                        IReadOnlyList<int> candidates = ScaleBars.Candidates(vp.CustomScale, mmDrawing);
-                        if (candidates.Count == 0)
-                        {
-                            problems.Add($"viewport {vp.Handle} has a non-standard scale ({DescribeScale(vp.CustomScale, mmDrawing)})");
-                            continue;
-                        }
-
-                        int found = candidates.FirstOrDefault(n => blocks.Has(ScaleBars.BlockName(options, n)));
-                        if (found > 0)
-                        {
-                            scales.Add(found);
-                        }
-                        else
-                        {
-                            string missing = $"block '{ScaleBars.BlockName(options, candidates[0])}' isn't loaded";
-                            if (!problems.Contains(missing))
-                            {
-                                problems.Add(missing);
-                            }
-                        }
+                        found.Viewports.Add((vp.CustomScale, $"viewport {vp.Handle}"));
                     }
 
-                    // No views of the model: a section sheet. Use the scale text in its xrefs.
-                    string source = "";
-                    if (viewports.Count <= 1)
+                    // No views of the model: a section sheet. Use the scale text in its xrefs, counting
+                    // only what lands on the sheet, in case one xref holds several sheets.
+                    Func<Point3d, bool> onSheet = SheetTest(layout, settings);
+                    int offSheet = 0;
+                    foreach (BlockReference xref in found.Viewports.Count == 0 ? xrefs : new List<BlockReference>())
                     {
-                        source = " (from section scale text)";
-                        Func<Point3d, bool> onSheet = SheetTest(layout, options);
-                        var stated = new List<int>();
-                        int offSheet = 0;
-                        foreach (BlockReference xref in xrefs)
+                        foreach (ScaleText text in TextIn(xref.BlockTableRecord, tr, textCache, hidden, 0))
                         {
-                            foreach (ScaleText text in TextIn(xref.BlockTableRecord, tr, textCache, hidden, 0))
+                            if (onSheet(text.Position.TransformBy(xref.BlockTransform)))
                             {
-                                if (onSheet(text.Position.TransformBy(xref.BlockTransform)))
-                                {
-                                    stated.AddRange(text.Scales);
-                                }
-                                else
-                                {
-                                    offSheet++;
-                                }
-                            }
-                        }
-
-                        foreach (int n in stated.Distinct())
-                        {
-                            if (blocks.Has(ScaleBars.BlockName(options, n)))
-                            {
-                                scales.Add(n);
+                                found.SectionScales.AddRange(text.Scales);
                             }
                             else
                             {
-                                problems.Add($"block '{ScaleBars.BlockName(options, n)}' isn't loaded");
+                                offSheet++;
                             }
-                        }
-
-                        if (stated.Count == 0 && offSheet > 0)
-                        {
-                            problems.Add("its xrefs' scale text is all outside the sheet");
                         }
                     }
 
+                    foreach (ScaleText text in onLayout)
+                    {
+                        if (text.Pair.HasValue && onSheet(text.Position))
+                        {
+                            found.Pairs.Add(text.Pair.Value);
+                        }
+                    }
+
+                    ScaleBarPlan plan = ScaleBars.Plan(found, settings, blocks.Has);
+                    var problems = plan.Problems.ToList();
+                    if (plan.FromSectionText && found.SectionScales.Count == 0 && offSheet > 0)
+                    {
+                        problems.Add("its xrefs' scale text is all outside the sheet");
+                    }
+
                     string name = layout.LayoutName;
-                    IReadOnlyList<ScaleBarPlacement> placements = ScaleBars.Stack(scales, options);
+                    string source = plan.FromSectionText ? " (from section scale text)" : "";
+                    IReadOnlyList<ScaleBarPlacement> placements = plan.Placements;
                     string issues = problems.Count > 0 ? " (" + string.Join("; ", problems) + ")" : "";
                     if (placements.Count == 0)
                     {
@@ -170,18 +179,18 @@ namespace CsdBridge.BricsCAD
                         continue;
                     }
 
-                    string list = string.Join(", ", placements.Select(p => "1:" + p.Scale.ToString(CultureInfo.InvariantCulture)));
-                    bool upToDate = existing.Select(e => e.Scale).OrderBy(s => s).SequenceEqual(placements.Select(p => p.Scale));
+                    string list = string.Join(", ", placements.Select(p => p.Bar.ToString()));
+                    bool upToDate = existing.Select(e => e.Id).OrderBy(b => b).SequenceEqual(placements.Select(p => p.Bar).OrderBy(b => b));
                     if (upToDate)
                     {
                         lines.Add($"{name}: {list} already there{source}{issues}");
                         continue;
                     }
 
-                    string? locked = existing.Select(e => e.Bar.Layer).FirstOrDefault(l => ((LayerTableRecord)tr.GetObject(layers[l], OpenMode.ForRead)).IsLocked);
+                    string? locked = existing.Select(e => e.Bar.Layer).Concat(placements.Select(p => p.Layer)).FirstOrDefault(isLocked);
                     if (locked != null)
                     {
-                        lines.Add($"{name}: skipped, its old scale bar is on locked layer {locked}{issues}");
+                        lines.Add($"{name}: skipped, layer {locked} is locked{issues}");
                         continue;
                     }
 
@@ -192,15 +201,15 @@ namespace CsdBridge.BricsCAD
                         removed++;
                     }
 
-                    if (layerId.IsNull)
-                    {
-                        layerId = GetOrCreateLayer(layers, options.Layer, tr);
-                    }
-
                     space.UpgradeOpen();
                     foreach (ScaleBarPlacement p in placements)
                     {
-                        Insert(db, space, blocks[p.BlockName], layerId, p, options, tr);
+                        if (!layerIds.TryGetValue(p.Layer, out ObjectId layerId))
+                        {
+                            layerIds[p.Layer] = layerId = GetOrCreateLayer(layers, p.Layer, tr);
+                        }
+
+                        Insert(db, space, blocks[p.BlockName], layerId, p, tr);
                         added++;
                     }
 
@@ -218,19 +227,23 @@ namespace CsdBridge.BricsCAD
 
             ed.WriteMessage(lines.Count == 0
                 ? "\n  This drawing has no layouts.\n"
-                : $"\n  {added} added, {removed} removed. One UNDO reverts all of it.\n");
+                : $"\n  {added} added, {removed} removed. One UNDO reverts all of it. Settings: {path} (AISCALEBARSETUP changes them)\n");
         }
 
         /// <summary>A line of text stating scales, and where it is in its block's coordinates.</summary>
         private sealed class ScaleText
         {
-            public ScaleText(IReadOnlyList<int> scales, Point3d position)
+            public ScaleText(IReadOnlyList<int> scales, (int Horizontal, int Vertical)? pair, Point3d position)
             {
                 Scales = scales;
+                Pair = pair;
                 Position = position;
             }
 
             public IReadOnlyList<int> Scales { get; }
+
+            /// <summary>A horizontal and a vertical scale stated together, if the text does that.</summary>
+            public (int Horizontal, int Vertical)? Pair { get; }
 
             public Point3d Position { get; }
         }
@@ -277,7 +290,7 @@ namespace CsdBridge.BricsCAD
                     case BlockReference br:
                         foreach (ScaleText inner in TextIn(br.BlockTableRecord, tr, cache, hidden, depth + 1))
                         {
-                            found.Add(new ScaleText(inner.Scales, inner.Position.TransformBy(br.BlockTransform)));
+                            found.Add(new ScaleText(inner.Scales, inner.Pair, inner.Position.TransformBy(br.BlockTransform)));
                         }
 
                         foreach (ObjectId attId in br.AttributeCollection)
@@ -295,23 +308,42 @@ namespace CsdBridge.BricsCAD
             return found;
         }
 
-        private static void AddScaleText(List<ScaleText> found, string? text, Point3d position)
+        /// <summary>The scale text of a block placed on a layout (a title block, an xref), in the layout's coordinates.</summary>
+        private static IEnumerable<ScaleText> TextOf(BlockReference br, Transaction tr, Dictionary<ObjectId, List<ScaleText>> cache, Func<ObjectId, bool> hidden)
         {
-            IReadOnlyList<int> scales = ScaleBars.ScalesInText(text);
-            if (scales.Count > 0)
+            foreach (ScaleText inner in TextIn(br.BlockTableRecord, tr, cache, hidden, 0))
             {
-                found.Add(new ScaleText(scales, position));
+                yield return new ScaleText(inner.Scales, inner.Pair, inner.Position.TransformBy(br.BlockTransform));
+            }
+
+            var own = new List<ScaleText>();
+            foreach (ObjectId attId in br.AttributeCollection)
+            {
+                if (tr.GetObject(attId, OpenMode.ForRead) is AttributeReference att && !att.Invisible && !hidden(att.LayerId))
+                {
+                    AddScaleText(own, att.TextString, att.Position); // attributes are already in the layout's coordinates
+                }
+            }
+
+            foreach (ScaleText text in own)
+            {
+                yield return text;
             }
         }
 
-        /// <summary>
-        /// Whether a paper-space point is on the layout's sheet (its paper size, with a margin).
-        /// If the page setup's paper doesn't even hold the scale bar point, it hasn't been set
-        /// up, so every point counts.
-        /// </summary>
-        private static Func<Point3d, bool> SheetTest(Layout layout, ScaleBarOptions options)
+        private static void AddScaleText(List<ScaleText> found, string? text, Point3d position)
         {
-            const double margin = 25;
+            IReadOnlyList<int> scales = ScaleBars.ScalesInText(text);
+            (int Horizontal, int Vertical)? pair = ScaleBars.PairInText(text);
+            if (scales.Count > 0 || pair.HasValue)
+            {
+                found.Add(new ScaleText(scales, pair, position));
+            }
+        }
+
+        /// <summary>The layout's paper size in millimetres as it is turned for plotting; zero if it has no page setup.</summary>
+        internal static (double Width, double Height) PaperSize(Layout layout)
+        {
             double w = layout.PlotPaperSize.X;
             double h = layout.PlotPaperSize.Y;
             if (layout.PlotRotation == PlotRotation.Degrees090 || layout.PlotRotation == PlotRotation.Degrees270)
@@ -319,8 +351,20 @@ namespace CsdBridge.BricsCAD
                 (w, h) = (h, w);
             }
 
+            return w > 0 && h > 0 ? (w, h) : (0, 0);
+        }
+
+        /// <summary>
+        /// Whether a paper-space point is on the layout's sheet (its paper size, with a margin).
+        /// If the page setup's paper doesn't even hold the scale bar point, it hasn't been set
+        /// up, so every point counts.
+        /// </summary>
+        private static Func<Point3d, bool> SheetTest(Layout layout, ScaleBarSettings settings)
+        {
+            const double margin = 25;
+            (double w, double h) = PaperSize(layout);
             Func<double, double, bool> inside = (x, y) => x >= -margin && x <= w + margin && y >= -margin && y <= h + margin;
-            if (!(w > 0 && h > 0) || !inside(options.X, options.Y))
+            if (!(w > 0 && h > 0) || !inside(settings.X, settings.Y))
             {
                 return _ => true;
             }
@@ -345,7 +389,7 @@ namespace CsdBridge.BricsCAD
         }
 
         /// <summary>The block's own name, also for dynamic blocks (whose inserts point at an anonymous copy).</summary>
-        private static string BlockName(BlockReference br, Transaction tr)
+        internal static string BlockName(BlockReference br, Transaction tr)
         {
             ObjectId defId = br.IsDynamicBlock ? br.DynamicBlockTableRecord : br.BlockTableRecord;
             return ((BlockTableRecord)tr.GetObject(defId, OpenMode.ForRead)).Name;
@@ -365,7 +409,7 @@ namespace CsdBridge.BricsCAD
             return id;
         }
 
-        private static void Insert(Database db, BlockTableRecord space, ObjectId blockId, ObjectId layerId, ScaleBarPlacement p, ScaleBarOptions options, Transaction tr)
+        private static void Insert(Database db, BlockTableRecord space, ObjectId blockId, ObjectId layerId, ScaleBarPlacement p, Transaction tr)
         {
             var br = new BlockReference(new Point3d(p.X, p.Y, 0), blockId);
             br.SetDatabaseDefaults(db);
@@ -373,8 +417,8 @@ namespace CsdBridge.BricsCAD
             br.ColorIndex = 256; // ByLayer
             br.Linetype = "ByLayer";
             br.LineWeight = LineWeight.ByLayer;
-            br.ScaleFactors = new Scale3d(options.Scale > 0 ? options.Scale : 1);
-            br.Rotation = options.RotationDeg * Math.PI / 180.0;
+            br.ScaleFactors = new Scale3d(p.BlockScale > 0 ? p.BlockScale : 1);
+            br.Rotation = p.RotationDeg * Math.PI / 180.0;
             space.AppendEntity(br);
             tr.AddNewlyCreatedDBObject(br, true);
 
@@ -395,17 +439,6 @@ namespace CsdBridge.BricsCAD
                     tr.AddNewlyCreatedDBObject(attr, true);
                 }
             }
-        }
-
-        private static string DescribeScale(double customScale, bool mmDrawing)
-        {
-            if (!(customScale > 0))
-            {
-                return "zero";
-            }
-
-            double n = (mmDrawing ? 1.0 : 1000.0) / customScale;
-            return "1:" + n.ToString("0.##", CultureInfo.InvariantCulture);
         }
     }
 }

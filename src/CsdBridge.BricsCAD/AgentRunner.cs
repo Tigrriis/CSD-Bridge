@@ -141,6 +141,23 @@ namespace CsdBridge.BricsCAD
             return string.Equals(old, "off", StringComparison.OrdinalIgnoreCase) != string.Equals(mode, "off", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>Use another scale bar file on this PC (AISCALEBARSETUP's "File") and remember it.</summary>
+        public static void SetScaleBarFile(string? path)
+        {
+            try
+            {
+                BridgeSettings onDisk = BridgeSettings.Load();
+                onDisk.ScaleBarFile = path;
+                onDisk.Save();
+            }
+            catch (Exception)
+            {
+                // Still applies for this session.
+            }
+
+            Settings.ScaleBarFile = path;
+        }
+
         /// <summary>Use another layer wheel file on this PC (AILAYERWHEELSETUP's "Change file") and remember it.</summary>
         public static void SetLayerWheelFile(string path)
         {

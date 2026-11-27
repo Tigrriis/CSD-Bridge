@@ -68,7 +68,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 260 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 300 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -200,6 +200,7 @@ with `-Remove`.
 | `AILAYERWHEELSETUP` | Choose which layers are on the layer wheel. |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
 | `AISCALEBARS` | Add a scale bar block to every layout for each viewport scale on it. Runs in the add-in, so it doesn't call Claude or cost anything. See [Scale bars](#scale-bars). |
+| `AISCALEBARSETUP` | Set up the office's scale bars by picking them in a drawing: the block for each scale, combined horizontal/vertical bars, positions and offsets. |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft, Routines and History buttons, small New chat,
 Status and API key buttons, Scale Bars and VP layers buttons in the Sheets panel, Layer wheel and Wheel layers
@@ -227,7 +228,8 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 | `long_section_hatch_file` | *(blank)* | Settings for `AIPIPEHATCH`. Blank uses `long-section-hatch.json` next to the DLL. |
 | `layer_wheel_file` | *(blank)* | The layers on the layer wheel. Point it at a file on a network drive to share one list across the office. Blank uses your own `%APPDATA%\CsdBridge\layer-wheel.json` once `AILAYERWHEELSETUP` has saved one, else `layer-wheel.json` next to the DLL. |
 | `cache_ttl` | `1h` | How long the prompt cache lives: `1h` suits sessions with pauses; `5m` is cheaper to write. |
-| `scale_bars` | *(not set)* | Optional: overrides where `AISCALEBARS` puts scale bars. Add only the keys you want to change: `block_name` (`Scale Bar {0}`), `x`, `y` (paper mm), `layer`, `scale`, `rotation` (degrees) and `stack_offset` (mm between bars; negative stacks downward). |
+| `scale_bar_file` | *(blank)* | The office's scale bar setup for `AISCALEBARS`. Point it at a file on a network drive to share one setup. Blank uses your own `%APPDATA%\CsdBridge\scale-bars.json` once `AISCALEBARSETUP` has saved one, else `scale-bars.json` next to the DLL. See [Scale bars](#scale-bars). |
+| `scale_bars` | *(not set)* | The older way to set scale bars up, still honoured: if present it is used instead of the scale bar file. Remove it to use the file. |
 | `clear_old_tool_results_after_tokens` | `60000` | Once a chat's input passes this size, the oldest tool results are dropped (the latest 6 are kept). `0` = never. |
 
 ## Civil Site Design
@@ -305,19 +307,61 @@ add a set-out table for the kerb returns here, then check nothing overlaps."*
 ## Scale bars
 
 `AISCALEBARS` (ribbon: **Sheets > Scale Bars**) goes through every layout and reads the scale of each viewport. For
-each scale it inserts the matching block, such as `Scale Bar 750` for 1:750, at the office's standard spot: (821, 68.5) on layer `AE GEN TBL - SCALE BAR`, scale 1, no rotation.
-When a layout has more than one scale, the bars are stacked upward 40 mm apart, the most detailed scale at the standard spot.
+each scale it inserts the office's scale bar block for it at the office's standard spot. When a layout has more than
+one scale, the bars are stacked, the most detailed scale first.
 
 - **Section sheets** (layouts with no viewports, just xref'd sections) take their scales from the scale text in their
-  xrefs, such as `SCALES: HORIZONTAL 1:50 VERTICAL 1:20`, which gives bars for 1:20 and 1:50. Only text that mentions a
-  scale counts, so batter slopes like 1:4 are ignored, and so is anything marked NOT TO SCALE. Only text that lands on the
-  sheet counts, in case one xref holds several sheets. Text on frozen or off layers is skipped.
+  xrefs, such as `SCALES: HORIZONTAL 1:50 VERTICAL 1:20`. Only text that mentions a scale counts, so batter slopes like
+  1:4 are ignored, and so is anything marked NOT TO SCALE. Only text that lands on the sheet counts, in case one xref
+  holds several sheets. Text on frozen or off layers is skipped.
+- **Combined bars** for long sections: where text on a sheet states a horizontal and a vertical scale together and the
+  office has a combined block for that pair, the one combined bar is used instead of a bar for each scale. The text can
+  be in a section xref, in the title block or on the sheet itself, and both scales must be labelled (`HORIZONTAL` /
+  `VERTICAL`, `HORIZ` / `VERT`, or `H` / `V` in text that mentions a scale). With no combined block for the pair, the
+  sheet gets separate bars as before.
 - The blocks must already be loaded in the drawing. A missing one is listed on the command line and skipped.
-- Model units are taken as metres (the office standard). If `INSUNITS` is millimetres, the millimetre reading is tried
-  first, then metres.
+- Model units are taken as metres. If `INSUNITS` is millimetres, the millimetre reading is tried first, then metres.
 - Run it again after changing viewport scales. Layouts whose bars already match are left alone, so bars you moved by
   hand stay put; other layouts have their old bars replaced. One UNDO reverts the whole run.
 - It doesn't call Claude, so it's instant and free.
+
+### Setting scale bars up for an office
+
+Everything about the bars is in one file, `scale-bars.json`. The copy in the repo (next to the DLL once installed)
+holds this office's setup: blocks named `Scale Bar {0}`, at (821, 68.5) on layer `AE GEN TBL - SCALE BAR`, stacked
+40 mm upward, no combined bars.
+
+`AISCALEBARSETUP` fills the file in from a drawing, so nobody has to type block names or coordinates:
+
+| Option | What it does |
+|---|---|
+| **Bar** | Pick a scale bar block and say its scale. If the scale is in the name (`SB-500`), it offers to name every scale that way (`SB-{0}`); otherwise that scale alone uses the block. If the bar is on a layout, it offers to take its position, layer, size and rotation as the standard. |
+| **Combined** | The same for a bar that shows a horizontal and a vertical scale: pick it and give both scales (`LS 1000-100` becomes `LS {h}-{v}`). |
+| **Position** | Pick where the first bar goes, for all bars or only combined ones, on all sheets or only this layout's sheet size. |
+| **Stack** | Pick where the first and the second bar go; the difference is the offset between bars, in any direction. |
+| **List** | Show what is set up. |
+| **File** | Open the file to edit by hand, or use a file somewhere else, such as the office's copy on a network drive. |
+
+What the file holds (the notes at the top of it say the same):
+
+| Key | Meaning |
+|---|---|
+| `block_name` | The block for a scale; `{0}` is the scale. |
+| `blocks` | Blocks named some other way, by scale: `{ "750": "SB 750 metric" }`. |
+| `combined_block_name` | The combined block for a horizontal and a vertical scale; `{h}` and `{v}` are the scales. |
+| `combined_blocks` | Combined blocks named some other way: `[ { "horizontal": 1000, "vertical": 100, "block": "LS Bar" } ]`. |
+| `x`, `y` | Where the first bar goes, in paper millimetres. |
+| `stack_offset_x`, `stack_offset_y` | From one bar to the next when a layout has several. |
+| `layer`, `scale`, `rotation` | The layer the bars go on, the size they are inserted at, and their rotation in degrees. |
+| `positions` | Other places for particular sheets. Each entry can name a `sheet` (`A0` to `A4`, or a size such as `841x594`), a `layout_name_contains`, and `bars` (`single` or `combined`), and gives any of `x`, `y`, `stack_offset_x`, `stack_offset_y`, `layer`, `scale`, `rotation`. The first entry that fits is used; what it leaves out comes from the main settings. Bars sent somewhere else stack there on their own. |
+
+Which file is used: `scale_bar_file` in `settings.json` if set (a shared file); else your own
+`%APPDATA%\CsdBridge\scale-bars.json`, which `AISCALEBARSETUP` writes; else the one next to the DLL. To give the
+whole office one setup, either put the file in the repo at `src\CsdBridge.BricsCAD\scale-bars.json`, or put it on a
+network drive and choose it with **File > Change** on each PC.
+
+**Not yet run inside BricsCAD**: the rules are unit-tested and the commands compile, but the combined bars and
+`AISCALEBARSETUP` haven't been run in BricsCAD yet. Check on a copy of a drawing first.
 
 ## Routines
 
