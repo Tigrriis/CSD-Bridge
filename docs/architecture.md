@@ -239,6 +239,16 @@ says *why* each step happened, which a recording of commands and pick points can
      widths and row heights are as asked
    - radius, diameter, angular, arc length and ordinate dimensions, and a named dimension style
    - `view_drawing`: text boxes sit on the real text, including rotated and right-aligned text
+9. The layer wheel (`AILAYERWHEEL`). Where things go and what the pointer is over come from `WheelLayout` in Core,
+   which is unit-tested. The window (`LayerWheelForm`) is one picture handed to Windows with its own transparency
+   (`UpdateLayeredWindow`), shown as a modal dialog that holds the mouse so a click anywhere reaches it. It is
+   compile-checked against Windows Forms only. Check in BricsCAD:
+   - the wheel is centred on the pointer, the drawing shows through around it, and text is sharp at the
+     display's scaling
+   - a click outside, a right-click and Esc each close it, and BricsCAD has the keyboard again afterwards
+   - with a keyboard shortcut: holding the key, moving to a layer and letting go picks it
+   - the selection survives a move to another layer, and one `U` takes the move back
+   - `'AILAYERWHEEL` in the middle of LINE changes the layer for the next segment
 
 ## Roadmap ideas
 

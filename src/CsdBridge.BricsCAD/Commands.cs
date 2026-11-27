@@ -24,6 +24,8 @@ namespace CsdBridge.BricsCAD
     /// AISCALEBARS add scale bar blocks to every layout from its viewport scales (no Claude call)
     /// AIPIPEHATCH hatch the sewer and stormwater pipes in the long section layouts
     /// AIVPLAYERS grid of layers × layouts: show or hide layers in the viewports of many layouts at once
+    /// AILAYERWHEEL a wheel of layers at the pointer: sets the current layer, or the layer of the selected objects
+    /// AILAYERWHEELSETUP choose which layers are on the layer wheel
     /// AIRESET    start a new conversation for this drawing
     /// AIKEY      set or remove the Anthropic API key
     /// AISTATUS   show settings, key source and usage
@@ -282,6 +284,17 @@ namespace CsdBridge.BricsCAD
         [CommandMethod(Group, "AIVPLAYERS", CommandFlags.Modal)]
         public void AiVpLayers() => ViewportLayersWindow.ShowWindow();
 
+        /// <summary>Transparent, so it also works in the middle of another command (enter 'AILAYERWHEEL).</summary>
+        [CommandMethod(Group, "AILAYERWHEEL", CommandFlags.Modal | CommandFlags.Transparent | CommandFlags.UsePickSet | CommandFlags.Redraw)]
+        public void AiLayerWheel()
+        {
+            Document doc = CadApp.DocumentManager.MdiActiveDocument;
+            LayerWheelTool.Run(doc, Preselection(doc.Editor));
+        }
+
+        [CommandMethod(Group, "AILAYERWHEELSETUP", CommandFlags.Modal)]
+        public void AiLayerWheelSetup() => LayerWheelTool.Setup(CadApp.DocumentManager.MdiActiveDocument);
+
         [CommandMethod(Group, "AIKEY", CommandFlags.Modal)]
         public void AiKey()
         {
@@ -321,6 +334,7 @@ namespace CsdBridge.BricsCAD
             string? office = s.ResolvedOfficeRoutinesFolder();
             ed.WriteMessage($"\n  Routines:   {BridgeSettings.PersonalRoutinesFolder}");
             ed.WriteMessage($"\n  Office routines: {(office == null ? "none (set office_routines_folder)" : office + (Directory.Exists(office) ? "" : " (not found)"))}");
+            ed.WriteMessage($"\n  Layer wheel: {s.ResolvedLayerWheelPath()} (AILAYERWHEELSETUP saves to {s.LayerWheelSavePath()})");
             ed.WriteMessage($"\n  CSD tools:  {Describe((s.CsdMode ?? "read").ToLowerInvariant())} (change with AICSD)");
             ed.WriteMessage($"\n  Settings:   {BridgeSettings.SettingsPath}");
             ed.WriteMessage($"\n  Logs:       {BridgeSettings.LogFolder}");

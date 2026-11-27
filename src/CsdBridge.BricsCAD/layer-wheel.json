@@ -1,0 +1,42 @@
+// CSD-Bridge: the layers on the layer wheel (AILAYERWHEEL).
+//
+// With nothing selected, picking a layer on the wheel makes it the current layer. With
+// objects selected, it moves them to that layer. AILAYERWHEELSETUP ticks layers on and off
+// and writes this file; it can also be edited by hand.
+//
+// "layers" holds full layer names, in the order they go round the wheel (clockwise from
+// the top). The words in front of the dash make the rings: "AE CIV PLN - KERB NEW" sits
+// under AE, then CIV, then PLN. A ring with only one choice is folded into the middle.
+// Layers a drawing doesn't have are shown greyed out, so every layer keeps its place.
+//
+// To share one file across the office, put it on a network drive and set
+// "layer_wheel_file" in %APPDATA%\CsdBridge\settings.json on each PC (the setup window's
+// "Change file" button does this).
+{
+  "layers": [
+    "AE CIV PLN - ROAD CENTRELINE NEW",
+    "AE CIV PLN - ROAD PAVEMENT EDGE NEW",
+    "AE CIV PLN - ROAD SHOULDER NEW",
+    "AE CIV PLN - KERB NEW",
+    "AE CIV PLN - FOOTPATH EDGE NEW",
+    "AE CIV PLN - LINEMARKING",
+    "AE CIV PLN - BATTER LINE",
+    "AE CIV PLN - STORMWATER TABLE DRAIN NEW",
+    "AE CIV PLN - STORMWATER PIPE NEW",
+    "AE CIV PLN - STORMWATER PIT NEW",
+    "AE CIV PLN - SEWER PIPE NEW",
+    "AE CIV PLN - SEWER PIT NEW",
+    "AE CIV PLN - WATER POTABLE NEW",
+    "AE CIV PLN - SUBSURFACE DRAIN NEW",
+    "AE CIV PLN - RETAINING WALL NEW",
+    "AE CIV PLN - BUILDING NEW",
+    "AE CIV HTC - ASPHALT TYPE 1",
+    "AE CIV HTC - CONCRETE NEW",
+    "AE CIV HTC - GRAVEL NEW",
+    "AE CIV HTC - RETAINING WALL",
+    "AE CIV LNE - TEMP"
+  ],
+  "max_terms": 3,
+  "release_to_pick": true,
+  "text_size": 9
+}

@@ -87,6 +87,14 @@ namespace CsdBridge.BricsCAD
         [JsonPropertyName("long_section_hatch_file")]
         public string? LongSectionHatchFile { get; set; }
 
+        /// <summary>
+        /// The layers on the layer wheel (AILAYERWHEEL). Point this at a network share so the whole
+        /// office uses one file. Empty means this user's own layer-wheel.json if AILAYERWHEELSETUP
+        /// has saved one, else the layer-wheel.json next to the add-in DLL.
+        /// </summary>
+        [JsonPropertyName("layer_wheel_file")]
+        public string? LayerWheelFile { get; set; }
+
         [JsonPropertyName("standards_file")]
         public string? StandardsFile { get; set; }
 
@@ -224,6 +232,54 @@ namespace CsdBridge.BricsCAD
             }
 
             return new CsdBridge.Core.Civil.LongSectionHatchSettings();
+        }
+
+        /// <summary>This user's own layer wheel file, used when no shared one is set.</summary>
+        public static string PersonalLayerWheelPath => Path.Combine(Folder, "layer-wheel.json");
+
+        /// <summary>Where AILAYERWHEELSETUP saves: the shared file if one is set, else this user's own.</summary>
+        public string LayerWheelSavePath() =>
+            string.IsNullOrWhiteSpace(LayerWheelFile)
+                ? PersonalLayerWheelPath
+                : Environment.ExpandEnvironmentVariables(LayerWheelFile!.Trim());
+
+        /// <summary>
+        /// Where AILAYERWHEEL reads its layers: the shared file if one is set, else this user's
+        /// own if there is one, else the office default installed next to the add-in DLL.
+        /// </summary>
+        public string ResolvedLayerWheelPath()
+        {
+            string path = LayerWheelSavePath();
+            if (!string.IsNullOrWhiteSpace(LayerWheelFile) || File.Exists(path))
+            {
+                return path;
+            }
+
+            string dir = Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".";
+            return Path.Combine(dir, "layer-wheel.json");
+        }
+
+        /// <summary>
+        /// The layer wheel's layers and options. A file that isn't there yet gives an empty wheel;
+        /// one that can't be read gives <paramref name="problem"/>.
+        /// </summary>
+        public CsdBridge.Core.Layers.LayerWheelSettings LoadLayerWheel(out string path, out string? problem)
+        {
+            path = ResolvedLayerWheelPath();
+            problem = null;
+            try
+            {
+                if (File.Exists(path))
+                {
+                    return CsdBridge.Core.Layers.LayerWheelSettings.Load(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                problem = $"{path}: {ex.Message}";
+            }
+
+            return new CsdBridge.Core.Layers.LayerWheelSettings();
         }
 
         private string? LoadStandards()
