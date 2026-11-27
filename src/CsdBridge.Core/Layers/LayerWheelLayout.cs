@@ -41,10 +41,14 @@ namespace CsdBridge.Core.Layers
         /// </summary>
         public double ChipLength { get; set; } = 10;
 
-        /// <summary>Width of a layer's label.</summary>
+        /// <summary>
+        /// Width of a layer's label. Called while the wheel is in use as well as when it is
+        /// built (a group's fan is laid out when it is shown), so it must keep working for as
+        /// long as the layout is used.
+        /// </summary>
         public Func<string, double> MeasureLeaf { get; set; } = s => s.Length * 6.6;
 
-        /// <summary>Width of a group's label.</summary>
+        /// <summary>Width of a group's label. Also called for as long as the layout is used.</summary>
         public Func<string, double> MeasureGroup { get; set; } = s => s.Length * 8.0;
     }
 
