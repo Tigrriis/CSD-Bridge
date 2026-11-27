@@ -16,8 +16,10 @@ namespace CsdBridge.BricsCAD
     ///   Sheets panel:   Scale Bars | VP layers (run in the add-in, no Claude call)
     ///   Layers panel:   Layer wheel | Wheel layers (run in the add-in, no Claude call)
     ///   Long sections panel: Hatch pipes (runs in the add-in, no Claude call)
-    /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
-    /// workspace switch), the commands still work and AIRIBBON adds the tab again.
+    /// The ribbon is optional: if it is turned off, the commands still work. BricsCAD
+    /// rebuilds the ribbon without add-in tabs when the workspace changes or the Customize
+    /// dialog is closed, so the add-in keeps an eye out and puts its tab back; AIRIBBON
+    /// does the same by hand.
     ///
     /// BricsCAD exposes its ribbon through ComponentManager.Ribbon. RibbonServices'
     /// RibbonPaletteSet (the AutoCAD route) can be null even while the ribbon shows.
@@ -28,6 +30,8 @@ namespace CsdBridge.BricsCAD
         private static bool _waitingForRibbon;
         private static bool _waitingForIdle;
         private static bool _watchingWorkspace;
+        private static bool _watchingForRebuild;
+        private static int _lastLooked;
 
         /// <summary>Called at startup. Adds the tab now, or as soon as the ribbon exists.</summary>
         public static void Initialize()
@@ -38,6 +42,13 @@ namespace CsdBridge.BricsCAD
                 {
                     _watchingWorkspace = true;
                     CadApp.SystemVariableChanged += OnSystemVariableChanged;
+                }
+
+                // BricsCAD drops the tab whenever it rebuilds the ribbon: keep putting it back.
+                if (!_watchingForRebuild)
+                {
+                    _watchingForRebuild = true;
+                    CadApp.Idle += OnIdleLookForTab;
                 }
 
                 if (GetRibbon() != null)
@@ -176,6 +187,34 @@ namespace CsdBridge.BricsCAD
             RibbonServices.RibbonPaletteSetCreated -= OnRibbonCreated;
             _waitingForRibbon = false;
             AddTab();
+        }
+
+        /// <summary>
+        /// Every few seconds while BricsCAD is idle: if the ribbon is there and the tab isn't
+        /// (closing the Customize dialog, reloading a menu and switching workspace all rebuild
+        /// the ribbon without it), add it again.
+        /// </summary>
+        private static void OnIdleLookForTab(object? sender, EventArgs e)
+        {
+            int now = Environment.TickCount;
+            if (unchecked(now - _lastLooked) < 3000)
+            {
+                return;
+            }
+
+            _lastLooked = now;
+            try
+            {
+                RibbonControl? ribbon = GetRibbon();
+                if (ribbon != null && ribbon.FindTab(TabId) == null)
+                {
+                    AddTab();
+                }
+            }
+            catch (Exception)
+            {
+                // The ribbon is a convenience; try again next time.
+            }
         }
 
         /// <summary>A workspace switch rebuilds the ribbon without our tab; put it back.</summary>

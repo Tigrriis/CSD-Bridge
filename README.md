@@ -204,8 +204,10 @@ with `-Remove`.
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft, Routines and History buttons, small New chat,
 Status and API key buttons, Scale Bars and VP layers buttons in the Sheets panel, Layer wheel and Wheel layers
-buttons in the Layers panel and a Hatch pipes button in the Long sections panel. It's added when the add-in loads. If your workspace hides the
-ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
+buttons in the Layers panel and a Hatch pipes button in the Long sections panel. It's added when the add-in loads. BricsCAD rebuilds the ribbon
+without add-in tabs when you close the Customize dialog, reload a menu or switch workspace; the add-in notices
+within a few seconds and puts its tab back, and `AIRIBBON` does it at once. If your workspace hides the ribbon, turn
+it on with `RIBBON`, then run `AIRIBBON`.
 
 ## Settings
 
