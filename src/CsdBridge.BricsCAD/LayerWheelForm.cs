@@ -76,6 +76,13 @@ namespace CsdBridge.BricsCAD
         private WheelFan? _fan;             // that fan, fully open: what the pointer is tested against
         private double _fanProgress;        // 0 to 1 while the chips grow into the fan
         private readonly Timer _grow = new Timer { Interval = 15 };
+
+        // Text is measured for as long as the wheel is up (a group's fan is laid out when it is
+        // drawn), so the surface it is measured on lives as long as the window does.
+        private readonly Bitmap _rulerSurface = new Bitmap(1, 1);
+        private readonly Graphics _ruler;
+        private readonly Dictionary<string, double> _leafWidths = new Dictionary<string, double>();
+        private readonly Dictionary<string, double> _groupWidths = new Dictionary<string, double>();
         private bool _overCentre;
         private bool _live;
 
@@ -108,43 +115,42 @@ namespace CsdBridge.BricsCAD
 
             // Use the text size asked for; step down while the wheel is too big for the screen.
             double size = Math.Min(Math.Max(settings.TextSize, 7), 16);
-            using (var scratch = new Bitmap(1, 1))
-            using (Graphics g = Graphics.FromImage(scratch))
+            _ruler = Graphics.FromImage(_rulerSurface);
+            while (true)
             {
-                while (true)
+                _leafFont = MakeFont(size, FontStyle.Regular);
+                _groupFont = MakeFont(size + 1, FontStyle.Bold);
+                _leafWidths.Clear();
+                _groupWidths.Clear();
+                float line = _leafFont.GetHeight(_ruler);
+                _bar = (float)Math.Ceiling(line + 4 * _scale);
+                _pad = 7 * _scale;
+                _gap = 3 * _scale;
+                Font leafFont = _leafFont, groupFont = _groupFont;
+                _layout = WheelLayout.Build(names, settings.MaxTerms, new WheelLayoutOptions
                 {
-                    _leafFont = MakeFont(size, FontStyle.Regular);
-                    _groupFont = MakeFont(size + 1, FontStyle.Bold);
-                    float line = _leafFont.GetHeight(g);
-                    _bar = (float)Math.Ceiling(line + 4 * _scale);
-                    _pad = 7 * _scale;
-                    _gap = 3 * _scale;
-                    Font leafFont = _leafFont, groupFont = _groupFont;
-                    _layout = WheelLayout.Build(names, settings.MaxTerms, new WheelLayoutOptions
-                    {
-                        CentreRadius = 34 * _scale,
-                        RingThickness = Math.Max(38 * _scale, _groupFont.GetHeight(g) + 16 * _scale),
-                        Gap = _gap,
-                        LeafPitch = _bar + 3 * _scale,
-                        LabelPadding = _pad,
-                        MinBarLength = 60 * _scale,
-                        MaxRadius = maxRadius,
-                        AllAtOnceUpTo = 200 * _scale,
-                        ChipLength = 10 * _scale,
-                        SplitOver = settings.SplitGroupsOver,
-                        MeasureLeaf = s => Measure(g, s, leafFont),
-                        MeasureGroup = s => Measure(g, s, groupFont),
-                    });
+                    CentreRadius = 34 * _scale,
+                    RingThickness = Math.Max(38 * _scale, _groupFont.GetHeight(_ruler) + 16 * _scale),
+                    Gap = _gap,
+                    LeafPitch = _bar + 3 * _scale,
+                    LabelPadding = _pad,
+                    MinBarLength = 60 * _scale,
+                    MaxRadius = maxRadius,
+                    AllAtOnceUpTo = 200 * _scale,
+                    ChipLength = 10 * _scale,
+                    SplitOver = settings.SplitGroupsOver,
+                    MeasureLeaf = s => WidthOf(_leafWidths, s, leafFont),
+                    MeasureGroup = s => WidthOf(_groupWidths, s, groupFont),
+                });
 
-                    if (!_layout.TooBig || size <= 7)
-                    {
-                        break;
-                    }
-
-                    _leafFont.Dispose();
-                    _groupFont.Dispose();
-                    size -= 1;
+                if (!_layout.TooBig || size <= 7)
+                {
+                    break;
                 }
+
+                _leafFont.Dispose();
+                _groupFont.Dispose();
+                size -= 1;
             }
 
             _captionFont = MakeFont(Math.Max(size, 9), FontStyle.Regular);
@@ -296,6 +302,8 @@ namespace CsdBridge.BricsCAD
             if (disposing)
             {
                 _grow.Dispose();
+                _ruler.Dispose();
+                _rulerSurface.Dispose();
                 _leafFont.Dispose();
                 _groupFont.Dispose();
                 _captionFont.Dispose();
@@ -393,6 +401,7 @@ namespace CsdBridge.BricsCAD
             }
 
             _live = false;
+            _grow.Stop();
             PickedLayer = layer;
             Capture = false;
             DialogResult = layer == null ? DialogResult.Cancel : DialogResult.OK;
@@ -403,6 +412,17 @@ namespace CsdBridge.BricsCAD
 
         private Font MakeFont(double points, FontStyle style) =>
             new Font("Segoe UI", (float)(points * _scale * 96.0 / 72.0), style, GraphicsUnit.Pixel);
+
+        /// <summary>The width of a label, measured once and remembered.</summary>
+        private double WidthOf(Dictionary<string, double> known, string text, Font font)
+        {
+            if (!known.TryGetValue(text, out double width))
+            {
+                known[text] = width = Measure(_ruler, text, font);
+            }
+
+            return width;
+        }
 
         private static double Measure(Graphics g, string text, Font font) =>
             Math.Ceiling(g.MeasureString(text, font, PointF.Empty, StringFormat.GenericTypographic).Width) + 2;
