@@ -57,6 +57,9 @@ BricsCAD ── CSD-Bridge add-in ── Claude API
 - **Civil Site Design.** Claude can drive CSD's dialogs from inside BricsCAD (see
   [Civil Site Design](#civil-site-design) below), and design vertical profiles with exact
   optimisation rather than guessing levels.
+- **Layer wheel** (`AILAYERWHEEL`, made for a keyboard shortcut): a wheel of the office's layers at the
+  pointer. Pick one to make it current, or to move the selected objects to it. No Claude call. See
+  [Layer wheel](#layer-wheel).
 - Claude can only use these tools. It cannot run arbitrary commands, LISP, scripts or open files.
 
 ## Status
@@ -65,7 +68,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 213 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 252 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -193,12 +196,14 @@ with `-Remove`.
 | `AIHISTORY` | Open the history window: every request and what Claude did |
 | `AIPIPEHATCH` | Hatch the sewer and stormwater pipes in every long section layout. No API key needed; see [Hatching long section pipes](#hatching-long-section-pipes). |
 | `AIVPLAYERS` | Grid of layers × layouts: show or hide layers in every viewport of many layouts at once. No API key needed; see [Viewport layers across layouts](#viewport-layers-across-layouts). |
+| `AILAYERWHEEL` | A wheel of layers at the pointer: sets the current layer, or the layer of the selected objects. No API key needed; see [Layer wheel](#layer-wheel). |
+| `AILAYERWHEELSETUP` | Choose which layers are on the layer wheel. |
 | `AIRIBBON` | Add the CSD-Bridge ribbon tab again, if a workspace change removed it |
 | `AISCALEBARS` | Add a scale bar block to every layout for each viewport scale on it. Runs in the add-in, so it doesn't call Claude or cost anything. See [Scale bars](#scale-bars). |
 
 The **CSD-Bridge ribbon tab** has large Chat, Draft, Routines and History buttons, small New chat,
-Status and API key buttons, Scale Bars and VP layers buttons in the Sheets panel and a Hatch pipes button in the
-Long sections panel. It's added when the add-in loads. If your workspace hides the
+Status and API key buttons, Scale Bars and VP layers buttons in the Sheets panel, Layer wheel and Wheel layers
+buttons in the Layers panel and a Hatch pipes button in the Long sections panel. It's added when the add-in loads. If your workspace hides the
 ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 
 ## Settings
@@ -220,6 +225,7 @@ ribbon, turn it on with `RIBBON`, then run `AIRIBBON`.
 | `csd_mode` | `read` | Civil Site Design tools: `read`, `edit` or `off`. Also set with `AICSD`. |
 | `road_drafting_file` | *(blank)* | Road drafting conventions for `draft_road`. Blank uses `road-drafting.json` next to the DLL. |
 | `long_section_hatch_file` | *(blank)* | Settings for `AIPIPEHATCH`. Blank uses `long-section-hatch.json` next to the DLL. |
+| `layer_wheel_file` | *(blank)* | The layers on the layer wheel. Point it at a file on a network drive to share one list across the office. Blank uses your own `%APPDATA%\CsdBridge\layer-wheel.json` once `AILAYERWHEELSETUP` has saved one, else `layer-wheel.json` next to the DLL. |
 | `cache_ttl` | `1h` | How long the prompt cache lives: `1h` suits sessions with pauses; `5m` is cheaper to write. |
 | `scale_bars` | *(not set)* | Optional: overrides where `AISCALEBARS` puts scale bars. Add only the keys you want to change: `block_name` (`Scale Bar {0}`), `x`, `y` (paper mm), `layer`, `scale`, `rotation` (degrees) and `stack_offset` (mm between bars; negative stacks downward). |
 | `clear_old_tool_results_after_tokens` | `60000` | Once a chat's input passes this size, the oldest tool results are dropped (the latest 6 are kept). `0` = never. |
@@ -460,6 +466,48 @@ top. It doesn't use Claude. Each cell shows how that layer shows in that layout'
 **Not yet run inside BricsCAD**: the grid rules are unit-tested and the window compiles, but it hasn't been opened in
 BricsCAD yet. Check on a copy of a drawing first: that the paper space viewport is never counted as a layout's viewport,
 and that UNDO takes back a Show/Hide in one step.
+
+## Layer wheel
+
+`AILAYERWHEEL` (ribbon: **Layers > Layer wheel**) opens a wheel of layers centred on the pointer. It doesn't use
+Claude.
+
+- **Nothing selected**: the layer you pick becomes the current layer.
+- **Objects selected**: they move to the layer you pick, as one UNDO step, and stay selected. Objects on locked layers
+  are left alone.
+- Click a layer to pick it. Esc, a right-click or a click outside the wheel closes it without changing anything.
+- Each layer is a wedge in its layer colour, and the wedges fill the wheel with no gaps, so anywhere in a wedge picks
+  it. The line under the wheel says what a click will do.
+
+**Groups come from the layer names.** Everything in front of the dash is the grouping, one ring per word, up to three:
+`AE CIV PLN - KERB NEW` sits under AE, then CIV, then PLN, and shows as `KERB NEW` in its layer colour. A ring with
+only one choice is folded into the middle, so if every layer on the wheel starts `AE CIV`, the middle reads AE CIV and
+there is one ring (PLN, HTC, LNE...). A layer with no dash hangs straight off the middle.
+
+**The same wheel in every drawing.** The layers come from one file, `layer-wheel.json`, not from the drawing, so each
+layer is always in the same place. Layers the open drawing doesn't have are greyed out and can't be picked. The current
+layer has a white outline; frozen and off layers are dimmed (a frozen layer can't be made current).
+
+**Choosing the layers.** `AILAYERWHEELSETUP` (ribbon: **Wheel layers**) lists the open drawing's layers; tick the ones
+to show and Save. Layers already on the wheel keep their place, and new ones go at the end of their group. To reorder,
+edit the `layers` list in the file: it runs clockwise from the top. About 60 layers is the practical limit; beyond
+that the text shrinks and long names are cut short.
+
+**One file for the office.** The repo ships `layer-wheel.json` (next to the DLL once installed) with the layers from
+`office-standards.md`; edit that copy in the repo and everyone gets it at their next update. Saving from the setup
+window writes your own copy in `%APPDATA%\CsdBridge`, which is used instead. To share a file on a network drive, press
+**Change file** in the setup window on each PC and pick it (this sets `layer_wheel_file` in `settings.json`).
+
+**Keyboard shortcut.** In BricsCAD run `CUSTOMIZE`, open the **Keyboard** tab, right-click and choose **Append
+shortcut**, choose **Create new tool**, give it the command `'AILAYERWHEEL`, and press the keys for it. The apostrophe
+lets it also run in the middle of another command, such as LINE. Don't put `^c^c` in front, as BricsCAD's own tools
+have: that cancels the selection before the wheel sees it. The **Mouse** tab does the same for a mouse button. With a
+shortcut you can also hold the key, move to a layer and let go: releasing a key while the pointer is on a layer picks
+it. Set `"release_to_pick": false` in `layer-wheel.json` if that gets in the way.
+
+**Not yet run inside BricsCAD**: the grouping and layout are unit-tested and the windows compile, but the wheel hasn't
+been opened in BricsCAD yet. Check first that it appears at the pointer with see-through edges, that a click outside
+closes it, and that hold-and-release works with your shortcut.
 
 ## Saving work between chats
 

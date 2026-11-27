@@ -178,6 +178,34 @@ def vp_layers():
     return img
 
 
+def _wheel(d, slices):
+    import math
+    # a ring of coloured slices round a hub
+    cx = cy = 128
+    n = len(slices)
+    for i, colour in enumerate(slices):
+        start = -90 + i * 360 / n + 4
+        end = -90 + (i + 1) * 360 / n - 4
+        d.pieslice((14, 14, 242, 242), start, end, fill=colour, outline=GREY, width=6)
+    d.ellipse((cx - 58, cy - 58, cx + 58, cy + 58), fill=WHITE, outline=GREY, width=OUTLINE)
+
+
+def layer_wheel():
+    img, d = canvas()
+    _wheel(d, [BLUE, GREEN, GOLD, ORANGE, (200, 70, 200, 255), (60, 190, 200, 255)])
+    # a pointer in the hub
+    d.polygon([(104, 96), (104, 164), (122, 148), (136, 176), (150, 169), (136, 142), (160, 142)], fill=GREY)
+    return img
+
+
+def layer_wheel_setup():
+    img, d = canvas()
+    _wheel(d, [BLUE, GREEN, GOLD, ORANGE, (200, 70, 200, 255), (60, 190, 200, 255)])
+    # a tick in the hub
+    d.line([(96, 130), (120, 154), (162, 104)], fill=GREEN_DARK, width=20, joint="curve")
+    return img
+
+
 ICONS = {
     "chat": chat,
     "draft": draft,
@@ -189,6 +217,8 @@ ICONS = {
     "scalebar": scale_bar,
     "pipehatch": pipe_hatch,
     "vplayers": vp_layers,
+    "layerwheel": layer_wheel,
+    "layerwheelsetup": layer_wheel_setup,
 }
 
 

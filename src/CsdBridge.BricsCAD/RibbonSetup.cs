@@ -14,6 +14,7 @@ namespace CsdBridge.BricsCAD
     /// Adds a "CSD-Bridge" tab to the BricsCAD ribbon:
     ///   Claude panel:   Chat | Draft | Routines | History (large), New chat / Status / API key (small)
     ///   Sheets panel:   Scale Bars | VP layers (run in the add-in, no Claude call)
+    ///   Layers panel:   Layer wheel | Wheel layers (run in the add-in, no Claude call)
     ///   Long sections panel: Hatch pipes (runs in the add-in, no Claude call)
     /// The ribbon is optional: if it is turned off, or BricsCAD rebuilds it (e.g. a
     /// workspace switch), the commands still work and AIRIBBON adds the tab again.
@@ -112,6 +113,11 @@ namespace CsdBridge.BricsCAD
                 sheets.Items.Add(Button("Scale Bars", "AISCALEBARS", "Add a scale bar to every layout for each viewport scale (no Claude call, no cost)", "scalebar", large: true));
                 sheets.Items.Add(Button("VP layers", "AIVPLAYERS", "Show or hide layers in the viewports of many layouts at once: a grid of layers × layouts (no Claude call, no cost)", "vplayers", large: true));
                 tab.Panels.Add(new RibbonPanel { Source = sheets });
+
+                var layers = new RibbonPanelSource { Id = "CSDBRIDGE_LAYERS", Name = "Layers", Title = "Layers" };
+                layers.Items.Add(Button("Layer wheel", "AILAYERWHEEL", "A wheel of layers at the pointer: pick one to make it current, or to move the selected objects to it. Give it a keyboard shortcut in CUSTOMIZE (no Claude call, no cost)", "layerwheel", large: true));
+                layers.Items.Add(Button("Wheel layers", "AILAYERWHEELSETUP", "Choose which layers are on the layer wheel", "layerwheelsetup", large: true));
+                tab.Panels.Add(new RibbonPanel { Source = layers });
 
                 var longSections = new RibbonPanelSource { Id = "CSDBRIDGE_LONGSECTIONS", Name = "Long sections", Title = "Long sections" };
                 longSections.Items.Add(Button("Hatch pipes", "AIPIPEHATCH", "Hatch the sewer and stormwater pipes in every long section layout (no Claude call, no cost)", "pipehatch", large: true));
