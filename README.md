@@ -68,7 +68,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 257 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 260 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -495,6 +495,11 @@ each with its number of layers:
    in the file; 0 never splits.
 3. Click the middle, right-click or press Backspace to go back a step. The middle shows where you are (AE CIV PLN SEWER).
 
+**Layers without the click.** A group that holds only layers (DET at the top; SEWER, ROAD and the rest inside PLN)
+has a chip of each layer's colour round its rim. Move onto the group and the chips grow into its layers, fanned out
+beyond the rim with their names: move out to one and click it. The fan stays open while the pointer is out among the
+layers, and closes when it comes back onto another group. A click on the group itself still opens it as its own wheel.
+
 **The same wheel in every drawing.** The layers come from one file, `layer-wheel.json`, not from the drawing, so each
 layer is always in the same place. Layers the open drawing doesn't have are greyed out and can't be picked. The current
 layer has a white outline, and so does the group it is in; frozen and off layers are dimmed (a frozen layer can't be
@@ -513,8 +518,8 @@ window writes your own copy in `%APPDATA%\CsdBridge`, which is used instead. To 
 shortcut**, choose **Create new tool**, give it the command `'AILAYERWHEEL`, and press the keys for it. The apostrophe
 lets it also run in the middle of another command, such as LINE. Don't put `^c^c` in front, as BricsCAD's own tools
 have: that cancels the selection before the wheel sees it. The **Mouse** tab does the same for a mouse button. When
-the layer is in view (a short list, or after opening its group), you can also hold the key, move to the layer and let
-go: releasing a key while the pointer is on a layer picks it. Set `"release_to_pick": false` in `layer-wheel.json` if
+the layer is in view (a short list, a group's layers fanned out, or after opening its group), you can also hold the
+key, move to the layer and let go: releasing a key while the pointer is on a layer picks it. Set `"release_to_pick": false` in `layer-wheel.json` if
 that gets in the way.
 
 **Not yet run inside BricsCAD**: the grouping and layout are unit-tested and the windows compile, but the wheel hasn't

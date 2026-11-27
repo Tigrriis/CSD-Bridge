@@ -33,6 +33,10 @@ namespace CsdBridge.BricsCAD
     /// the groups, a click on a group opens a wheel of what is in it, and a click on the middle
     /// (or a right-click, or Backspace) goes back a step.
     ///
+    /// Going a step at a time, a group whose contents are all layers has a chip of each layer's
+    /// colour on its rim. With the pointer on the group the chips grow into the named layers,
+    /// fanned out beyond the rim, and they can be picked there without opening the group.
+    ///
     /// A click on a layer picks it; Esc or a click outside closes the wheel. Letting go of a key
     /// while on a layer also picks it (hold the shortcut, flick, release).
     ///
@@ -68,6 +72,10 @@ namespace CsdBridge.BricsCAD
         private readonly WheelNode? _currentNode;
         private WheelView _view;
         private WheelPart? _hover;
+        private WheelPart? _fanOf;          // the group whose layers are fanned out
+        private WheelFan? _fan;             // that fan, fully open: what the pointer is tested against
+        private double _fanProgress;        // 0 to 1 while the chips grow into the fan
+        private readonly Timer _grow = new Timer { Interval = 15 };
         private bool _overCentre;
         private bool _live;
 
@@ -122,6 +130,7 @@ namespace CsdBridge.BricsCAD
                         MinBarLength = 60 * _scale,
                         MaxRadius = maxRadius,
                         AllAtOnceUpTo = 200 * _scale,
+                        ChipLength = 10 * _scale,
                         SplitOver = settings.SplitGroupsOver,
                         MeasureLeaf = s => Measure(g, s, leafFont),
                         MeasureGroup = s => Measure(g, s, groupFont),
@@ -141,6 +150,16 @@ namespace CsdBridge.BricsCAD
             _captionFont = MakeFont(Math.Max(size, 9), FontStyle.Regular);
 
             _view = _layout.Top;
+            _grow.Tick += (sender, e) =>
+            {
+                _fanProgress = Math.Min(1, _fanProgress + 0.25);
+                if (_fanProgress >= 1)
+                {
+                    _grow.Stop();
+                }
+
+                Redraw();
+            };
             _currentNode = _layout.Find(_currentLayer);
 
             int radius = (int)Math.Ceiling(_layout.LargestRadius) + margin;
@@ -276,6 +295,7 @@ namespace CsdBridge.BricsCAD
         {
             if (disposing)
             {
+                _grow.Dispose();
                 _leafFont.Dispose();
                 _groupFont.Dispose();
                 _captionFont.Dispose();
@@ -286,23 +306,53 @@ namespace CsdBridge.BricsCAD
 
         // ------------------------------------------------------------------ picking
 
-        private WheelHit HitAt(Point client) => _view.Hit(client.X - _centre.X, client.Y - _centre.Y);
+        private WheelHit HitAt(Point client) => _view.Hit(client.X - _centre.X, client.Y - _centre.Y, _fan);
 
         private void Track(Point client)
         {
             WheelHit hit = HitAt(client);
             bool overCentre = hit.Kind == WheelHitKind.Centre;
-            if (!ReferenceEquals(hit.Part, _hover) || overCentre != _overCentre)
+            bool changed = !ReferenceEquals(hit.Part, _hover) || overCentre != _overCentre;
+            _hover = hit.Part;
+            _overCentre = overCentre;
+
+            // On a group that can fan, open its layers. They stay open while the pointer is out
+            // among them, and close when it comes back in over something else.
+            bool onTheWheel = overCentre || (_hover != null && (_fan == null || !_fan.Parts.Contains(_hover)));
+            if (onTheWheel)
             {
-                _hover = hit.Part;
-                _overCentre = overCentre;
+                WheelPart? fanOf = _hover != null && _layout.CanFan(_hover) ? _hover : null;
+                if (!ReferenceEquals(fanOf, _fanOf))
+                {
+                    SetFan(fanOf);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
                 Redraw();
+            }
+        }
+
+        /// <summary>Fan out a group's layers from its rim, or (null) close the fan.</summary>
+        private void SetFan(WheelPart? of)
+        {
+            _grow.Stop();
+            _fanOf = of;
+            _fan = of == null ? null : _layout.Fan(_view, of);
+            _fanProgress = 0;
+            if (_fan != null)
+            {
+                _fanProgress = 0.25;
+                _grow.Start();
             }
         }
 
         /// <summary>Change what the wheel shows (a step in, or a step back).</summary>
         private void ShowView(WheelView view)
         {
+            SetFan(null);
             _view = view;
             _hover = null;
             _overCentre = false;
@@ -382,7 +432,8 @@ namespace CsdBridge.BricsCAD
         private void PaintWheel(Graphics g)
         {
             float cx = _centre.X, cy = _centre.Y;
-            float outer = (float)_view.OuterRadius + 5 * _scale;
+            bool chips = _view.Parts.Any(_layout.CanFan);
+            float outer = (float)_view.OuterRadius + (chips ? 18 : 5) * _scale;
             using (var backdrop = new SolidBrush(Backdrop))
             {
                 g.FillEllipse(backdrop, cx - outer, cy - outer, outer * 2, outer * 2);
@@ -405,7 +456,47 @@ namespace CsdBridge.BricsCAD
                 }
                 else
                 {
-                    DrawWedge(g, part, hover);
+                    DrawWedge(g, part, hover || ReferenceEquals(part, _fanOf));
+                }
+            }
+
+            // A chip of each layer's colour on the rim of every group that holds only layers.
+            foreach (WheelPart part in _view.Parts)
+            {
+                if (!ReferenceEquals(part, _fanOf) && _layout.Fan(_view, part, 0) is WheelFan closed)
+                {
+                    foreach (WheelPart chip in closed.Parts)
+                    {
+                        using (GraphicsPath path = Sector(chip.Inner, chip.Outer, chip.Start, chip.Sweep, _scale))
+                        using (var brush = new SolidBrush(FillOf(_layers[chip.LayerIndex])))
+                        {
+                            g.FillPath(brush, path);
+                        }
+                    }
+                }
+            }
+
+            // The group under the pointer: its chips grown into its layers, with names once fully open.
+            WheelFan? open = _fanOf == null ? null : _layout.Fan(_view, _fanOf, _fanProgress);
+            WheelPart? hoverDrawn = _hover;
+            if (open != null)
+            {
+                foreach (WheelPart part in open.Parts)
+                {
+                    bool hover = _hover != null && ReferenceEquals(part.Node, _hover.Node);
+                    DrawWedge(g, part, hover, open.Open);
+                    if (hover)
+                    {
+                        hoverDrawn = part;
+                    }
+                }
+
+                foreach (WheelPart part in open.Parts)
+                {
+                    if (ReferenceEquals(part.Node, _currentNode) && !ReferenceEquals(part, hoverDrawn))
+                    {
+                        Outline(g, part, Color.White, 2f);
+                    }
                 }
             }
 
@@ -419,10 +510,14 @@ namespace CsdBridge.BricsCAD
                 }
             }
 
-            if (_hover != null && !_hover.RoundTheRing)
+            if (hoverDrawn != null && !hoverDrawn.RoundTheRing)
             {
-                bool usable = _hover.Kind != WheelPartKind.Layer || _layers[_hover.LayerIndex].Exists;
-                Outline(g, _hover, usable ? Color.White : MissingText, 3f);
+                bool usable = hoverDrawn.Kind != WheelPartKind.Layer || _layers[hoverDrawn.LayerIndex].Exists;
+                Outline(g, hoverDrawn, usable ? Color.White : MissingText, 3f);
+            }
+            else if (_fanOf != null)
+            {
+                Outline(g, _fanOf, Color.White, 2f);
             }
 
             DrawCentre(g);
@@ -483,15 +578,12 @@ namespace CsdBridge.BricsCAD
             Sector(part.Inner, part.Outer, part.Start, part.Sweep, 1.5 * _scale);
 
         /// <summary>A layer in its own colour, or a group or branch to open, with its text along the wedge.</summary>
-        private void DrawWedge(Graphics g, WheelPart part, bool hover)
+        private void DrawWedge(Graphics g, WheelPart part, bool hover, bool withText = true)
         {
             bool isLayer = part.Kind == WheelPartKind.Layer;
             WheelLayerState? state = isLayer ? _layers[part.LayerIndex] : null;
             bool missing = state != null && !state.Exists;
-            Color fill = state == null ? (hover ? RingHover : RingFill)
-                : missing ? MissingFill
-                : state.Frozen || state.Off ? Blend(state.Color, Color.FromArgb(40, 44, 52), 0.55)
-                : state.Color;
+            Color fill = state == null ? (hover ? RingHover : RingFill) : FillOf(state);
             if (hover && state != null && !missing)
             {
                 fill = Blend(fill, Brightness(fill) > 200 ? Color.FromArgb(150, 170, 200) : Color.White, 0.22);
@@ -510,6 +602,11 @@ namespace CsdBridge.BricsCAD
                         g.DrawPath(pen, wedge);
                     }
                 }
+            }
+
+            if (!withText)
+            {
+                return;
             }
 
             float start = (float)part.TextStart;
@@ -541,6 +638,12 @@ namespace CsdBridge.BricsCAD
 
             g.Restore(saved);
         }
+
+        /// <summary>A layer's colour on the wheel: its own, dimmed if frozen or off, grey if the drawing lacks it.</summary>
+        private static Color FillOf(WheelLayerState state) =>
+            !state.Exists ? MissingFill
+            : state.Frozen || state.Off ? Blend(state.Color, Color.FromArgb(40, 44, 52), 0.55)
+            : state.Color;
 
         /// <summary>A line round a wedge: the current layer, and the one under the pointer.</summary>
         private void Outline(Graphics g, WheelPart part, Color color, float width)
@@ -602,7 +705,9 @@ namespace CsdBridge.BricsCAD
             }
             else if (_hover != null)
             {
-                text = (_layout.Steps ? "Open  " : "") + _layout.PathOf(_hover.Node);
+                text = !_layout.Steps ? _layout.PathOf(_hover.Node)
+                    : _layout.CanFan(_hover) ? _layout.PathOf(_hover.Node) + ":  move out to its layers, or click to open"
+                    : "Open  " + _layout.PathOf(_hover.Node);
             }
             else if (_overCentre && _layout.Back(_view) != null)
             {

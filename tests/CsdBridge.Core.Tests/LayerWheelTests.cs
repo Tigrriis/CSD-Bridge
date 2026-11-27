@@ -314,6 +314,95 @@ namespace CsdBridge.Core.Tests
             Assert.All(pln.Parts, p => Assert.Equal(WheelPartKind.Layer, p.Kind));
         }
 
+        // ------------------------------------------------------------------ a group's layers on its rim
+
+        [Fact]
+        public void AGroupOfLayersCarriesAChipForEachOnItsRim()
+        {
+            var options = new WheelLayoutOptions();
+            WheelLayout layout = WheelLayout.Build(ManyLayers(), 3, options);
+            WheelView top = layout.Top;
+            WheelPart ano = Group(top, "ANO");
+
+            Assert.True(layout.CanFan(ano));
+            Assert.True(layout.CanFan(Group(top, "HTC")));
+            Assert.False(layout.CanFan(Group(top, "PLN"))); // it opens on branches, not layers
+            Assert.Null(layout.Fan(top, Group(top, "PLN")));
+
+            WheelFan chips = layout.Fan(top, ano, 0)!;
+            Assert.False(chips.Open);
+            Assert.Equal(12, chips.Parts.Count);
+            Assert.Equal("AE CIV ANO - NOTE 1", chips.Parts[0].Layer);
+            Assert.Equal(ano.Start, chips.Parts[0].Start, 9); // across the group's own wedge, no wider
+            Assert.Equal(ano.Sweep, chips.Parts.Sum(p => p.Sweep), 9);
+            Assert.All(chips.Parts, p => Assert.Equal(top.OuterRadius + options.Gap, p.Inner, 9));
+            Assert.All(chips.Parts, p => Assert.Equal(options.ChipLength, p.Outer - p.Inner, 9));
+
+            // Closed, the chips are part of the group: the pointer on them is on the group.
+            Assert.Same(ano, HitAt(top, ano.Mid, top.OuterRadius + options.Gap + 4).Part);
+        }
+
+        [Fact]
+        public void UnderThePointerTheChipsOpenIntoTheLayers()
+        {
+            var options = new WheelLayoutOptions();
+            WheelLayout layout = WheelLayout.Build(ManyLayers(), 3, options);
+            WheelView top = layout.Top;
+            WheelPart ano = Group(top, "ANO");
+            WheelFan fan = layout.Fan(top, ano)!;
+
+            Assert.True(fan.Open);
+            Assert.Equal(12, fan.Parts.Count);
+            Assert.Equal("NOTE 1", fan.Parts[0].Label);
+            Assert.Equal(ano.Mid, fan.Parts[0].Start + fan.Parts.Sum(p => p.Sweep) / 2, 9); // centred on the group
+            Assert.True(fan.Parts.Sum(p => p.Sweep) > ano.Sweep);                          // and wider than it
+            Assert.All(fan.Parts, p => Assert.True(p.Sweep * p.TextStart >= options.LeafPitch - 1e-6)); // room for each name
+            Assert.True(layout.LargestRadius >= fan.OuterRadius);
+
+            // Half way there, it is between the two.
+            WheelFan half = layout.Fan(top, ano, 0.5)!;
+            Assert.False(half.Open);
+            Assert.InRange(half.OuterRadius, layout.Fan(top, ano, 0)!.OuterRadius, fan.OuterRadius);
+
+            foreach (WheelPart wedge in fan.Parts)
+            {
+                (double x, double y) = WheelLayout.PointAt(wedge.Mid, (wedge.TextStart + wedge.Outer) / 2);
+                WheelHit hit = top.Hit(x, y, fan);
+                Assert.Equal(wedge.Layer, hit.Part!.Layer);
+            }
+
+            // Inside the rim the groups are still there, to move to another one.
+            WheelPart pln = Group(top, "PLN");
+            (double px, double py) = WheelLayout.PointAt(pln.Mid, (pln.Inner + pln.Outer) / 2);
+            Assert.Same(pln, top.Hit(px, py, fan).Part);
+
+            // Beyond the rim, off the side of the fan, is nothing: not a jump to the neighbouring group.
+            double beside = fan.Parts[0].Start - 0.05;
+            (double sx, double sy) = WheelLayout.PointAt(beside, top.OuterRadius + 8);
+            Assert.Equal(WheelHitKind.Nothing, top.Hit(sx, sy, fan).Kind);
+            Assert.Equal(WheelHitKind.Outside, top.Hit(fan.OuterRadius + 60, 0, fan).Kind);
+        }
+
+        [Fact]
+        public void AFanCanRunPastTwelveOClock()
+        {
+            // The first branch starts at the top, so its fan, centred on it, starts before 12 o'clock.
+            WheelLayout layout = WheelLayout.Build(ManyLayers(), 3);
+            WheelView pln = layout.Open(Group(layout.Top, "PLN").Node);
+            WheelPart sewer = pln.Parts[0];
+            WheelFan fan = layout.Fan(pln, sewer)!;
+
+            Assert.Equal(15, fan.Parts.Count);
+            Assert.True(fan.Parts[0].Start < 0);
+            Assert.Equal("PIPE DEMO", fan.Parts[0].Label);
+            foreach (WheelPart wedge in fan.Parts)
+            {
+                (double x, double y) = WheelLayout.PointAt(wedge.Mid, wedge.TextStart + 20);
+                Assert.Equal(wedge.Layer, pln.Hit(x, y, fan).Part!.Layer);
+                Assert.Equal(x < 0, wedge.ReadsInwards);
+            }
+        }
+
         [Fact]
         public void TheShippedFileLoads()
         {
@@ -328,7 +417,8 @@ namespace CsdBridge.Core.Tests
             WheelLayout layout = WheelLayout.Build(settings.Layers, settings.MaxTerms, new WheelLayoutOptions { SplitOver = settings.SplitGroupsOver });
             Assert.Equal("AE CIV", layout.Top.CentreLabel);
             Assert.False(layout.TooBig);
-            Assert.True(layout.LargestRadius < 400); // every step is a wheel of a comfortable size
+            Assert.True(layout.Top.OuterRadius < 200);   // each step is a wheel of a comfortable size...
+            Assert.True(layout.LargestRadius < 480);     // ...and still fits a screen with a group's layers fanned out
 
             // Every layer can be reached, and in at most three clicks.
             foreach (string layer in settings.Layers)
@@ -430,13 +520,21 @@ namespace CsdBridge.Core.Tests
                 views.Add(("2-DET", layout.Open(layout.Top.Parts.Single(p => p.Node.Term == "DET").Node)));
             }
 
+            int size = (int)(layout.LargestRadius * 2) + 40;
             foreach ((string name, WheelView view) in views)
             {
-                File.WriteAllBytes(Path.Combine(output!, name + ".png"), Sketch(view, (int)(layout.LargestRadius * 2) + 40));
+                File.WriteAllBytes(Path.Combine(output!, name + ".png"), Sketch(layout, view, size, null));
+            }
+
+            if (layout.Steps)
+            {
+                WheelView pln = views[1].View;
+                File.WriteAllBytes(Path.Combine(output!, "2-PLN-over-SEWER.png"), Sketch(layout, pln, size, pln.Parts.Single(p => p.Node.Term == "SEWER")));
+                File.WriteAllBytes(Path.Combine(output!, "1-top-over-DET.png"), Sketch(layout, layout.Top, size, layout.Top.Parts.Single(p => p.Node.Term == "DET")));
             }
         }
 
-        private static byte[] Sketch(WheelView view, int size)
+        private static byte[] Sketch(WheelLayout layout, WheelView view, int size, WheelPart? fanOf)
         {
             double c = size / 2.0;
             var canvas = new Canvas(size, size);
@@ -472,7 +570,28 @@ namespace CsdBridge.Core.Tests
                     x + (x1 * cos + y1 * sin) * height, y + (x1 * sin - y1 * cos) * height, color, 1.2));
             }
 
-            canvas.Fill(Slice(0, view.OuterRadius + 6, 0, Math.PI * 2), Rgb.Hex(0x16191E));
+            void Wedge(WheelPart part, bool text)
+            {
+                bool layer = part.Kind == WheelPartKind.Layer;
+                double hair = Math.Min(1.0 / part.Inner, part.Sweep / 5);
+                canvas.Fill(Slice(part.Inner, part.Outer, part.Start + hair, part.Sweep - 2 * hair),
+                    layer ? Rgb.Hex(palette[part.LayerIndex % palette.Length]) : ReferenceEquals(part, fanOf) ? Rgb.Hex(0x6A7890) : ring);
+                if (!text)
+                {
+                    return;
+                }
+
+                double height = layer ? 8.5 : 10;
+                double mid = part.Mid;
+                double along = mid - Math.PI / 2; // screen angle of the wedge, x right, y down
+                double from = part.ReadsInwards ? part.TextStart + part.TextLength - 7 : part.TextStart + 7;
+                (double tx, double ty) = WheelLayout.PointAt(mid, from);
+                double turn = part.ReadsInwards ? along + Math.PI : along;
+                Text(part.Label, c + tx - height / 2 * Math.Sin(turn), c + ty + height / 2 * Math.Cos(turn), turn, height, layer ? ink : white);
+            }
+
+            bool anyChips = view.Parts.Any(layout.CanFan);
+            canvas.Fill(Slice(0, view.OuterRadius + (anyChips ? 18 : 6), 0, Math.PI * 2), Rgb.Hex(0x16191E));
             foreach (WheelPart part in view.Parts)
             {
                 if (part.RoundTheRing)
@@ -483,16 +602,26 @@ namespace CsdBridge.Core.Tests
                     continue;
                 }
 
-                bool layer = part.Kind == WheelPartKind.Layer;
-                double hair = 1.0 / part.Inner;
-                canvas.Fill(Slice(part.Inner, part.Outer, part.Start + hair, part.Sweep - 2 * hair),
-                    layer ? Rgb.Hex(palette[part.LayerIndex % palette.Length]) : ring);
-                double height = layer ? 8.5 : 10;
-                double along = part.Mid - Math.PI / 2; // screen angle of the wedge, x right, y down
-                double from = part.ReadsInwards ? part.TextStart + part.TextLength - 7 : part.TextStart + 7;
-                (double tx, double ty) = WheelLayout.PointAt(part.Mid, from);
-                double turn = part.ReadsInwards ? along + Math.PI : along;
-                Text(part.Label, c + tx - height / 2 * Math.Sin(turn), c + ty + height / 2 * Math.Cos(turn), turn, height, layer ? ink : white);
+                Wedge(part, true);
+            }
+
+            foreach (WheelPart part in view.Parts)
+            {
+                if (!ReferenceEquals(part, fanOf) && layout.Fan(view, part, 0) is WheelFan chips)
+                {
+                    foreach (WheelPart chip in chips.Parts)
+                    {
+                        Wedge(chip, false);
+                    }
+                }
+            }
+
+            if (fanOf != null)
+            {
+                foreach (WheelPart part in layout.Fan(view, fanOf)!.Parts)
+                {
+                    Wedge(part, true);
+                }
             }
 
             canvas.Fill(Slice(0, view.CentreRadius - 3, 0, Math.PI * 2), Rgb.Hex(0x22262E));
