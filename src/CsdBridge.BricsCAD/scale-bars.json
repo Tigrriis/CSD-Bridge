@@ -1,0 +1,44 @@
+// CSD-Bridge: how AISCALEBARS puts scale bars on layouts.
+//
+// AISCALEBARS reads each layout's viewport scales and inserts the scale bar block for each.
+// AISCALEBARSETUP fills this file in from scale bars you pick in a drawing; it can also be
+// edited by hand. The blocks must already be in the drawing (in the office template, say).
+//
+// block_name           The block for a scale; {0} is the scale: "Scale Bar {0}" is
+//                      "Scale Bar 750" for 1:750.
+// blocks               Blocks named some other way, by scale: { "750": "SB 750 metric" }.
+// combined_block_name  A combined bar for a horizontal and a vertical scale (long
+//                      sections); {h} and {v} are the scales: "Scale Bar H{h} V{v}".
+// combined_blocks      Combined blocks named some other way:
+//                      [ { "horizontal": 1000, "vertical": 100, "block": "LS Bar 1000-100" } ]
+//                      A sheet gets a combined bar where its text states both scales, as in
+//                      "SCALES: HORIZONTAL 1:1000 VERTICAL 1:100", and the block is in the
+//                      drawing. Otherwise it gets a bar for each scale, as before.
+// x, y                 Where the first bar goes, in paper millimetres.
+// stack_offset_x, _y   From one bar to the next when a layout has several.
+// layer, scale, rotation  The layer the bars go on, the size they are inserted at, and
+//                      their rotation in degrees.
+// positions            Other places for particular sheets. The first that fits is used, and
+//                      anything it leaves out comes from the settings above:
+//                      [ { "sheet": "A3", "x": 395, "y": 30, "scale": 0.5 },
+//                        { "bars": "combined", "x": 700, "y": 68.5 },
+//                        { "layout_name_contains": "detail", "x": 40, "y": 20 } ]
+//                      "sheet" is A0 to A4 or a size such as "841x594"; "bars" is "single" or
+//                      "combined".
+//
+// To share one file across the office, put it on a network drive and set "scale_bar_file"
+// in %APPDATA%\CsdBridge\settings.json on each PC.
+{
+  "block_name": "Scale Bar {0}",
+  "blocks": {},
+  "combined_block_name": "",
+  "combined_blocks": [],
+  "x": 821,
+  "y": 68.5,
+  "stack_offset_x": 0,
+  "stack_offset_y": 40,
+  "layer": "AE GEN TBL - SCALE BAR",
+  "scale": 1,
+  "rotation": 0,
+  "positions": []
+}

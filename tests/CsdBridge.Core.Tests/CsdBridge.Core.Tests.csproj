@@ -19,6 +19,7 @@
     <None Include="..\..\src\CsdBridge.BricsCAD\Resources\routine-examples\*.md" Link="routine-examples\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\CsdBridge.BricsCAD\long-section-hatch.json" Link="long-section-hatch.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\CsdBridge.BricsCAD\layer-wheel.json" Link="layer-wheel.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\CsdBridge.BricsCAD\scale-bars.json" Link="scale-bars.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

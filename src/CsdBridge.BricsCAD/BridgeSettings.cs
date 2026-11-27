@@ -76,12 +76,21 @@ namespace CsdBridge.BricsCAD
         public string? RoadDraftingFile { get; set; }
 
         /// <summary>
-        /// Overrides for where AISCALEBARS puts scale bars. Unset means the office defaults in
-        /// ScaleBarOptions; it isn't written to the template, so changes to those defaults reach everyone.
+        /// The office's scale bar settings for AISCALEBARS: the block for each scale, combined
+        /// blocks, and where bars go. Point this at a network share so the whole office uses one
+        /// file. Empty means this user's own scale-bars.json if AISCALEBARSETUP has saved one,
+        /// else the scale-bars.json next to the add-in DLL.
+        /// </summary>
+        [JsonPropertyName("scale_bar_file")]
+        public string? ScaleBarFile { get; set; }
+
+        /// <summary>
+        /// The older way to set scale bars up, still honoured: when this is set it is used
+        /// instead of the scale bar file. Remove it to use the file.
         /// </summary>
         [JsonPropertyName("scale_bars")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public CsdBridge.Core.Drawing.ScaleBarOptions? ScaleBars { get; set; }
+        public CsdBridge.Core.Drawing.ScaleBarSettings? ScaleBars { get; set; }
 
         /// <summary>Long section pipe hatch settings (AIPIPEHATCH). Empty means long-section-hatch.json next to the add-in DLL.</summary>
         [JsonPropertyName("long_section_hatch_file")]
@@ -232,6 +241,61 @@ namespace CsdBridge.BricsCAD
             }
 
             return new CsdBridge.Core.Civil.LongSectionHatchSettings();
+        }
+
+        /// <summary>This user's own scale bar file, used when no shared one is set.</summary>
+        public static string PersonalScaleBarPath => Path.Combine(Folder, "scale-bars.json");
+
+        /// <summary>Where AISCALEBARSETUP saves: the shared file if one is set, else this user's own.</summary>
+        public string ScaleBarSavePath() =>
+            string.IsNullOrWhiteSpace(ScaleBarFile)
+                ? PersonalScaleBarPath
+                : Environment.ExpandEnvironmentVariables(ScaleBarFile!.Trim());
+
+        /// <summary>
+        /// Where AISCALEBARS reads its settings: the shared file if one is set, else this user's
+        /// own if there is one, else the office default installed next to the add-in DLL.
+        /// </summary>
+        public string ResolvedScaleBarPath()
+        {
+            string path = ScaleBarSavePath();
+            if (!string.IsNullOrWhiteSpace(ScaleBarFile) || File.Exists(path))
+            {
+                return path;
+            }
+
+            string dir = Path.GetDirectoryName(typeof(BridgeSettings).Assembly.Location) ?? ".";
+            return Path.Combine(dir, "scale-bars.json");
+        }
+
+        /// <summary>
+        /// The scale bar settings. A file that isn't there gives the built-in defaults; one that
+        /// can't be read gives <paramref name="problem"/>. <paramref name="path"/> is where they
+        /// came from.
+        /// </summary>
+        public CsdBridge.Core.Drawing.ScaleBarSettings LoadScaleBars(out string path, out string? problem)
+        {
+            problem = null;
+            if (ScaleBars != null)
+            {
+                path = SettingsPath + " (scale_bars)";
+                return ScaleBars;
+            }
+
+            path = ResolvedScaleBarPath();
+            try
+            {
+                if (File.Exists(path))
+                {
+                    return CsdBridge.Core.Drawing.ScaleBarSettings.Load(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                problem = $"{path}: {ex.Message}";
+            }
+
+            return new CsdBridge.Core.Drawing.ScaleBarSettings();
         }
 
         /// <summary>This user's own layer wheel file, used when no shared one is set.</summary>

@@ -254,6 +254,15 @@ says *why* each step happened, which a recording of commands and pick points can
    - the selection survives a move to another layer, and one `U` takes the move back
    - `'AILAYERWHEEL` in the middle of LINE changes the layer for the next segment
 
+10. Scale bars (`AISCALEBARS`, `AISCALEBARSETUP`). Which bars a layout gets and where they go are worked out in
+    Core (`ScaleBars.Plan`, `ScaleBarSettings`) and unit-tested; the BricsCAD side reads the layout and inserts
+    blocks. Check in BricsCAD:
+    - with the shipped file, a run gives the same bars in the same places as before
+    - a long section sheet with `HORIZONTAL 1:x VERTICAL 1:y` text and a combined block loaded gets the one
+      combined bar, and a second run says it is already there
+    - `AISCALEBARSETUP`: Bar and Combined read the picked block's name and offer the right pattern; Position and
+      Stack save what was picked; the layout's sheet size is named correctly (A1, A3)
+
 ## Roadmap ideas
 
 - **More tools:** zoom to result, set the current layer, layer states (freeze, off, lock), mirror and stretch,

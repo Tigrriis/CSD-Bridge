@@ -22,6 +22,7 @@ namespace CsdBridge.BricsCAD
     /// AIFORMDUMP diagnostic: save open dialogs' WinForms controls and grid cells (read from inside)
     /// AICSD      Civil Site Design tools: read only, edit, off, or list CSD's commands
     /// AISCALEBARS add scale bar blocks to every layout from its viewport scales (no Claude call)
+    /// AISCALEBARSETUP set up the office's scale bars: the block for each scale, combined blocks, positions
     /// AIPIPEHATCH hatch the sewer and stormwater pipes in the long section layouts
     /// AIVPLAYERS grid of layers × layouts: show or hide layers in the viewports of many layouts at once
     /// AILAYERWHEEL a wheel of layers at the pointer: sets the current layer, or the layer of the selected objects
@@ -259,6 +260,9 @@ namespace CsdBridge.BricsCAD
             ScaleBarTool.Run(doc);
         }
 
+        [CommandMethod(Group, "AISCALEBARSETUP", CommandFlags.Modal)]
+        public void AiScaleBarSetup() => ScaleBarSetup.Run(CadApp.DocumentManager.MdiActiveDocument);
+
         [CommandMethod(Group, "AIRESET", CommandFlags.Modal)]
         public void AiReset()
         {
@@ -334,6 +338,8 @@ namespace CsdBridge.BricsCAD
             string? office = s.ResolvedOfficeRoutinesFolder();
             ed.WriteMessage($"\n  Routines:   {BridgeSettings.PersonalRoutinesFolder}");
             ed.WriteMessage($"\n  Office routines: {(office == null ? "none (set office_routines_folder)" : office + (Directory.Exists(office) ? "" : " (not found)"))}");
+            s.LoadScaleBars(out string scaleBarPath, out _);
+            ed.WriteMessage($"\n  Scale bars: {scaleBarPath} (change with AISCALEBARSETUP)");
             ed.WriteMessage($"\n  Layer wheel: {s.ResolvedLayerWheelPath()} (AILAYERWHEELSETUP saves to {s.LayerWheelSavePath()})");
             ed.WriteMessage($"\n  CSD tools:  {Describe((s.CsdMode ?? "read").ToLowerInvariant())} (change with AICSD)");
             ed.WriteMessage($"\n  Settings:   {BridgeSettings.SettingsPath}");
