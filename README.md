@@ -493,8 +493,8 @@ to show and Save. Layers already on the wheel keep their place, and new ones go 
 edit the `layers` list in the file: it runs clockwise from the top. About 60 layers is the practical limit; beyond
 that the text shrinks and long names are cut short.
 
-**One file for the office.** The repo ships `layer-wheel.json` (next to the DLL once installed) with the layers from
-`office-standards.md`; edit that copy in the repo and everyone gets it at their next update. Saving from the setup
+**One file for the office.** The repo ships `layer-wheel.json` (next to the DLL once installed) with the office's
+AE CIV layers; edit that copy in the repo and everyone gets it at their next update. Saving from the setup
 window writes your own copy in `%APPDATA%\CsdBridge`, which is used instead. To share a file on a network drive, press
 **Change file** in the setup window on each PC and pick it (this sets `layer_wheel_file` in `settings.json`).
 
