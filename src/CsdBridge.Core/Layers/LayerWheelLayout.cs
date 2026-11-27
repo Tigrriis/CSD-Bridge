@@ -10,12 +10,12 @@ namespace CsdBridge.Core.Layers
         /// <summary>Smallest radius of the disc in the middle.</summary>
         public double CentreRadius { get; set; } = 34;
 
-        /// <summary>Thickness of a ring of groups.</summary>
+        /// <summary>Thickness of a ring of groups, when everything is shown at once.</summary>
         public double RingThickness { get; set; } = 40;
 
         public double Gap { get; set; } = 3;
 
-        /// <summary>Room each layer needs round the circle at the inner edge of its wedge: a line of text and a little more.</summary>
+        /// <summary>Room each wedge needs round the circle at its narrow end: a line of text and a little more.</summary>
         public double LeafPitch { get; set; } = 23;
 
         /// <summary>Space between the edge of a wedge or ring and its text.</summary>
@@ -26,6 +26,15 @@ namespace CsdBridge.Core.Layers
         /// <summary>The wheel may not be bigger than this (half the screen, say); longer names are cut short.</summary>
         public double MaxRadius { get; set; } = 480;
 
+        /// <summary>
+        /// Every layer is shown at once while the band of layers starts no further out than
+        /// this (about 50 layers). Beyond that the wheel goes a step at a time.
+        /// </summary>
+        public double AllAtOnceUpTo { get; set; } = 200;
+
+        /// <summary>Going a step at a time, a group with more layers than this is split by the first word of their names. 0 never splits.</summary>
+        public int SplitOver { get; set; } = 40;
+
         /// <summary>Width of a layer's label.</summary>
         public Func<string, double> MeasureLeaf { get; set; } = s => s.Length * 6.6;
 
@@ -33,57 +42,59 @@ namespace CsdBridge.Core.Layers
         public Func<string, double> MeasureGroup { get; set; } = s => s.Length * 8.0;
     }
 
-    /// <summary>A group's slice of its ring.</summary>
-    public sealed class WheelSector
+    public enum WheelPartKind
     {
-        internal WheelSector(WheelNode node, double inner, double outer)
-        {
-            Node = node;
-            Inner = inner;
-            Outer = outer;
-        }
+        /// <summary>A word in front of the dash (PLN).</summary>
+        Group,
 
-        public WheelNode Node { get; }
-        public double Inner { get; }
-        public double Outer { get; }
-        public double Start => Node.Start;
-        public double Sweep => Node.Sweep;
+        /// <summary>Layers of one group that share their first word (SEWER), when the group is too big to show whole.</summary>
+        Branch,
+
+        Layer,
     }
 
-    /// <summary>A layer: a wedge of the outer band, which is also the slice that picks it.</summary>
-    public sealed class WheelLeaf
+    /// <summary>One piece of the wheel: part of a ring, or a wedge. Radii in pixels; angles in radians clockwise from 12 o'clock.</summary>
+    public sealed class WheelPart
     {
-        internal WheelLeaf(WheelNode node, double innerHit, double barStart, double barLength)
+        internal WheelPart(WheelNode node, string label)
         {
             Node = node;
-            InnerHit = innerHit;
-            BarStart = barStart;
-            BarLength = barLength;
+            Label = label;
         }
 
         public WheelNode Node { get; }
-        public string Layer => Node.Layer!;
-        public string Label => Node.Term;
+        public WheelPartKind Kind => Node.IsLeaf ? WheelPartKind.Layer : Node.IsBranch ? WheelPartKind.Branch : WheelPartKind.Group;
+
+        /// <summary>What to write on it.</summary>
+        public string Label { get; }
+
+        public string? Layer => Node.Layer;
         public int LayerIndex => Node.LayerIndex;
 
-        /// <summary>The direction of the wedge's middle, and of its text, in radians clockwise from 12 o'clock.</summary>
-        public double Angle => Node.Mid;
+        public double Inner { get; internal set; }
+        public double Outer { get; internal set; }
+        public double Start { get; internal set; }
+        public double Sweep { get; internal set; }
+        public double Mid => Start + Sweep / 2;
 
-        /// <summary>
-        /// The pointer picks this layer from this radius outwards, within the node's slice. The
-        /// wedge is drawn from here too, so a layer with fewer words in front of its dash fills
-        /// the rings it has no group in.
-        /// </summary>
-        public double InnerHit { get; }
+        /// <summary>The pointer is on this part between these radii: a little more than is drawn, so it needn't be exact.</summary>
+        public double HitInner { get; internal set; }
 
-        /// <summary>Where the text starts: the same radius for every layer.</summary>
-        public double BarStart { get; }
+        public double HitOuter { get; internal set; }
 
-        /// <summary>From the text's start to the rim: the same for every layer, so the wedges leave no gaps.</summary>
-        public double BarLength { get; internal set; }
+        /// <summary>True for a group's slice of a ring, with its word written round the ring; false for a wedge, written along it.</summary>
+        public bool RoundTheRing { get; internal set; }
+
+        /// <summary>For a wedge: the radius its text starts at and the room it has.</summary>
+        public double TextStart { get; internal set; }
+
+        public double TextLength { get; internal set; }
 
         /// <summary>On the left half the text reads towards the middle, so it is never upside down.</summary>
-        public bool ReadsInwards => Angle > Math.PI;
+        public bool ReadsInwards => Mid > Math.PI;
+
+        public bool Contains(double radius, double angle) =>
+            radius >= HitInner && radius <= HitOuter && angle >= Start && angle < Start + Sweep;
     }
 
     public enum WheelHitKind
@@ -91,11 +102,11 @@ namespace CsdBridge.Core.Layers
         /// <summary>Beyond the wheel: a click here closes it.</summary>
         Outside,
 
-        /// <summary>The disc in the middle.</summary>
+        /// <summary>The disc in the middle: a click goes back a step.</summary>
         Centre,
 
-        Group,
-        Layer,
+        /// <summary>On a group, branch or layer.</summary>
+        Part,
 
         /// <summary>On the wheel, but on nothing.</summary>
         Nothing,
@@ -103,123 +114,43 @@ namespace CsdBridge.Core.Layers
 
     public readonly struct WheelHit
     {
-        public WheelHit(WheelHitKind kind, WheelNode? node = null)
+        public WheelHit(WheelHitKind kind, WheelPart? part = null)
         {
             Kind = kind;
-            Node = node;
+            Part = part;
         }
 
         public WheelHitKind Kind { get; }
-        public WheelNode? Node { get; }
+        public WheelPart? Part { get; }
     }
 
-    /// <summary>
-    /// Where everything on the layer wheel goes. Rings of groups surround the middle, one ring
-    /// per word in front of the dash; each layer is a wedge of the band outside its group, and
-    /// the wedges fill the band. A slice is as wide as its layers need, and the wheel grows until
-    /// they all fit round it.
-    ///
-    /// Angles are radians clockwise from 12 o'clock; positions are pixels from the middle of
-    /// the wheel with y downwards, as on screen. Free of BricsCAD and Windows so it can be
-    /// unit-tested.
-    /// </summary>
-    public sealed class WheelLayout
+    /// <summary>What the wheel shows at one moment: everything, or one step of the way to a layer.</summary>
+    public sealed class WheelView
     {
-        private const double FullTurn = Math.PI * 2;
         private const double PickMargin = 14;
 
-        private WheelLayout()
+        internal WheelView(WheelNode node, string centreLabel, double centreRadius, double outerRadius, IReadOnlyList<WheelPart> parts, bool tooBig)
         {
+            Node = node;
+            CentreLabel = centreLabel;
+            CentreRadius = centreRadius;
+            OuterRadius = outerRadius;
+            Parts = parts;
+            TooBig = tooBig;
         }
 
-        /// <summary>The words every layer shares, shown in the middle (e.g. "AE CIV").</summary>
-        public string CentreLabel { get; private set; } = "";
+        /// <summary>The group or branch whose contents are shown; the top of the tree for the first view.</summary>
+        public WheelNode Node { get; }
 
-        public double CentreRadius { get; private set; }
+        /// <summary>The words that lead here, shown in the middle ("AE CIV PLN").</summary>
+        public string CentreLabel { get; }
 
-        /// <summary>Rings of groups.</summary>
-        public int Rings { get; private set; }
+        public double CentreRadius { get; }
+        public double OuterRadius { get; }
+        public IReadOnlyList<WheelPart> Parts { get; }
 
-        /// <summary>The radius the band of layers starts at.</summary>
-        public double LeafStart { get; private set; }
-
-        public double OuterRadius { get; private set; }
-
-        /// <summary>The wheel can't fit in <see cref="WheelLayoutOptions.MaxRadius"/> even with the names cut short.</summary>
-        public bool TooBig { get; private set; }
-
-        public IReadOnlyList<WheelSector> Sectors { get; private set; } = Array.Empty<WheelSector>();
-        public IReadOnlyList<WheelLeaf> Leaves { get; private set; } = Array.Empty<WheelLeaf>();
-
-        public static WheelLayout Build(IReadOnlyList<string> layers, int maxTerms, WheelLayoutOptions? options = null)
-        {
-            WheelLayoutOptions o = options ?? new WheelLayoutOptions();
-            WheelNode root = LayerWheelTree.Build(layers, maxTerms, out string centre);
-            var all = new List<WheelNode>();
-            Collect(root, all);
-            int rings = all.Where(n => !n.IsLeaf).Select(n => n.Depth).DefaultIfEmpty(0).Max();
-
-            // The radius the band of layers starts at: far enough out for the rings, then further until
-            // every layer and every group label has room round the circle.
-            double leafStart = o.CentreRadius + o.Gap + rings * (o.RingThickness + o.Gap);
-            for (int i = 0; i < 40; i++)
-            {
-                double total = Need(root, leafStart, rings, o);
-                if (total <= FullTurn)
-                {
-                    break;
-                }
-
-                leafStart *= total / FullTurn * 1.005;
-            }
-
-            Need(root, leafStart, rings, o);
-            Assign(root, 0, FullTurn);
-
-            var sectors = new List<WheelSector>();
-            var leaves = new List<WheelLeaf>();
-            double roomForBars = Math.Max(o.MinBarLength, o.MaxRadius - leafStart);
-            double longest = 0;
-            foreach (WheelNode node in all)
-            {
-                if (ReferenceEquals(node, root))
-                {
-                    continue;
-                }
-
-                if (!node.IsLeaf)
-                {
-                    double outer = RingOuter(node.Depth, leafStart, rings, o);
-                    sectors.Add(new WheelSector(node, outer - o.RingThickness, outer));
-                    continue;
-                }
-
-                WheelNode parent = node.Parent!;
-                double innerHit = ReferenceEquals(parent, root)
-                    ? leafStart - o.Gap - rings * (o.RingThickness + o.Gap)
-                    : RingOuter(parent.Depth, leafStart, rings, o);
-                double length = Math.Min(roomForBars, o.MeasureLeaf(node.Term) + 2 * o.LabelPadding);
-                longest = Math.Max(longest, length);
-                leaves.Add(new WheelLeaf(node, innerHit, leafStart, length));
-            }
-
-            foreach (WheelLeaf leaf in leaves)
-            {
-                leaf.BarLength = longest;
-            }
-
-            return new WheelLayout
-            {
-                CentreLabel = centre,
-                Rings = rings,
-                CentreRadius = leafStart - o.Gap - rings * (o.RingThickness + o.Gap),
-                LeafStart = leafStart,
-                OuterRadius = leafStart + longest,
-                TooBig = leafStart + longest > o.MaxRadius + 0.5,
-                Sectors = sectors,
-                Leaves = leaves,
-            };
-        }
+        /// <summary>It doesn't fit in <see cref="WheelLayoutOptions.MaxRadius"/> even with the names cut short.</summary>
+        public bool TooBig { get; }
 
         /// <summary>What is under a point <paramref name="dx"/> right of and <paramref name="dy"/> below the middle.</summary>
         public WheelHit Hit(double dx, double dy)
@@ -235,24 +166,129 @@ namespace CsdBridge.Core.Layers
                 return new WheelHit(WheelHitKind.Outside);
             }
 
-            double angle = AngleOf(dx, dy);
-            foreach (WheelLeaf leaf in Leaves)
+            double angle = WheelLayout.AngleOf(dx, dy);
+            foreach (WheelPart part in Parts)
             {
-                if (r >= leaf.InnerHit && leaf.Node.Contains(angle))
+                if (part.Contains(r, angle))
                 {
-                    return new WheelHit(WheelHitKind.Layer, leaf.Node);
-                }
-            }
-
-            foreach (WheelSector sector in Sectors)
-            {
-                if (r >= sector.Inner && r <= sector.Outer && sector.Node.Contains(angle))
-                {
-                    return new WheelHit(WheelHitKind.Group, sector.Node);
+                    return new WheelHit(WheelHitKind.Part, part);
                 }
             }
 
             return new WheelHit(WheelHitKind.Nothing);
+        }
+
+        internal const double Margin = PickMargin;
+    }
+
+    /// <summary>
+    /// Where everything on the layer wheel goes.
+    ///
+    /// A short list is shown all at once: rings of groups round the middle, one ring per word in
+    /// front of the dash, and each layer a wedge of the band outside its group. A slice is as
+    /// wide as its layers need, and the wheel grows until they all fit round it.
+    ///
+    /// A long list goes a step at a time (<see cref="Steps"/>): the first view is a wheel of the
+    /// groups, a click on one opens a wheel of what is in it, and so on down to the layers. A
+    /// group with too many layers for one wheel is first split by the first word of their names.
+    ///
+    /// Angles are radians clockwise from 12 o'clock; positions are pixels from the middle of
+    /// the wheel with y downwards, as on screen. Free of BricsCAD and Windows so it can be
+    /// unit-tested.
+    /// </summary>
+    public sealed class WheelLayout
+    {
+        private const double FullTurn = Math.PI * 2;
+
+        private readonly WheelLayoutOptions _o;
+        private readonly WheelNode _root;
+        private readonly string _folded;
+        private readonly Dictionary<WheelNode, WheelView> _views = new Dictionary<WheelNode, WheelView>();
+        private readonly Dictionary<string, WheelNode> _leaves = new Dictionary<string, WheelNode>(StringComparer.OrdinalIgnoreCase);
+
+        private WheelLayout(WheelNode root, string folded, WheelLayoutOptions options)
+        {
+            _root = root;
+            _folded = folded;
+            _o = options;
+            Top = null!;
+        }
+
+        /// <summary>True when the wheel goes a step at a time: a click on a group opens it.</summary>
+        public bool Steps { get; private set; }
+
+        /// <summary>The first view: everything, or the top groups.</summary>
+        public WheelView Top { get; private set; }
+
+        /// <summary>The radius of the biggest view, for sizing the window.</summary>
+        public double LargestRadius { get; private set; }
+
+        /// <summary>Some view doesn't fit the screen even with the names cut short.</summary>
+        public bool TooBig { get; private set; }
+
+        public static WheelLayout Build(IReadOnlyList<string> layers, int maxTerms, WheelLayoutOptions? options = null)
+        {
+            WheelLayoutOptions o = options ?? new WheelLayoutOptions();
+            WheelNode root = LayerWheelTree.Build(layers, maxTerms, out string folded);
+            var layout = new WheelLayout(root, folded, o);
+
+            WheelView? all = layout.AllAtOnce();
+            if (all != null)
+            {
+                layout.Top = all;
+                layout._views[root] = all;
+            }
+            else
+            {
+                layout.Steps = true;
+                LayerWheelTree.Split(root, o.SplitOver);
+                layout.Top = layout.Open(root);
+                layout.OpenAll(root);
+            }
+
+            layout.Index(root);
+            layout.LargestRadius = layout._views.Values.Max(v => v.OuterRadius);
+            layout.TooBig = layout._views.Values.Any(v => v.TooBig);
+            return layout;
+        }
+
+        /// <summary>The view of what is in a group or branch. Only when the wheel goes a step at a time.</summary>
+        public WheelView Open(WheelNode node)
+        {
+            if (!Steps || node.IsLeaf)
+            {
+                return Top;
+            }
+
+            if (!_views.TryGetValue(node, out WheelView? view))
+            {
+                _views[node] = view = Step(node);
+            }
+
+            return view;
+        }
+
+        /// <summary>The view one step back, or null from the first view.</summary>
+        public WheelView? Back(WheelView view) =>
+            Steps && view.Node.Parent != null ? Open(view.Node.Parent) : null;
+
+        /// <summary>The layer's place in the tree, or null if it isn't on the wheel.</summary>
+        public WheelNode? Find(string? layer) =>
+            layer != null && _leaves.TryGetValue(layer, out WheelNode? node) ? node : null;
+
+        /// <summary>The words that lead to a group or branch: "AE CIV PLN SEWER".</summary>
+        public string PathOf(WheelNode node)
+        {
+            var words = new List<string>();
+            for (WheelNode? n = node; n != null && n.Parent != null; n = n.Parent)
+            {
+                if (!n.IsLeaf)
+                {
+                    words.Insert(0, n.Term);
+                }
+            }
+
+            return (_folded + " " + string.Join(" ", words)).Trim();
         }
 
         /// <summary>The angle of a point, clockwise from 12 o'clock, from 0 up to a full turn.</summary>
@@ -265,6 +301,156 @@ namespace CsdBridge.Core.Layers
         /// <summary>The point at an angle and radius, as (right of, below) the middle.</summary>
         public static (double X, double Y) PointAt(double angle, double radius) =>
             (radius * Math.Sin(angle), -radius * Math.Cos(angle));
+
+        private void Index(WheelNode node)
+        {
+            if (node.IsLeaf)
+            {
+                _leaves[node.Layer!] = node;
+            }
+
+            foreach (WheelNode child in node.Children)
+            {
+                Index(child);
+            }
+        }
+
+        private void OpenAll(WheelNode node)
+        {
+            foreach (WheelNode child in node.Children.Where(c => !c.IsLeaf))
+            {
+                Open(child);
+                OpenAll(child);
+            }
+        }
+
+        // ------------------------------------------------------------------ a step at a time
+
+        /// <summary>What is in a group or branch, as equal wedges round the whole circle.</summary>
+        private WheelView Step(WheelNode node)
+        {
+            int n = node.Children.Count;
+            double start = Math.Max(_o.CentreRadius + _o.Gap, n * _o.LeafPitch / FullTurn);
+            var parts = new List<WheelPart>();
+            double longest = 0;
+            foreach (WheelNode child in node.Children)
+            {
+                string label = child.IsLeaf
+                    ? (node.IsBranch ? Remainder(child.Term, node.Term) : child.Term)
+                    : $"{child.Term} ({CountLayers(child)})";
+                longest = Math.Max(longest, (child.IsLeaf ? _o.MeasureLeaf(label) : _o.MeasureGroup(label)) + 2 * _o.LabelPadding);
+                parts.Add(new WheelPart(child, label));
+            }
+
+            double length = Math.Min(longest, Math.Max(_o.MinBarLength, _o.MaxRadius - start));
+            double outer = start + length;
+            for (int i = 0; i < n; i++)
+            {
+                WheelPart part = parts[i];
+                part.Start = FullTurn * i / n;
+                part.Sweep = FullTurn / n;
+                part.Inner = start;
+                part.Outer = outer;
+                part.HitInner = start - _o.Gap;
+                part.HitOuter = outer + WheelView.Margin;
+                part.TextStart = start;
+                part.TextLength = length;
+            }
+
+            return new WheelView(node, PathOf(node), start - _o.Gap, outer, parts, outer > _o.MaxRadius + 0.5);
+        }
+
+        private static int CountLayers(WheelNode node) =>
+            node.IsLeaf ? 1 : node.Children.Sum(CountLayers);
+
+        /// <summary>A layer's name without the words its branch is named by: "PIPE NEW" under SEWER.</summary>
+        private static string Remainder(string label, string shared)
+        {
+            if (shared.Length > 0 && label.Length > shared.Length && label.StartsWith(shared, StringComparison.OrdinalIgnoreCase))
+            {
+                string rest = label.Substring(shared.Length).Trim();
+                if (rest.Length > 0)
+                {
+                    return rest;
+                }
+            }
+
+            return label;
+        }
+
+        // ------------------------------------------------------------------ everything at once
+
+        /// <summary>Every layer in one view, or null when there are too many for that.</summary>
+        private WheelView? AllAtOnce()
+        {
+            WheelLayoutOptions o = _o;
+            var all = new List<WheelNode>();
+            Collect(_root, all);
+            int rings = all.Where(n => !n.IsLeaf).Select(n => n.Depth).DefaultIfEmpty(0).Max();
+
+            // The radius the band of layers starts at: far enough out for the rings, then further
+            // until every layer and every group label has room round the circle.
+            double leafStart = o.CentreRadius + o.Gap + rings * (o.RingThickness + o.Gap);
+            for (int i = 0; i < 40; i++)
+            {
+                double total = Need(_root, leafStart, rings, o);
+                if (total <= FullTurn)
+                {
+                    break;
+                }
+
+                leafStart *= total / FullTurn * 1.005;
+            }
+
+            if (leafStart > o.AllAtOnceUpTo + 0.5)
+            {
+                return null;
+            }
+
+            Need(_root, leafStart, rings, o);
+            Assign(_root, 0, FullTurn);
+
+            double room = Math.Max(o.MinBarLength, o.MaxRadius - leafStart);
+            double length = Math.Min(room, all.Where(n => n.IsLeaf).Select(n => o.MeasureLeaf(n.Term) + 2 * o.LabelPadding).DefaultIfEmpty(0).Max());
+            double outer = leafStart + length;
+            double centre = leafStart - o.Gap - rings * (o.RingThickness + o.Gap);
+
+            var parts = new List<WheelPart>();
+            foreach (WheelNode node in all)
+            {
+                if (ReferenceEquals(node, _root))
+                {
+                    continue;
+                }
+
+                var part = new WheelPart(node, node.Term) { Start = node.Start, Sweep = node.Sweep };
+                if (node.IsLeaf)
+                {
+                    // The wedge runs from the layer's group (or the middle) out to the rim, so a layer
+                    // with fewer words in front of its dash fills the rings it has no group in.
+                    WheelNode parent = node.Parent!;
+                    double from = ReferenceEquals(parent, _root) ? centre : RingOuter(parent.Depth, leafStart, rings, o);
+                    part.Inner = from + o.Gap;
+                    part.Outer = outer;
+                    part.HitInner = from;
+                    part.HitOuter = outer + WheelView.Margin;
+                    part.TextStart = leafStart;
+                    part.TextLength = length;
+                }
+                else
+                {
+                    part.Outer = RingOuter(node.Depth, leafStart, rings, o);
+                    part.Inner = part.Outer - o.RingThickness;
+                    part.HitInner = part.Inner;
+                    part.HitOuter = part.Outer;
+                    part.RoundTheRing = true;
+                }
+
+                parts.Add(part);
+            }
+
+            return new WheelView(_root, _folded, centre, outer, parts, outer > o.MaxRadius + 0.5);
+        }
 
         private static void Collect(WheelNode node, List<WheelNode> into)
         {

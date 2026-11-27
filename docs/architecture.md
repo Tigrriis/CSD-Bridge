@@ -245,7 +245,9 @@ says *why* each step happened, which a recording of commands and pick points can
    compile-checked against Windows Forms only. Check in BricsCAD:
    - the wheel is centred on the pointer, the drawing shows through around it, and text is sharp at the
      display's scaling
-   - a click outside, a right-click and Esc each close it, and BricsCAD has the keyboard again afterwards
+   - with the office file (a long list): a click on a group opens it, PLN opens on its first-word branches, and
+     the middle, a right-click and Backspace each go back a step
+   - a click outside and Esc each close it, and BricsCAD has the keyboard again afterwards
    - with a keyboard shortcut: holding the key, moving to a layer and letting go picks it
    - the selection survives a move to another layer, and one `U` takes the move back
    - `'AILAYERWHEEL` in the middle of LINE changes the layer for the next segment

@@ -17,7 +17,7 @@ namespace CsdBridge.BricsCAD
     /// </summary>
     internal sealed class LayerWheelSetupForm : Form
     {
-        private const int Comfortable = 60;
+        private const int AllAtOnce = 50;
 
         private readonly LayerWheelSettings _settings;
         private readonly HashSet<string> _inDrawing;
@@ -187,8 +187,8 @@ namespace CsdBridge.BricsCAD
         private void ShowCount()
         {
             int n = _chosen.Count;
-            _count.Text = $"{n} layer(s) on the wheel." + (n > Comfortable ? $" More than about {Comfortable} gets cramped." : "");
-            _count.ForeColor = n > Comfortable ? Color.FromArgb(190, 90, 0) : SystemColors.ControlText;
+            _count.Text = $"{n} layer(s) on the wheel." +
+                (n > AllAtOnce ? " That is too many to show at once, so the wheel opens on the groups; click one for its layers." : "");
         }
 
         private void ShowFile()
