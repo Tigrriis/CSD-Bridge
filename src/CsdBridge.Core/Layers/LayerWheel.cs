@@ -32,6 +32,14 @@ namespace CsdBridge.Core.Layers
         /// <summary>Text size in points.</summary>
         public double TextSize { get; set; } = 9;
 
+        /// <summary>
+        /// When there are too many layers to show at once, the wheel goes a step at a time: a
+        /// click on a group opens a wheel of its layers. A group with more layers than this is
+        /// first split by the first word of the layer's name (SEWER, STORMWATER, ROAD...), which
+        /// adds a step. 0 never splits.
+        /// </summary>
+        public int SplitGroupsOver { get; set; } = 40;
+
         public static LayerWheelSettings Load(string path)
         {
             LayerWheelSettings settings =
@@ -69,6 +77,11 @@ namespace CsdBridge.Core.Layers
             "// the top). The words in front of the dash make the rings: \"AE CIV PLN - KERB NEW\" sits\n" +
             "// under AE, then CIV, then PLN. A ring with only one choice is folded into the middle.\n" +
             "// Layers a drawing doesn't have are shown greyed out, so every layer keeps its place.\n" +
+            "//\n" +
+            "// Up to about 50 layers are all shown at once. With more, the wheel goes a step at a\n" +
+            "// time: it opens on the groups, and a click on a group opens a wheel of its layers. A\n" +
+            "// group with more layers than \"split_groups_over\" is first split by the first word of\n" +
+            "// the layer's name (SEWER, STORMWATER, ROAD...), which adds a step; 0 never splits.\n" +
             "//\n" +
             "// To share one file across the office, put it on a network drive and set\n" +
             "// \"layer_wheel_file\" in %APPDATA%\\CsdBridge\\settings.json on each PC (the setup window's\n" +
@@ -192,18 +205,22 @@ namespace CsdBridge.Core.Layers
 
         public bool IsLeaf => Layer != null;
 
+        /// <summary>
+        /// A set of layers that share their first word (SEWER...), made when a group has too many
+        /// layers to show together. Not one of the words in front of the dash, so not in a ring.
+        /// </summary>
+        public bool IsBranch { get; internal set; }
+
+        /// <summary>A group from the words in front of the dash: drawn in a ring.</summary>
+        public bool IsGroup => !IsLeaf && !IsBranch;
+
         /// <summary>The ring a group is drawn in, 1 nearest the middle. 0 for the middle itself.</summary>
         public int Depth { get; internal set; }
 
-        /// <summary>Where the node's slice starts, in radians clockwise from 12 o'clock.</summary>
-        public double Start { get; internal set; }
-
-        public double Sweep { get; internal set; }
-        public double Mid => Start + Sweep / 2;
-
+        // Working values while everything is laid out at once.
+        internal double Start { get; set; }
+        internal double Sweep { get; set; }
         internal double Need { get; set; }
-
-        public bool Contains(double angle) => angle >= Start && angle < Start + Sweep;
 
         /// <summary>True when this node is <paramref name="other"/> or sits under it.</summary>
         public bool IsWithin(WheelNode other)
@@ -260,6 +277,100 @@ namespace CsdBridge.Core.Layers
             centre = string.Join(" ", folded);
             SetDepth(root, 0);
             return root;
+        }
+
+        /// <summary>
+        /// Split every group that has more than <paramref name="over"/> layers of its own: layers
+        /// whose names start with the same word go into a branch named by the words they all
+        /// start with ("SEWER", "RETAINING WALL"). A layer that shares its first word with no
+        /// other stays where it is. The branch takes the place of its first layer.
+        /// </summary>
+        public static void Split(WheelNode node, int over)
+        {
+            foreach (WheelNode child in node.Children.Where(c => c.IsGroup).ToList())
+            {
+                Split(child, over);
+            }
+
+            if (over <= 0 || !node.IsGroup || node.Children.Count(c => c.IsLeaf) <= over)
+            {
+                return;
+            }
+
+            var byWord = new Dictionary<string, List<WheelNode>>(StringComparer.OrdinalIgnoreCase);
+            foreach (WheelNode leaf in node.Children.Where(c => c.IsLeaf))
+            {
+                string word = FirstWord(leaf.Term);
+                if (!byWord.TryGetValue(word, out List<WheelNode>? same))
+                {
+                    byWord[word] = same = new List<WheelNode>();
+                }
+
+                same.Add(leaf);
+            }
+
+            var children = new List<WheelNode>();
+            var made = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (WheelNode child in node.Children)
+            {
+                string word = child.IsLeaf ? FirstWord(child.Term) : "";
+                if (!child.IsLeaf || byWord[word].Count < 2)
+                {
+                    children.Add(child);
+                    continue;
+                }
+
+                if (!made.Add(word))
+                {
+                    continue; // already inside the branch made at its first layer
+                }
+
+                var branch = new WheelNode(SharedWords(byWord[word].Select(l => l.Term)), node) { IsBranch = true, Depth = node.Depth + 1 };
+                foreach (WheelNode leaf in byWord[word])
+                {
+                    leaf.Parent = branch;
+                    leaf.Depth = branch.Depth + 1;
+                    branch.Children.Add(leaf);
+                }
+
+                children.Add(branch);
+            }
+
+            node.Children.Clear();
+            node.Children.AddRange(children);
+        }
+
+        private static readonly char[] WordBreaks = { ' ', '\t' };
+
+        private static string FirstWord(string label)
+        {
+            string[] words = label.Split(WordBreaks, StringSplitOptions.RemoveEmptyEntries);
+            return words.Length > 0 ? words[0] : label;
+        }
+
+        /// <summary>The words every one of the labels starts with.</summary>
+        private static string SharedWords(IEnumerable<string> labels)
+        {
+            string[]? shared = null;
+            foreach (string label in labels)
+            {
+                string[] words = label.Split(WordBreaks, StringSplitOptions.RemoveEmptyEntries);
+                if (shared == null)
+                {
+                    shared = words;
+                    continue;
+                }
+
+                int same = 0;
+                while (same < shared.Length && same < words.Length && string.Equals(shared[same], words[same], StringComparison.OrdinalIgnoreCase))
+                {
+                    same++;
+                }
+
+                shared = shared.Take(same).ToArray();
+            }
+
+            return string.Join(" ", shared ?? Array.Empty<string>());
         }
 
         private static void SetDepth(WheelNode node, int depth)

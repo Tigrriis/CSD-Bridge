@@ -61,7 +61,7 @@ namespace CsdBridge.BricsCAD
             {
                 if (wheel.TooBig)
                 {
-                    ed.WriteMessage($"\nCSD-Bridge: {layers.Count} layers is more than the wheel can show on this screen, so names are cut short. AILAYERWHEELSETUP takes layers off.\n");
+                    ed.WriteMessage("\nCSD-Bridge: some groups have more layers than fit round the wheel on this screen. Lower split_groups_over in the layer wheel file, or take layers off with AILAYERWHEELSETUP.\n");
                 }
 
                 picked = wheel.ShowDialog() == DialogResult.OK ? wheel.PickedLayer : null;

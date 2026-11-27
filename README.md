@@ -68,7 +68,7 @@ This is a working scaffold for exploration, not a finished product.
 
 | Part | State |
 |---|---|
-| Core (agent loop, tools, validation) | Built and unit-tested: 252 tests, including the full loop run against the real Anthropic SDK with canned API responses |
+| Core (agent loop, tools, validation) | Built and unit-tested: 257 tests, including the full loop run against the real Anthropic SDK with canned API responses |
 | BricsCAD add-in, V26 (.NET 8) | Compiles against BricsCAD V26 reference assemblies. **Not yet run inside BricsCAD.** |
 | BricsCAD add-in, V24/V25 (.NET Framework 4.8) | Same source. **Not yet compiled** (needs V25's `BrxMgd.dll`/`TD_Mgd.dll` on Windows). |
 | Live Claude API | **Not yet called**: the build machine had no API key. Run the CLI harness first (below). |
@@ -475,39 +475,51 @@ Claude.
 - **Nothing selected**: the layer you pick becomes the current layer.
 - **Objects selected**: they move to the layer you pick, as one UNDO step, and stay selected. Objects on locked layers
   are left alone.
-- Click a layer to pick it. Esc, a right-click or a click outside the wheel closes it without changing anything.
+- Click a layer to pick it. Esc or a click outside the wheel closes it without changing anything.
 - Each layer is a wedge in its layer colour, and the wedges fill the wheel with no gaps, so anywhere in a wedge picks
   it. The line under the wheel says what a click will do.
 
-**Groups come from the layer names.** Everything in front of the dash is the grouping, one ring per word, up to three:
-`AE CIV PLN - KERB NEW` sits under AE, then CIV, then PLN, and shows as `KERB NEW` in its layer colour. A ring with
-only one choice is folded into the middle, so if every layer on the wheel starts `AE CIV`, the middle reads AE CIV and
-there is one ring (PLN, HTC, LNE...). A layer with no dash hangs straight off the middle.
+**Groups come from the layer names.** Everything in front of the dash is the grouping, one level per word, up to
+three: `AE CIV PLN - KERB NEW` sits under AE, then CIV, then PLN, and shows as `KERB NEW`. A level with only one choice
+is folded into the middle, so if every layer on the wheel starts `AE CIV`, the middle reads AE CIV and the groups are
+PLN, HTC, LNE and so on. A layer with no dash hangs straight off the middle.
+
+**A long list goes a step at a time.** Up to about 50 layers are all shown at once, with the groups as rings round
+the middle. With more, as in the office file, the wheel opens on the groups only (ANO, DET, HTC, LNE, MOD, PLN, SEC),
+each with its number of layers:
+
+1. Click a group and the wheel shows the layers in it.
+2. A group with more than 40 layers is first split by the first word of the layer names, so PLN opens on BOUNDARY,
+   BUILDING, ROAD, SEWER, STORMWATER, WATER and so on, and a click on SEWER shows the 22 sewer layers. Layers that share
+   their first word with no other (LINEMARKING) are there to pick straight away. Change the 40 with `split_groups_over`
+   in the file; 0 never splits.
+3. Click the middle, right-click or press Backspace to go back a step. The middle shows where you are (AE CIV PLN SEWER).
 
 **The same wheel in every drawing.** The layers come from one file, `layer-wheel.json`, not from the drawing, so each
 layer is always in the same place. Layers the open drawing doesn't have are greyed out and can't be picked. The current
-layer has a white outline; frozen and off layers are dimmed (a frozen layer can't be made current).
+layer has a white outline, and so does the group it is in; frozen and off layers are dimmed (a frozen layer can't be
+made current).
 
 **Choosing the layers.** `AILAYERWHEELSETUP` (ribbon: **Wheel layers**) lists the open drawing's layers; tick the ones
 to show and Save. Layers already on the wheel keep their place, and new ones go at the end of their group. To reorder,
-edit the `layers` list in the file: it runs clockwise from the top. About 60 layers is the practical limit; beyond
-that the text shrinks and long names are cut short.
+edit the `layers` list in the file: it runs clockwise from the top.
 
-**One file for the office.** The repo ships `layer-wheel.json` (next to the DLL once installed) with the layers from
-`office-standards.md`; edit that copy in the repo and everyone gets it at their next update. Saving from the setup
+**One file for the office.** The repo ships `layer-wheel.json` (next to the DLL once installed) with the office's
+AE CIV layers; edit that copy in the repo and everyone gets it at their next update. Saving from the setup
 window writes your own copy in `%APPDATA%\CsdBridge`, which is used instead. To share a file on a network drive, press
 **Change file** in the setup window on each PC and pick it (this sets `layer_wheel_file` in `settings.json`).
 
 **Keyboard shortcut.** In BricsCAD run `CUSTOMIZE`, open the **Keyboard** tab, right-click and choose **Append
 shortcut**, choose **Create new tool**, give it the command `'AILAYERWHEEL`, and press the keys for it. The apostrophe
 lets it also run in the middle of another command, such as LINE. Don't put `^c^c` in front, as BricsCAD's own tools
-have: that cancels the selection before the wheel sees it. The **Mouse** tab does the same for a mouse button. With a
-shortcut you can also hold the key, move to a layer and let go: releasing a key while the pointer is on a layer picks
-it. Set `"release_to_pick": false` in `layer-wheel.json` if that gets in the way.
+have: that cancels the selection before the wheel sees it. The **Mouse** tab does the same for a mouse button. When
+the layer is in view (a short list, or after opening its group), you can also hold the key, move to the layer and let
+go: releasing a key while the pointer is on a layer picks it. Set `"release_to_pick": false` in `layer-wheel.json` if
+that gets in the way.
 
 **Not yet run inside BricsCAD**: the grouping and layout are unit-tested and the windows compile, but the wheel hasn't
-been opened in BricsCAD yet. Check first that it appears at the pointer with see-through edges, that a click outside
-closes it, and that hold-and-release works with your shortcut.
+been opened in BricsCAD yet. Check first that it appears at the pointer with see-through edges, that a click on a
+group opens it and the middle goes back, and that a click outside closes it.
 
 ## Saving work between chats
 

@@ -27,10 +27,14 @@ namespace CsdBridge.BricsCAD
     }
 
     /// <summary>
-    /// AILAYERWHEEL's wheel: a see-through window centred on the pointer, with rings of layer
-    /// groups round the middle and each layer as a wedge of the outer band in its own colour.
-    /// A click on a layer picks it; Esc, a right-click or a click outside closes the wheel.
-    /// Letting go of a key while on a layer also picks it (hold the shortcut, flick, release).
+    /// AILAYERWHEEL's wheel: a see-through window centred on the pointer. A short list of layers
+    /// is shown all at once: rings of layer groups round the middle and each layer as a wedge of
+    /// the outer band in its own colour. A long list goes a step at a time: the wheel opens on
+    /// the groups, a click on a group opens a wheel of what is in it, and a click on the middle
+    /// (or a right-click, or Backspace) goes back a step.
+    ///
+    /// A click on a layer picks it; Esc or a click outside closes the wheel. Letting go of a key
+    /// while on a layer also picks it (hold the shortcut, flick, release).
     ///
     /// The window is drawn as one picture with its own transparency (a layered window), so the
     /// drawing shows through around and between the parts. Where everything goes comes from
@@ -61,7 +65,10 @@ namespace CsdBridge.BricsCAD
         private readonly Point _centre;      // middle of the wheel, in the window
         private readonly int _captionHeight;
 
-        private WheelNode? _hover;
+        private readonly WheelNode? _currentNode;
+        private WheelView _view;
+        private WheelPart? _hover;
+        private bool _overCentre;
         private bool _live;
 
         /// <param name="selected">How many objects are selected; 0 means the wheel sets the current layer.</param>
@@ -114,6 +121,8 @@ namespace CsdBridge.BricsCAD
                         LabelPadding = _pad,
                         MinBarLength = 60 * _scale,
                         MaxRadius = maxRadius,
+                        AllAtOnceUpTo = 200 * _scale,
+                        SplitOver = settings.SplitGroupsOver,
                         MeasureLeaf = s => Measure(g, s, leafFont),
                         MeasureGroup = s => Measure(g, s, groupFont),
                     });
@@ -131,7 +140,10 @@ namespace CsdBridge.BricsCAD
 
             _captionFont = MakeFont(Math.Max(size, 9), FontStyle.Regular);
 
-            int radius = (int)Math.Ceiling(_layout.OuterRadius) + margin;
+            _view = _layout.Top;
+            _currentNode = _layout.Find(_currentLayer);
+
+            int radius = (int)Math.Ceiling(_layout.LargestRadius) + margin;
             int width = Math.Max(radius * 2, (int)(420 * _scale));
             _centre = new Point(width / 2, radius);
             Size = new Size(width, radius * 2 + _captionHeight);
@@ -197,7 +209,11 @@ namespace CsdBridge.BricsCAD
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
-            if (e.Button == MouseButtons.Right || HitAt(e.Location).Kind == WheelHitKind.Outside)
+            if (HitAt(e.Location).Kind == WheelHitKind.Outside)
+            {
+                Finish(null);
+            }
+            else if (e.Button == MouseButtons.Right && !GoBack())
             {
                 Finish(null);
             }
@@ -212,9 +228,21 @@ namespace CsdBridge.BricsCAD
             }
 
             Track(e.Location);
-            if (e.Button == MouseButtons.Left && TryPick())
+            if (e.Button == MouseButtons.Left)
             {
-                return;
+                if (TryPick())
+                {
+                    return;
+                }
+
+                if (_hover != null && _hover.Kind != WheelPartKind.Layer && _layout.Steps)
+                {
+                    ShowView(_layout.Open(_hover.Node));
+                }
+                else if (_overCentre)
+                {
+                    GoBack();
+                }
             }
 
             Capture = true; // Windows lets go of the mouse after each click
@@ -228,12 +256,17 @@ namespace CsdBridge.BricsCAD
                 e.Handled = true;
                 Finish(null);
             }
+            else if (e.KeyCode == Keys.Back)
+            {
+                e.Handled = true;
+                GoBack();
+            }
         }
 
         protected override void OnKeyUp(KeyEventArgs e)
         {
             base.OnKeyUp(e);
-            if (_live && _releaseToPick && e.KeyCode != Keys.Escape)
+            if (_live && _releaseToPick && e.KeyCode != Keys.Escape && e.KeyCode != Keys.Back)
             {
                 TryPick();
             }
@@ -253,23 +286,47 @@ namespace CsdBridge.BricsCAD
 
         // ------------------------------------------------------------------ picking
 
-        private WheelHit HitAt(Point client) => _layout.Hit(client.X - _centre.X, client.Y - _centre.Y);
+        private WheelHit HitAt(Point client) => _view.Hit(client.X - _centre.X, client.Y - _centre.Y);
 
         private void Track(Point client)
         {
             WheelHit hit = HitAt(client);
-            WheelNode? node = hit.Kind == WheelHitKind.Layer || hit.Kind == WheelHitKind.Group ? hit.Node : null;
-            if (!ReferenceEquals(node, _hover))
+            bool overCentre = hit.Kind == WheelHitKind.Centre;
+            if (!ReferenceEquals(hit.Part, _hover) || overCentre != _overCentre)
             {
-                _hover = node;
+                _hover = hit.Part;
+                _overCentre = overCentre;
                 Redraw();
             }
+        }
+
+        /// <summary>Change what the wheel shows (a step in, or a step back).</summary>
+        private void ShowView(WheelView view)
+        {
+            _view = view;
+            _hover = null;
+            _overCentre = false;
+            Redraw();
+            Track(PointToClient(Cursor.Position));
+        }
+
+        /// <summary>Go back a step. False from the first view, where there is nowhere to go back to.</summary>
+        private bool GoBack()
+        {
+            WheelView? back = _layout.Back(_view);
+            if (back == null)
+            {
+                return false;
+            }
+
+            ShowView(back);
+            return true;
         }
 
         /// <summary>Pick the layer under the pointer, if it is one the drawing has.</summary>
         private bool TryPick()
         {
-            if (_hover == null || !_hover.IsLeaf || !_layers[_hover.LayerIndex].Exists)
+            if (_hover == null || _hover.Kind != WheelPartKind.Layer || !_layers[_hover.LayerIndex].Exists)
             {
                 return false;
             }
@@ -325,46 +382,51 @@ namespace CsdBridge.BricsCAD
         private void PaintWheel(Graphics g)
         {
             float cx = _centre.X, cy = _centre.Y;
-            float outer = (float)_layout.OuterRadius + 5 * _scale;
+            float outer = (float)_view.OuterRadius + 5 * _scale;
             using (var backdrop = new SolidBrush(Backdrop))
             {
                 g.FillEllipse(backdrop, cx - outer, cy - outer, outer * 2, outer * 2);
             }
 
-            WheelLeaf? hoverLeaf = _hover != null && _hover.IsLeaf ? _layout.Leaves.First(l => ReferenceEquals(l.Node, _hover)) : null;
-            foreach (WheelSector sector in _layout.Sectors)
+            foreach (WheelPart part in _view.Parts)
             {
-                bool lit = _hover != null && _hover.IsWithin(sector.Node);
-                using (GraphicsPath path = Sector(sector.Inner, sector.Outer, sector.Start, sector.Sweep, _gap))
-                using (var fill = new SolidBrush(lit ? RingHover : RingFill))
+                bool hover = ReferenceEquals(part, _hover);
+                if (part.RoundTheRing)
                 {
-                    g.FillPath(fill, path);
+                    // Lit when the pointer is on the group or on one of its layers.
+                    bool lit = hover || (_hover != null && _hover.Node.IsWithin(part.Node));
+                    using (GraphicsPath path = Sector(part.Inner, part.Outer, part.Start, part.Sweep, _gap))
+                    using (var fill = new SolidBrush(lit ? RingHover : RingFill))
+                    {
+                        g.FillPath(fill, path);
+                    }
+
+                    DrawRingLabel(g, part);
                 }
-
-                DrawGroupLabel(g, sector);
-            }
-
-            foreach (WheelLeaf leaf in _layout.Leaves)
-            {
-                DrawLeaf(g, leaf, ReferenceEquals(leaf, hoverLeaf));
-            }
-
-            // Outlines go on last so the neighbours' wedges don't cover them.
-            foreach (WheelLeaf leaf in _layout.Leaves)
-            {
-                if (_layers[leaf.LayerIndex].Current && !ReferenceEquals(leaf, hoverLeaf))
+                else
                 {
-                    Outline(g, leaf, Color.White, 2f);
+                    DrawWedge(g, part, hover);
                 }
             }
 
-            if (hoverLeaf != null)
+            // Outlines go on last so the neighbours' wedges don't cover them: the current layer
+            // (or, a step back from it, the group it is in), then the one under the pointer.
+            foreach (WheelPart part in _view.Parts)
             {
-                Outline(g, hoverLeaf, _layers[hoverLeaf.LayerIndex].Exists ? Color.White : MissingText, 3f);
+                if (!part.RoundTheRing && !ReferenceEquals(part, _hover) && _currentNode != null && _currentNode.IsWithin(part.Node))
+                {
+                    Outline(g, part, Color.White, 2f);
+                }
+            }
+
+            if (_hover != null && !_hover.RoundTheRing)
+            {
+                bool usable = _hover.Kind != WheelPartKind.Layer || _layers[_hover.LayerIndex].Exists;
+                Outline(g, _hover, usable ? Color.White : MissingText, 3f);
             }
 
             DrawCentre(g);
-            DrawCaption(g, hoverLeaf);
+            DrawCaption(g);
         }
 
         /// <summary>Part of a ring. Angles are radians clockwise from 12 o'clock; <paramref name="gap"/> is left between neighbours.</summary>
@@ -394,50 +456,54 @@ namespace CsdBridge.BricsCAD
         }
 
         /// <summary>The group's word, written round the ring and never upside down.</summary>
-        private void DrawGroupLabel(Graphics g, WheelSector sector)
+        private void DrawRingLabel(Graphics g, WheelPart part)
         {
-            double mid = sector.Node.Mid;
-            float radius = (float)((sector.Inner + sector.Outer) / 2);
+            double mid = part.Mid;
+            float radius = (float)((part.Inner + part.Outer) / 2);
             float degrees = (float)(mid * 180 / Math.PI);
             bool lowerHalf = mid > Math.PI / 2 && mid < Math.PI * 1.5;
-            float room = (float)(sector.Sweep * radius);
+            float room = (float)(part.Sweep * radius);
 
             GraphicsState saved = g.Save();
             g.TranslateTransform(_centre.X, _centre.Y);
             g.RotateTransform(lowerHalf ? degrees + 180 : degrees);
             float y = lowerHalf ? radius : -radius;
-            float height = (float)(sector.Outer - sector.Inner);
+            float height = (float)(part.Outer - part.Inner);
             using (var format = Centred())
             using (var brush = new SolidBrush(Color.White))
             {
-                g.DrawString(sector.Node.Term, _groupFont, brush, new RectangleF(-room / 2, y - height / 2, room, height), format);
+                g.DrawString(part.Label, _groupFont, brush, new RectangleF(-room / 2, y - height / 2, room, height), format);
             }
 
             g.Restore(saved);
         }
 
-        /// <summary>A layer's wedge: from its group (or the middle) out to the rim, a hairline apart from its neighbours.</summary>
-        private GraphicsPath Wedge(WheelLeaf leaf) =>
-            Sector(leaf.InnerHit + _gap, _layout.OuterRadius, leaf.Node.Start, leaf.Node.Sweep, 1.5 * _scale);
+        /// <summary>A wedge, a hairline apart from its neighbours.</summary>
+        private GraphicsPath Wedge(WheelPart part) =>
+            Sector(part.Inner, part.Outer, part.Start, part.Sweep, 1.5 * _scale);
 
-        private void DrawLeaf(Graphics g, WheelLeaf leaf, bool hover)
+        /// <summary>A layer in its own colour, or a group or branch to open, with its text along the wedge.</summary>
+        private void DrawWedge(Graphics g, WheelPart part, bool hover)
         {
-            WheelLayerState state = _layers[leaf.LayerIndex];
-            Color fill = !state.Exists ? MissingFill
+            bool isLayer = part.Kind == WheelPartKind.Layer;
+            WheelLayerState? state = isLayer ? _layers[part.LayerIndex] : null;
+            bool missing = state != null && !state.Exists;
+            Color fill = state == null ? (hover ? RingHover : RingFill)
+                : missing ? MissingFill
                 : state.Frozen || state.Off ? Blend(state.Color, Color.FromArgb(40, 44, 52), 0.55)
                 : state.Color;
-            if (hover && state.Exists)
+            if (hover && state != null && !missing)
             {
                 fill = Blend(fill, Brightness(fill) > 200 ? Color.FromArgb(150, 170, 200) : Color.White, 0.22);
             }
 
-            Color text = !state.Exists ? MissingText : Brightness(fill) > 140 ? Color.Black : Color.White;
+            Color text = missing ? MissingText : Brightness(fill) > 140 ? Color.Black : Color.White;
 
-            using (GraphicsPath wedge = Wedge(leaf))
+            using (GraphicsPath wedge = Wedge(part))
             using (var brush = new SolidBrush(fill))
             {
                 g.FillPath(brush, wedge);
-                if (!state.Exists)
+                if (missing)
                 {
                     using (var pen = new Pen(MissingText, _scale) { DashStyle = DashStyle.Dash })
                     {
@@ -446,38 +512,40 @@ namespace CsdBridge.BricsCAD
                 }
             }
 
-            float start = (float)leaf.BarStart;
-            float length = (float)leaf.BarLength;
+            float start = (float)part.TextStart;
+            float length = (float)part.TextLength;
+            Font font = isLayer ? _leafFont : _groupFont;
+            float height = _bar + 4 * _scale;
 
             GraphicsState saved = g.Save();
             g.TranslateTransform(_centre.X, _centre.Y);
-            g.RotateTransform((float)(leaf.Angle * 180 / Math.PI - 90)); // x now runs outwards along the middle of the wedge
+            g.RotateTransform((float)(part.Mid * 180 / Math.PI - 90)); // x now runs outwards along the middle of the wedge
 
             using (var format = Centred())
             using (var brush = new SolidBrush(text))
             {
-                if (leaf.ReadsInwards)
+                if (part.ReadsInwards)
                 {
                     // Turn the text round so it reads towards the middle.
                     g.TranslateTransform(start + length / 2, 0);
                     g.RotateTransform(180);
                     format.Alignment = StringAlignment.Far;
-                    g.DrawString(leaf.Label, _leafFont, brush, new RectangleF(-length / 2 + _pad / 2, -_bar / 2, length - _pad * 1.5f, _bar), format);
+                    g.DrawString(part.Label, font, brush, new RectangleF(-length / 2 + _pad / 2, -height / 2, length - _pad * 1.5f, height), format);
                 }
                 else
                 {
                     format.Alignment = StringAlignment.Near;
-                    g.DrawString(leaf.Label, _leafFont, brush, new RectangleF(start + _pad, -_bar / 2, length - _pad * 1.5f, _bar), format);
+                    g.DrawString(part.Label, font, brush, new RectangleF(start + _pad, -height / 2, length - _pad * 1.5f, height), format);
                 }
             }
 
             g.Restore(saved);
         }
 
-        /// <summary>A line round a layer's wedge: the current layer, and the one under the pointer.</summary>
-        private void Outline(Graphics g, WheelLeaf leaf, Color color, float width)
+        /// <summary>A line round a wedge: the current layer, and the one under the pointer.</summary>
+        private void Outline(Graphics g, WheelPart part, Color color, float width)
         {
-            using (GraphicsPath wedge = Wedge(leaf))
+            using (GraphicsPath wedge = Wedge(part))
             using (var dark = new Pen(Color.FromArgb(200, 20, 22, 26), (width + 2) * _scale) { LineJoin = LineJoin.Round })
             using (var pen = new Pen(color, width * _scale) { LineJoin = LineJoin.Round })
             {
@@ -486,18 +554,24 @@ namespace CsdBridge.BricsCAD
             }
         }
 
-        /// <summary>The middle: the words every layer on the wheel shares, one to a line.</summary>
+        /// <summary>The middle: the words that lead to what the wheel shows, one to a line, and the way back.</summary>
         private void DrawCentre(Graphics g)
         {
-            float r = (float)_layout.CentreRadius - _gap;
-            using (var fill = new SolidBrush(CentreFill))
+            bool canGoBack = _layout.Back(_view) != null;
+            float r = (float)_view.CentreRadius - _gap;
+            using (var fill = new SolidBrush(canGoBack && _overCentre ? RingHover : CentreFill))
             using (var edge = new Pen(Color.FromArgb(120, 255, 255, 255), _scale))
             {
                 g.FillEllipse(fill, _centre.X - r, _centre.Y - r, r * 2, r * 2);
                 g.DrawEllipse(edge, _centre.X - r, _centre.Y - r, r * 2, r * 2);
             }
 
-            string label = _layout.CentreLabel.Replace(' ', '\n');
+            string label = _view.CentreLabel.Replace(' ', '\n');
+            if (canGoBack)
+            {
+                label = (label.Length > 0 ? label + "\n" : "") + "\u2039 back";
+            }
+
             if (label.Length == 0)
             {
                 return;
@@ -512,12 +586,12 @@ namespace CsdBridge.BricsCAD
         }
 
         /// <summary>One line under the wheel saying what a click will do.</summary>
-        private void DrawCaption(Graphics g, WheelLeaf? leaf)
+        private void DrawCaption(Graphics g)
         {
             string text;
-            if (leaf != null)
+            if (_hover != null && _hover.Kind == WheelPartKind.Layer)
             {
-                WheelLayerState state = _layers[leaf.LayerIndex];
+                WheelLayerState state = _layers[_hover.LayerIndex];
                 string note = !state.Exists ? "  (not in this drawing)"
                     : state.Current ? "  (current layer)"
                     : state.Frozen ? "  (frozen)"
@@ -528,7 +602,11 @@ namespace CsdBridge.BricsCAD
             }
             else if (_hover != null)
             {
-                text = PathOf(_hover);
+                text = (_layout.Steps ? "Open  " : "") + _layout.PathOf(_hover.Node);
+            }
+            else if (_overCentre && _layout.Back(_view) != null)
+            {
+                text = "Back a step";
             }
             else
             {
@@ -551,18 +629,6 @@ namespace CsdBridge.BricsCAD
         }
 
         private static string Objects(int count) => count == 1 ? "1 object" : count + " objects";
-
-        /// <summary>"AE CIV PLN": the words in the middle, then the rings down to this group.</summary>
-        private string PathOf(WheelNode node)
-        {
-            var words = new List<string>();
-            for (WheelNode? n = node; n != null && n.Depth > 0; n = n.Parent)
-            {
-                words.Insert(0, n.Term);
-            }
-
-            return (_layout.CentreLabel + " " + string.Join(" ", words)).Trim();
-        }
 
         private static StringFormat Centred() => new StringFormat(StringFormat.GenericTypographic)
         {
