@@ -35,6 +35,12 @@ namespace CsdBridge.Core.Layers
         /// <summary>Going a step at a time, a group with more layers than this is split by the first word of their names. 0 never splits.</summary>
         public int SplitOver { get; set; } = 40;
 
+        /// <summary>
+        /// Going a step at a time, a group whose contents are all layers shows a chip of each
+        /// layer's colour on its rim, this long. Under the pointer the chips grow into the layers.
+        /// </summary>
+        public double ChipLength { get; set; } = 10;
+
         /// <summary>Width of a layer's label.</summary>
         public Func<string, double> MeasureLeaf { get; set; } = s => s.Length * 6.6;
 
@@ -91,10 +97,47 @@ namespace CsdBridge.Core.Layers
         public double TextLength { get; internal set; }
 
         /// <summary>On the left half the text reads towards the middle, so it is never upside down.</summary>
-        public bool ReadsInwards => Mid > Math.PI;
+        public bool ReadsInwards => Turn(Mid) > Math.PI;
 
         public bool Contains(double radius, double angle) =>
-            radius >= HitInner && radius <= HitOuter && angle >= Start && angle < Start + Sweep;
+            radius >= HitInner && radius <= HitOuter && Spans(angle);
+
+        /// <summary>True when the angle is within the part's slice, which may run past 12 o'clock.</summary>
+        public bool Spans(double angle) => Turn(angle - Start) < Sweep;
+
+        /// <summary>An angle brought into 0 up to a full turn.</summary>
+        private static double Turn(double angle)
+        {
+            double turn = angle % (Math.PI * 2);
+            return turn < 0 ? turn + Math.PI * 2 : turn;
+        }
+    }
+
+    /// <summary>
+    /// The layers of one group, set round its rim. Closed, they are chips of colour as wide as
+    /// the group's own wedge; open, they are wedges with names, spread as wide as the names need.
+    /// </summary>
+    public sealed class WheelFan
+    {
+        internal WheelFan(WheelPart of, IReadOnlyList<WheelPart> parts, double outerRadius, bool open, bool tooBig)
+        {
+            Of = of;
+            Parts = parts;
+            OuterRadius = outerRadius;
+            Open = open;
+            TooBig = tooBig;
+        }
+
+        /// <summary>The group whose layers these are.</summary>
+        public WheelPart Of { get; }
+
+        public IReadOnlyList<WheelPart> Parts { get; }
+        public double OuterRadius { get; }
+
+        /// <summary>Fully open: the names are shown and the layers can be picked.</summary>
+        public bool Open { get; }
+
+        internal bool TooBig { get; }
     }
 
     public enum WheelHitKind
@@ -152,13 +195,31 @@ namespace CsdBridge.Core.Layers
         /// <summary>It doesn't fit in <see cref="WheelLayoutOptions.MaxRadius"/> even with the names cut short.</summary>
         public bool TooBig { get; }
 
-        /// <summary>What is under a point <paramref name="dx"/> right of and <paramref name="dy"/> below the middle.</summary>
-        public WheelHit Hit(double dx, double dy)
+        /// <summary>
+        /// What is under a point <paramref name="dx"/> right of and <paramref name="dy"/> below the middle.
+        /// With a group's layers fanned out (<paramref name="fan"/>), everything beyond the rim
+        /// belongs to the fan, so moving sideways along it doesn't jump to a neighbouring group.
+        /// </summary>
+        public WheelHit Hit(double dx, double dy, WheelFan? fan = null)
         {
             double r = Math.Sqrt(dx * dx + dy * dy);
             if (r <= CentreRadius)
             {
                 return new WheelHit(WheelHitKind.Centre);
+            }
+
+            if (fan != null && r > OuterRadius)
+            {
+                double fanAngle = WheelLayout.AngleOf(dx, dy);
+                foreach (WheelPart part in fan.Parts)
+                {
+                    if (part.Contains(r, fanAngle))
+                    {
+                        return new WheelHit(WheelHitKind.Part, part);
+                    }
+                }
+
+                return new WheelHit(r > fan.OuterRadius + PickMargin ? WheelHitKind.Outside : WheelHitKind.Nothing);
             }
 
             if (r > OuterRadius + PickMargin)
@@ -191,6 +252,8 @@ namespace CsdBridge.Core.Layers
     /// A long list goes a step at a time (<see cref="Steps"/>): the first view is a wheel of the
     /// groups, a click on one opens a wheel of what is in it, and so on down to the layers. A
     /// group with too many layers for one wheel is first split by the first word of their names.
+    /// A group whose contents are all layers also carries them on its rim (<see cref="Fan"/>):
+    /// chips of colour that open into the named layers under the pointer, to pick without a click.
     ///
     /// Angles are radians clockwise from 12 o'clock; positions are pixels from the middle of
     /// the wheel with y downwards, as on screen. Free of BricsCAD and Windows so it can be
@@ -249,6 +312,18 @@ namespace CsdBridge.Core.Layers
             layout.Index(root);
             layout.LargestRadius = layout._views.Values.Max(v => v.OuterRadius);
             layout.TooBig = layout._views.Values.Any(v => v.TooBig);
+            foreach (WheelView view in layout._views.Values.ToList())
+            {
+                foreach (WheelPart part in view.Parts)
+                {
+                    if (layout.Fan(view, part) is WheelFan fan)
+                    {
+                        layout.LargestRadius = Math.Max(layout.LargestRadius, fan.OuterRadius);
+                        layout.TooBig |= fan.TooBig;
+                    }
+                }
+            }
+
             return layout;
         }
 
@@ -266,6 +341,62 @@ namespace CsdBridge.Core.Layers
             }
 
             return view;
+        }
+
+        /// <summary>True for a group or branch whose contents are all layers: its layers can fan out from its rim.</summary>
+        public bool CanFan(WheelPart part) =>
+            Steps && !part.Node.IsLeaf && part.Node.Children.Count > 0 && part.Node.Children.All(c => c.IsLeaf);
+
+        /// <summary>
+        /// The layers of a group in <paramref name="view"/>, set round its rim. At
+        /// <paramref name="progress"/> 0 they are chips of colour across the group's own wedge;
+        /// at 1 they are wedges with names, centred on the group and as wide as the names need.
+        /// In between is for growing from one to the other. Null if the group can't fan.
+        /// </summary>
+        public WheelFan? Fan(WheelView view, WheelPart of, double progress = 1)
+        {
+            if (!CanFan(of))
+            {
+                return null;
+            }
+
+            double t = Math.Max(0, Math.Min(1, progress));
+            WheelNode node = of.Node;
+            int n = node.Children.Count;
+            double inner = view.OuterRadius + _o.Gap;
+
+            // Open, each layer needs a line of text's room where its name starts. If that is more
+            // than fits round the rim, the names start further out.
+            const double widest = FullTurn * 0.92;
+            double textStart = Math.Max(inner, n * _o.LeafPitch / widest);
+            double openSweep = Math.Min(widest, Math.Max(of.Sweep, n * _o.LeafPitch / textStart));
+
+            var labels = node.Children.Select(c => node.IsBranch ? Remainder(c.Term, node.Term) : c.Term).ToList();
+            double longest = labels.Max(l => _o.MeasureLeaf(l)) + 2 * _o.LabelPadding;
+            double length = Math.Min(longest, Math.Max(_o.MinBarLength, _o.MaxRadius - textStart));
+            double openOuter = textStart + length;
+            double closedOuter = inner + _o.ChipLength;
+
+            double sweep = of.Sweep + (openSweep - of.Sweep) * t;
+            double outer = closedOuter + (openOuter - closedOuter) * t;
+            double start = of.Mid - sweep / 2;
+            var parts = new List<WheelPart>();
+            for (int i = 0; i < n; i++)
+            {
+                parts.Add(new WheelPart(node.Children[i], labels[i])
+                {
+                    Start = start + sweep * i / n,
+                    Sweep = sweep / n,
+                    Inner = inner,
+                    Outer = outer,
+                    HitInner = view.OuterRadius,
+                    HitOuter = outer + WheelView.Margin,
+                    TextStart = textStart,
+                    TextLength = length,
+                });
+            }
+
+            return new WheelFan(of, parts, outer, t >= 1, openOuter > _o.MaxRadius + 0.5);
         }
 
         /// <summary>The view one step back, or null from the first view.</summary>

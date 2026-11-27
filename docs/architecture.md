@@ -247,6 +247,8 @@ says *why* each step happened, which a recording of commands and pick points can
      display's scaling
    - with the office file (a long list): a click on a group opens it, PLN opens on its first-word branches, and
      the middle, a right-click and Backspace each go back a step
+   - the chips on a group's rim grow into its layers when the pointer is on the group, the fan stays while the
+     pointer moves along it, and a layer in it can be picked
    - a click outside and Esc each close it, and BricsCAD has the keyboard again afterwards
    - with a keyboard shortcut: holding the key, moving to a layer and letting go picks it
    - the selection survives a move to another layer, and one `U` takes the move back
